@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# VS Code local settings
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Runtime content
+roms/
+bios/
+saves/
+sessions/
+media-cache/
+
+# IDEs
+.idea/
