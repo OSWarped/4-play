@@ -42,6 +42,32 @@ Responsibilities:
 
 The first deployment may place the control plane and runtime host agent on one Linux machine. They remain separate logical components so additional Linux or Windows runtime hosts can be added later.
 
+### Validated Linux runtime baseline
+
+The initial Linux host has successfully launched MAME without X11 by using SDL's KMSDRM video backend. The validated local execution path is:
+
+```text
+runtime or SSH shell
+        -> MAME
+        -> SDL
+        -> KMSDRM / DRM/KMS
+        -> GPU and local display
+```
+
+A locally attached keyboard also controlled MAME without X after the launching user received permission to read the relevant `/dev/input/event*` devices. Pressing `Esc` terminated MAME cleanly and returned control to the launching shell.
+
+The validated command is:
+
+```bash
+mame -inipath /opt/4play/config/mame <rom>
+```
+
+This establishes that X11, a desktop environment, a window manager, and a graphical terminal are not required for the initial single-session local runtime experiment. It does **not** yet establish that multiple simultaneous MAME sessions can share one GPU or KMS device, nor does it settle the remote capture and streaming design.
+
+The production runtime should launch MAME through a dedicated service account with controlled access to required video, render, audio, and input devices. Broad membership in the Linux `input` group is acceptable for development validation but should be reconsidered during security hardening.
+
+See [MAME KMSDRM Runtime Validation](../experiments/MAME_KMSDRM_VALIDATION.md) for the experiment record and evidence.
+
 ### Seat client
 
 Responsibilities:
