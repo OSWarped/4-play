@@ -29,4 +29,4 @@ sessions/
 media-cache/
 
 # IDEs
-.idea/
+.idea/runtime/session-runtime/target/
