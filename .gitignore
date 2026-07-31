@@ -30,3 +30,5 @@ media-cache/
 
 # IDEs
 .idea/runtime/session-runtime/target/
+
+**/target/

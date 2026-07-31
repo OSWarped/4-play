@@ -1,4 +1,5 @@
-use std::fs::OpenOptions;
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{
@@ -13,12 +14,13 @@ const AUDIO_CHANNELS: usize = 2;
 const AUDIO_BYTES_PER_SAMPLE: usize = 2;
 const AUDIO_BLOCK_MS: usize = 20;
 
+const VIDEO_QUEUE_CAPACITY: usize = 2;
+const AUDIO_QUEUE_CAPACITY: usize = 4;
+
 #[derive(Debug, Clone)]
 pub struct MediaBridgeConfig {
     pub video_path: PathBuf,
     pub audio_path: PathBuf,
-    pub video_capture_path: PathBuf,
-    pub audio_capture_path: PathBuf,
     pub width: u32,
     pub height: u32,
 }
@@ -30,6 +32,13 @@ pub struct MediaBridgeMetrics {
     pub audio_samples: AtomicU64,
     pub video_bytes: AtomicU64,
     pub audio_bytes: AtomicU64,
+
+    pub video_frames_dropped: AtomicU64,
+    pub audio_blocks_dropped: AtomicU64,
+
+    pub video_queue_depth: AtomicU64,
+    pub audio_queue_depth: AtomicU64,
+
     pub first_video_at: Mutex<Option<Instant>>,
     pub first_audio_at: Mutex<Option<Instant>>,
 }
@@ -51,53 +60,59 @@ impl MediaBridge {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self, video_output: File, audio_output: File) {
         self.running.store(true, Ordering::Release);
 
-        let video_path = self.config.video_path.clone();
-        let video_capture_path = self.config.video_capture_path.clone();
-        let video_frame_bytes = self.config.width as usize * self.config.height as usize * 4;
+        let (video_sender, video_receiver) = bounded::<Vec<u8>>(VIDEO_QUEUE_CAPACITY);
 
-        let video_metrics = Arc::clone(&self.metrics);
-        let video_running = Arc::clone(&self.running);
+        let (audio_sender, audio_receiver) = bounded::<Vec<u8>>(AUDIO_QUEUE_CAPACITY);
+
+        self.start_video_reader(video_sender, video_receiver.clone());
+
+        self.start_audio_reader(audio_sender, audio_receiver.clone());
+
+        self.start_video_writer(video_receiver, video_output);
+        self.start_audio_writer(audio_receiver, audio_output);
+    }
+
+    fn start_video_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
+        let video_path = self.config.video_path.clone();
+
+        let frame_bytes = self.config.width as usize * self.config.height as usize * 4;
+
+        let metrics = Arc::clone(&self.metrics);
+        let running = Arc::clone(&self.running);
 
         self.handles.push(thread::spawn(move || {
             println!("Video reader waiting on {}", video_path.display());
 
             let mut source = OpenOptions::new().read(true).open(&video_path)?;
-            let mut capture = OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(&video_capture_path)?;
 
-            let mut frame = vec![0_u8; video_frame_bytes];
+            println!("Video reader connected: {} bytes per frame", frame_bytes);
 
-            println!(
-                "Video reader connected: {} bytes per frame",
-                video_frame_bytes
-            );
-            println!("Video capture output: {}", video_capture_path.display());
+            while running.load(Ordering::Acquire) {
+                let mut frame = vec![0_u8; frame_bytes];
 
-            while video_running.load(Ordering::Acquire) {
                 match source.read_exact(&mut frame) {
                     Ok(()) => {
-                        capture.write_all(&frame)?;
+                        record_first_video(&metrics)?;
 
-                        if video_metrics.video_frames.load(Ordering::Relaxed) == 0 {
-                            let mut first = video_metrics
-                                .first_video_at
-                                .lock()
-                                .map_err(|_| io::Error::other("video timestamp lock poisoned"))?;
+                        metrics.video_frames.fetch_add(1, Ordering::Relaxed);
 
-                            *first = Some(Instant::now());
-                        }
-
-                        video_metrics.video_frames.fetch_add(1, Ordering::Relaxed);
-
-                        video_metrics
+                        metrics
                             .video_bytes
-                            .fetch_add(video_frame_bytes as u64, Ordering::Relaxed);
+                            .fetch_add(frame_bytes as u64, Ordering::Relaxed);
+
+                        send_latest(
+                            &sender,
+                            &drop_receiver,
+                            frame,
+                            &metrics.video_frames_dropped,
+                        );
+
+                        metrics
+                            .video_queue_depth
+                            .store(sender.len() as u64, Ordering::Relaxed);
                     }
                     Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
@@ -106,62 +121,58 @@ impl MediaBridge {
                 }
             }
 
-            capture.flush()?;
-
+            drop(sender);
             Ok(())
         }));
+    }
 
+    fn start_audio_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
         let audio_path = self.config.audio_path.clone();
-        let audio_capture_path = self.config.audio_capture_path.clone();
 
-        let audio_block_samples = AUDIO_SAMPLE_RATE * AUDIO_BLOCK_MS / 1_000;
+        let block_samples = AUDIO_SAMPLE_RATE * AUDIO_BLOCK_MS / 1_000;
 
-        let audio_block_bytes = audio_block_samples * AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
+        let block_bytes = block_samples * AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 
-        let audio_metrics = Arc::clone(&self.metrics);
-        let audio_running = Arc::clone(&self.running);
+        let metrics = Arc::clone(&self.metrics);
+        let running = Arc::clone(&self.running);
 
         self.handles.push(thread::spawn(move || {
             println!("Audio reader waiting on {}", audio_path.display());
 
             let mut source = OpenOptions::new().read(true).open(&audio_path)?;
-            let mut capture = OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(&audio_capture_path)?;
-
-            let mut block = vec![0_u8; audio_block_bytes];
 
             println!(
                 "Audio reader connected: {} bytes per {} ms block",
-                audio_block_bytes, AUDIO_BLOCK_MS
+                block_bytes, AUDIO_BLOCK_MS
             );
-            println!("Audio capture output: {}", audio_capture_path.display());
 
-            while audio_running.load(Ordering::Acquire) {
+            while running.load(Ordering::Acquire) {
+                let mut block = vec![0_u8; block_bytes];
+
                 match source.read_exact(&mut block) {
                     Ok(()) => {
-                        capture.write_all(&block)?;
+                        record_first_audio(&metrics)?;
 
-                        if audio_metrics.audio_blocks.load(Ordering::Relaxed) == 0 {
-                            let mut first = audio_metrics
-                                .first_audio_at
-                                .lock()
-                                .map_err(|_| io::Error::other("audio timestamp lock poisoned"))?;
+                        metrics.audio_blocks.fetch_add(1, Ordering::Relaxed);
 
-                            *first = Some(Instant::now());
-                        }
-
-                        audio_metrics.audio_blocks.fetch_add(1, Ordering::Relaxed);
-
-                        audio_metrics
+                        metrics
                             .audio_samples
-                            .fetch_add(audio_block_samples as u64, Ordering::Relaxed);
+                            .fetch_add(block_samples as u64, Ordering::Relaxed);
 
-                        audio_metrics
+                        metrics
                             .audio_bytes
-                            .fetch_add(audio_block_bytes as u64, Ordering::Relaxed);
+                            .fetch_add(block_bytes as u64, Ordering::Relaxed);
+
+                        send_latest(
+                            &sender,
+                            &drop_receiver,
+                            block,
+                            &metrics.audio_blocks_dropped,
+                        );
+
+                        metrics
+                            .audio_queue_depth
+                            .store(sender.len() as u64, Ordering::Relaxed);
                     }
                     Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
@@ -170,8 +181,41 @@ impl MediaBridge {
                 }
             }
 
-            capture.flush()?;
+            drop(sender);
+            Ok(())
+        }));
+    }
 
+    fn start_video_writer(&mut self, receiver: Receiver<Vec<u8>>, mut output: File) {
+        let metrics = Arc::clone(&self.metrics);
+
+        self.handles.push(thread::spawn(move || {
+            while let Ok(frame) = receiver.recv() {
+                output.write_all(&frame)?;
+
+                metrics
+                    .video_queue_depth
+                    .store(receiver.len() as u64, Ordering::Relaxed);
+            }
+
+            output.flush()?;
+            Ok(())
+        }));
+    }
+
+    fn start_audio_writer(&mut self, receiver: Receiver<Vec<u8>>, mut output: File) {
+        let metrics = Arc::clone(&self.metrics);
+
+        self.handles.push(thread::spawn(move || {
+            while let Ok(block) = receiver.recv() {
+                output.write_all(&block)?;
+
+                metrics
+                    .audio_queue_depth
+                    .store(receiver.len() as u64, Ordering::Relaxed);
+            }
+
+            output.flush()?;
             Ok(())
         }));
     }
@@ -183,8 +227,18 @@ impl MediaBridge {
             thread::sleep(Duration::from_secs(1));
 
             let frames = self.metrics.video_frames.load(Ordering::Relaxed);
+
             let audio_blocks = self.metrics.audio_blocks.load(Ordering::Relaxed);
+
             let audio_samples = self.metrics.audio_samples.load(Ordering::Relaxed);
+
+            let dropped_video = self.metrics.video_frames_dropped.load(Ordering::Relaxed);
+
+            let dropped_audio = self.metrics.audio_blocks_dropped.load(Ordering::Relaxed);
+
+            let video_queue = self.metrics.video_queue_depth.load(Ordering::Relaxed);
+
+            let audio_queue = self.metrics.audio_queue_depth.load(Ordering::Relaxed);
 
             let first_video = self
                 .metrics
@@ -214,21 +268,16 @@ impl MediaBridge {
 
             let audio_seconds = audio_samples as f64 / AUDIO_SAMPLE_RATE as f64;
 
-            let startup_offset_ms = match (first_video, first_audio) {
-                (Some(video), Some(audio)) if audio >= video => {
-                    audio.duration_since(video).as_secs_f64() * 1_000.0
-                }
-                (Some(video), Some(audio)) => {
-                    -(video.duration_since(audio).as_secs_f64() * 1_000.0)
-                }
-                _ => 0.0,
-            };
+            let startup_offset_ms = startup_offset_ms(first_video, first_audio);
 
             println!(
                 "video_frames={frames:<6} video_fps={video_fps:<6.2} \
                  audio_blocks={audio_blocks:<6} \
                  audio_seconds={audio_seconds:<6.2} \
-                 startup_offset_ms={startup_offset_ms:+.3}"
+                 offset_ms={startup_offset_ms:+.3} \
+                 dropped_v={dropped_video:<5} \
+                 dropped_a={dropped_audio:<5} \
+                 vq={video_queue} aq={audio_queue}"
             );
         }
     }
@@ -240,11 +289,80 @@ impl MediaBridge {
             match handle.join() {
                 Ok(result) => result?,
                 Err(_) => {
-                    return Err(io::Error::other("media reader thread panicked"));
+                    return Err(io::Error::other("media bridge thread panicked"));
                 }
             }
         }
 
         Ok(())
+    }
+}
+
+fn send_latest(
+    sender: &Sender<Vec<u8>>,
+    drop_receiver: &Receiver<Vec<u8>>,
+    value: Vec<u8>,
+    dropped_counter: &AtomicU64,
+) {
+    match sender.try_send(value) {
+        Ok(()) => {}
+
+        Err(TrySendError::Full(value)) => {
+            match drop_receiver.try_recv() {
+                Ok(_) => {
+                    dropped_counter.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return,
+            }
+
+            if sender.try_send(value).is_err() {
+                dropped_counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        Err(TrySendError::Disconnected(_)) => {}
+    }
+}
+
+fn record_first_video(metrics: &MediaBridgeMetrics) -> io::Result<()> {
+    if metrics.video_frames.load(Ordering::Relaxed) == 0 {
+        let mut first = metrics
+            .first_video_at
+            .lock()
+            .map_err(|_| io::Error::other("video timestamp lock poisoned"))?;
+
+        if first.is_none() {
+            *first = Some(Instant::now());
+        }
+    }
+
+    Ok(())
+}
+
+fn record_first_audio(metrics: &MediaBridgeMetrics) -> io::Result<()> {
+    if metrics.audio_blocks.load(Ordering::Relaxed) == 0 {
+        let mut first = metrics
+            .first_audio_at
+            .lock()
+            .map_err(|_| io::Error::other("audio timestamp lock poisoned"))?;
+
+        if first.is_none() {
+            *first = Some(Instant::now());
+        }
+    }
+
+    Ok(())
+}
+
+fn startup_offset_ms(video: Option<Instant>, audio: Option<Instant>) -> f64 {
+    match (video, audio) {
+        (Some(video), Some(audio)) if audio >= video => {
+            audio.duration_since(video).as_secs_f64() * 1_000.0
+        }
+
+        (Some(video), Some(audio)) => -(video.duration_since(audio).as_secs_f64() * 1_000.0),
+
+        _ => 0.0,
     }
 }
