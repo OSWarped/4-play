@@ -1,6 +1,9 @@
+mod media_bridge;
 mod session;
 
+use media_bridge::{MediaBridge, MediaBridgeConfig};
 use session::{Session, SessionConfig};
+use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SessionConfig {
@@ -14,11 +17,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut session = Session::new(config);
-
     session.prepare()?;
     session.create_media_endpoints()?;
 
     println!("{session}");
+
+    let mut bridge = MediaBridge::new(MediaBridgeConfig {
+        video_path: session.video_path(),
+        audio_path: session.audio_path(),
+        width: session.config.width,
+        height: session.config.height,
+    });
+
+    bridge.start();
+
+    println!("Media bridge started. Launch MAME in another terminal.");
+
+    bridge.monitor_for(Duration::from_secs(30));
+    bridge.stop()?;
 
     Ok(())
 }
