@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -17,6 +17,8 @@ const AUDIO_BLOCK_MS: usize = 20;
 pub struct MediaBridgeConfig {
     pub video_path: PathBuf,
     pub audio_path: PathBuf,
+    pub video_capture_path: PathBuf,
+    pub audio_capture_path: PathBuf,
     pub width: u32,
     pub height: u32,
 }
@@ -53,6 +55,7 @@ impl MediaBridge {
         self.running.store(true, Ordering::Release);
 
         let video_path = self.config.video_path.clone();
+        let video_capture_path = self.config.video_capture_path.clone();
         let video_frame_bytes = self.config.width as usize * self.config.height as usize * 4;
 
         let video_metrics = Arc::clone(&self.metrics);
@@ -61,17 +64,26 @@ impl MediaBridge {
         self.handles.push(thread::spawn(move || {
             println!("Video reader waiting on {}", video_path.display());
 
-            let mut file = OpenOptions::new().read(true).open(&video_path)?;
+            let mut source = OpenOptions::new().read(true).open(&video_path)?;
+            let mut capture = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&video_capture_path)?;
+
             let mut frame = vec![0_u8; video_frame_bytes];
 
             println!(
                 "Video reader connected: {} bytes per frame",
                 video_frame_bytes
             );
+            println!("Video capture output: {}", video_capture_path.display());
 
             while video_running.load(Ordering::Acquire) {
-                match file.read_exact(&mut frame) {
+                match source.read_exact(&mut frame) {
                     Ok(()) => {
+                        capture.write_all(&frame)?;
+
                         if video_metrics.video_frames.load(Ordering::Relaxed) == 0 {
                             let mut first = video_metrics
                                 .first_video_at
@@ -87,16 +99,23 @@ impl MediaBridge {
                             .video_bytes
                             .fetch_add(video_frame_bytes as u64, Ordering::Relaxed);
                     }
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
+                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
                     Err(error) => return Err(error),
                 }
             }
+
+            capture.flush()?;
 
             Ok(())
         }));
 
         let audio_path = self.config.audio_path.clone();
+        let audio_capture_path = self.config.audio_capture_path.clone();
+
         let audio_block_samples = AUDIO_SAMPLE_RATE * AUDIO_BLOCK_MS / 1_000;
+
         let audio_block_bytes = audio_block_samples * AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 
         let audio_metrics = Arc::clone(&self.metrics);
@@ -105,17 +124,26 @@ impl MediaBridge {
         self.handles.push(thread::spawn(move || {
             println!("Audio reader waiting on {}", audio_path.display());
 
-            let mut file = OpenOptions::new().read(true).open(&audio_path)?;
+            let mut source = OpenOptions::new().read(true).open(&audio_path)?;
+            let mut capture = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&audio_capture_path)?;
+
             let mut block = vec![0_u8; audio_block_bytes];
 
             println!(
                 "Audio reader connected: {} bytes per {} ms block",
                 audio_block_bytes, AUDIO_BLOCK_MS
             );
+            println!("Audio capture output: {}", audio_capture_path.display());
 
             while audio_running.load(Ordering::Acquire) {
-                match file.read_exact(&mut block) {
+                match source.read_exact(&mut block) {
                     Ok(()) => {
+                        capture.write_all(&block)?;
+
                         if audio_metrics.audio_blocks.load(Ordering::Relaxed) == 0 {
                             let mut first = audio_metrics
                                 .first_audio_at
@@ -135,10 +163,14 @@ impl MediaBridge {
                             .audio_bytes
                             .fetch_add(audio_block_bytes as u64, Ordering::Relaxed);
                     }
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
+                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
                     Err(error) => return Err(error),
                 }
             }
+
+            capture.flush()?;
 
             Ok(())
         }));
@@ -169,7 +201,15 @@ impl MediaBridge {
                 .and_then(|value| *value);
 
             let video_fps = first_video
-                .map(|started| frames as f64 / started.elapsed().as_secs_f64())
+                .map(|started| {
+                    let elapsed = started.elapsed().as_secs_f64();
+
+                    if elapsed > 0.0 {
+                        frames as f64 / elapsed
+                    } else {
+                        0.0
+                    }
+                })
                 .unwrap_or(0.0);
 
             let audio_seconds = audio_samples as f64 / AUDIO_SAMPLE_RATE as f64;
@@ -186,7 +226,8 @@ impl MediaBridge {
 
             println!(
                 "video_frames={frames:<6} video_fps={video_fps:<6.2} \
-                 audio_blocks={audio_blocks:<6} audio_seconds={audio_seconds:<6.2} \
+                 audio_blocks={audio_blocks:<6} \
+                 audio_seconds={audio_seconds:<6.2} \
                  startup_offset_ms={startup_offset_ms:+.3}"
             );
         }
@@ -198,7 +239,9 @@ impl MediaBridge {
         for handle in self.handles.drain(..) {
             match handle.join() {
                 Ok(result) => result?,
-                Err(_) => return Err(io::Error::other("media reader thread panicked")),
+                Err(_) => {
+                    return Err(io::Error::other("media reader thread panicked"));
+                }
             }
         }
 

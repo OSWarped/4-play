@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut session = Session::new(config);
+
     session.prepare()?;
     session.create_media_endpoints()?;
 
@@ -25,6 +26,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bridge = MediaBridge::new(MediaBridgeConfig {
         video_path: session.video_path(),
         audio_path: session.audio_path(),
+        video_capture_path: session.working_directory.join("captured-video.raw"),
+        audio_capture_path: session.working_directory.join("captured-audio.pcm"),
         width: session.config.width,
         height: session.config.height,
     });
@@ -33,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge started. Launch MAME in another terminal.");
 
-    bridge.monitor_for(Duration::from_secs(30));
+    bridge.monitor_for(Duration::from_secs(60));
     bridge.stop()?;
 
     Ok(())
