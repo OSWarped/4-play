@@ -1,13 +1,15 @@
 mod encoder;
+mod mame;
 mod media_bridge;
 mod session;
 
 use encoder::{EncoderConfig, EncoderProcess};
+use mame::{MameConfig, MameProcess};
 use media_bridge::{MediaBridge, MediaBridgeConfig};
 use session::{Session, SessionConfig};
 use std::env;
+use std::path::PathBuf;
 use std::process;
-use std::time::Duration;
 
 #[derive(Debug)]
 struct RuntimeArgs {
@@ -18,21 +20,19 @@ struct RuntimeArgs {
     fps: f64,
     destination_ip: String,
     udp_port: u16,
-    duration_seconds: u64,
 }
 
 fn print_usage(program: &str) {
     eprintln!(
         "Usage:
-  {program} \\
-    --session-id <id> \\
-    --rom <name> \\
-    --width <pixels> \\
-    --height <pixels> \\
-    --fps <rate> \\
-    --udp-port <port> \\
-    [--destination-ip <address>] \\
-    [--duration <seconds>]"
+  {program} \
+    --session-id <id> \
+    --rom <name> \
+    --width <pixels> \
+    --height <pixels> \
+    --fps <rate> \
+    --udp-port <port> \
+    [--destination-ip <address>]"
     );
 }
 
@@ -76,9 +76,7 @@ fn parse_args() -> RuntimeArgs {
     let mut height = None;
     let mut fps = None;
     let mut udp_port = None;
-
     let mut destination_ip = String::from("192.168.20.10");
-    let mut duration_seconds = 70_u64;
 
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -88,47 +86,34 @@ fn parse_args() -> RuntimeArgs {
                     "--session-id",
                 ));
             }
-
             "--rom" => {
                 rom = Some(require_value(&mut args, "--rom"));
             }
-
             "--width" => {
                 width = Some(parse_value(require_value(&mut args, "--width"), "--width"));
             }
-
             "--height" => {
                 height = Some(parse_value(
                     require_value(&mut args, "--height"),
                     "--height",
                 ));
             }
-
             "--fps" => {
                 fps = Some(parse_value(require_value(&mut args, "--fps"), "--fps"));
             }
-
             "--destination-ip" => {
                 destination_ip = require_value(&mut args, "--destination-ip");
             }
-
             "--udp-port" => {
                 udp_port = Some(parse_value(
                     require_value(&mut args, "--udp-port"),
                     "--udp-port",
                 ));
             }
-
-            "--duration" => {
-                duration_seconds =
-                    parse_value(require_value(&mut args, "--duration"), "--duration");
-            }
-
             "--help" | "-h" => {
                 print_usage(&program);
                 process::exit(0);
             }
-
             unknown => {
                 eprintln!("Unknown option: {unknown}");
                 print_usage(&program);
@@ -137,7 +122,7 @@ fn parse_args() -> RuntimeArgs {
         }
     }
 
-    RuntimeArgs {
+    let parsed = RuntimeArgs {
         session_id: required(session_id, "--session-id", &program),
         rom: required(rom, "--rom", &program),
         width: required(width, "--width", &program),
@@ -145,8 +130,19 @@ fn parse_args() -> RuntimeArgs {
         fps: required(fps, "--fps", &program),
         destination_ip,
         udp_port: required(udp_port, "--udp-port", &program),
-        duration_seconds,
+    };
+
+    if parsed.width == 0 || parsed.height == 0 {
+        eprintln!("Width and height must be greater than zero.");
+        process::exit(2);
     }
+
+    if !parsed.fps.is_finite() || parsed.fps <= 0.0 {
+        eprintln!("FPS must be a positive finite number.");
+        process::exit(2);
+    }
+
+    parsed
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -188,12 +184,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     bridge.start(inputs.video, inputs.audio);
 
-    println!(
-        "Live bridge ready for session {}. Launch MAME.",
-        session.config.id
-    );
+    println!("Media bridge ready for session {}.", session.config.id);
 
-    bridge.monitor_for(Duration::from_secs(args.duration_seconds));
+    let mame_config = MameConfig {
+        binary: PathBuf::from("/home/blake/src/mame-4play/mame"),
+        ini_path: PathBuf::from("/opt/4play/config/mame"),
+        rom: session.config.rom.clone(),
+        working_directory: session.working_directory.clone(),
+        video_path: session.video_path(),
+        audio_path: session.audio_path(),
+    };
+
+    let mut mame = MameProcess::spawn(&mame_config)?;
+
+    let mame_status = mame.wait()?;
+
+    println!("MAME exited with status: {mame_status}");
 
     bridge.stop()?;
     encoder.wait()?;
