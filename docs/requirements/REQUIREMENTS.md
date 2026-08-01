@@ -1,5 +1,17 @@
 # 4-Play Requirements
 
+## Implementation status
+
+As of the current Phase 1A implementation:
+
+- synchronized remote video and audio have been demonstrated over the wired LAN
+- the Rust runtime launches and owns headless MAME and FFmpeg from one command
+- media-side concurrent-session isolation has been demonstrated
+- a Linux virtual controller has been created and validated independently
+- remote controller delivery, disconnect neutralization, and objective button-to-photon latency measurements are not yet complete
+
+Requirement language below remains normative unless a section explicitly identifies a later phase. Demonstrated behavior is evidence toward a requirement, not a waiver of remaining acceptance criteria.
+
 ## Terminology
 
 - **Seat** — a display, controls, audio endpoint, and seat-client instance.
@@ -32,6 +44,8 @@ These are Product MVP requirements and are not required for the Phase 1A remote-
 
 These become required in Phase 1C. Phase 1A may use manually configured addresses and one hardcoded legal test title.
 
+Current evidence: the runtime creates session-specific directories and launches MAME and FFmpeg from one command, but the seat does not yet request the session through a control plane.
+
 ### Joining and player slots
 
 - A seat shall inspect available player slots before joining.
@@ -51,6 +65,8 @@ These are Product MVP requirements targeted for Phase 2.
 - Operator escape actions shall be distinct from game input.
 - Input timeout shall release pressed buttons and center analog axes.
 
+Current evidence: a Rust development tool creates a virtual Linux controller with two analog axes and eight digital buttons. MAME integration, seat transport, isolation, and timeout behavior remain unvalidated.
+
 ### Media
 
 - A playing seat shall receive synchronized video and audio.
@@ -58,12 +74,16 @@ These are Product MVP requirements targeted for Phase 2.
 - Preview generation shall not materially degrade active gameplay.
 - Preview availability shall never block starting, joining, or continuing gameplay.
 
+Current evidence: synchronized live video and audio have been demonstrated for several MAME titles using raw MAME output, a Rust bridge, FFmpeg, and UDP MPEG-TS. Preview behavior is not implemented.
+
 ### Operations
 
 - Operators shall view registered seats, runtime hosts, and sessions.
 - Operators shall terminate sessions and drain runtime hosts.
 - The system shall identify unhealthy and orphaned sessions.
 - Runtime processes shall be cleaned up after normal or abnormal termination.
+
+Current evidence: the validated Ctrl+C path left no MAME or FFmpeg process running. Operator workflows and broader abnormal termination tests remain.
 
 ## Non-functional requirements
 
@@ -92,6 +112,8 @@ The initial engineering goal on the wired reference network is:
 
 These values are provisional experiment goals, not final universal product requirements. Final acceptance targets shall be established after measurements across representative game categories, including cooperative beat-'em-ups and latency-sensitive fighting or action games.
 
+Current evidence covers media synchronization and observed real-time production rates, but it does not yet satisfy button-to-photon measurement requirements.
+
 ### Isolation and recovery
 
 - Concurrent sessions shall not share controller state, saves, processes, or temporary files.
@@ -100,6 +122,8 @@ These values are provisional experiment goals, not final universal product requi
 - Seats shall return to a usable state after session loss without rebooting.
 - Start, stop, and cleanup commands shall be idempotent once those commands exist.
 
+Current evidence confirms separate media directories and pipelines for simultaneous sessions. Controller, save, and failure isolation remain to be proven.
+
 ### Security and maintainability
 
 - Devices shall authenticate to the control plane in Phase 1C and later.
@@ -107,7 +131,9 @@ These values are provisional experiment goals, not final universal product requi
 - Clients shall not submit arbitrary executable paths or command-line arguments.
 - Emulator-specific behavior shall be isolated behind adapters.
 - Public protocol messages shall be versioned.
-- Secrets, ROMs, BIOS files, saves, and copyrighted media shall not be committed.
+- Secrets, ROMs, BIOS files, CHDs, saves, and copyrighted media shall not be committed.
+
+The current development runtime contains host-specific paths and manually supplied media metadata. Those are acceptable for the feasibility harness but must move to validated configuration before orchestration.
 
 ## Technical feasibility acceptance tests
 
@@ -124,6 +150,8 @@ The demonstration shall:
 7. demonstrate disconnect behavior that does not leave controls stuck
 8. record whether the proposed direct seat-to-runtime data path should be accepted, revised, or rejected
 
+Progress: items 1 and 3 are demonstrated. Items 2 and 4 through 8 remain open or incomplete.
+
 ### Phase 1B — Isolation
 
 The demonstration shall:
@@ -131,9 +159,11 @@ The demonstration shall:
 1. launch two independent MAME sessions
 2. assign separate virtual controllers and working directories
 3. prove that each seat controls only its assigned session
-4. force-stop one emulator process
+4. stop one emulator process unexpectedly
 5. show that the other session continues operating
-6. clean up the failed session's processes, controllers, and temporary resources
+6. clean up the stopped session's processes, controllers, and temporary resources
+
+Progress: two independent MAME sessions and separate working/media resources are demonstrated. Controller and failure isolation remain open.
 
 ### Phase 1C — Orchestration
 
@@ -147,6 +177,8 @@ The demonstration shall:
 6. expose diagnosable lifecycle state
 7. detect normal termination or runtime loss
 8. return the seat to browsing without rebooting
+
+Status: not started.
 
 ## Product MVP acceptance statement
 
