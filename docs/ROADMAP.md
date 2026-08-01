@@ -1,67 +1,88 @@
 # 4-Play Roadmap
 
-## Two different milestones
+## Milestones
 
-The technical feasibility milestone and the product MVP are intentionally separate.
+Technical feasibility and the product MVP remain separate milestones.
 
 - **Technical feasibility** proves that centrally hosted emulation can feel responsive, remain isolated, and recover predictably.
-- **Product MVP** proves the experience that makes 4-Play distinctive: multiple seats can discover, preview, start, join, and spectate sessions without operator intervention.
-
-A successful streaming experiment is necessary, but it is not the product MVP.
+- **Product MVP** proves the social experience: multiple seats can discover, preview, start, join, and spectate sessions without operator intervention.
 
 ## Phase 0 — Foundation
 
-- capture product vision and requirements
-- establish architecture and ADR process
-- define legal game-package boundaries
-- select the Phase 1 technical experiments
-- create repository contribution and issue workflow
-- inventory the proposed Linux runtime host
+Status: **complete enough for active implementation**.
 
-**Exit:** Phase 1A can begin without unresolved product-boundary or test-environment questions.
+Completed:
+
+- product vision and requirements
+- architecture and ADR process
+- legal game-package boundaries
+- repository and issue workflow
+- X-free Linux MAME validation
+- Rust workspace and initial session runtime
 
 ## Phase 1A — Remote-Play Feasibility
 
-Answer one question: can one thin seat client play one centrally hosted MAME game over the wired reference network with acceptable controls, video, and audio?
+Status: **in progress**.
 
-- one hardcoded legal test game
-- one seat and one runtime host
-- manually configured addresses
-- direct controller transport experiment
-- low-latency video and audio experiment
-- repeatable latency and jitter measurement
-- local-emulation baseline
-- provisional reconnect behavior
-- no catalog database, scheduler, or player-slot service
+Validated:
 
-**Exit:** one remote seat is playable, measurements are documented, and there is enough evidence to accept, revise, or reject ADR-0002.
+- one-command headless MAME launch from Rust
+- direct raw video and PCM audio output from MAME
+- synchronized H.264/AAC streaming over the wired LAN
+- UDP MPEG-TS playback on a Windows seat
+- bounded media queues that avoid unbounded latency growth
+- game-specific resolution and refresh-rate handling
+- synchronized playback for Aliens, TMNT, and Killer Instinct
+- CHD-backed title support
+- a Linux virtual controller with two axes and eight buttons
+
+Still required:
+
+- connect the virtual controller to the launched MAME session
+- implement seat-to-runtime controller transport
+- neutralize controls on disconnect or timeout
+- measure local and remote button-to-photon latency
+- record median, 95th-percentile, and 99th-percentile results
+- document host and client resource use
+
+**Exit:** one remote seat can control a centrally hosted session, synchronized media remains stable, disconnect behavior is safe, and latency measurements support a go, revise, or pivot decision.
 
 ## Phase 1B — Runtime Isolation
 
-Prove that concurrent emulator sessions can coexist safely.
+Status: **partially validated ahead of schedule**.
 
-- two MAME instances
+Already demonstrated:
+
+- two simultaneous MAME instances
+- separate session directories and media FIFOs
+- independent Rust media bridges and encoders
+- different game resolutions and refresh rates in parallel
+- no observed media cross-talk between Aliens and TMNT
+- one-command ownership of MAME and FFmpeg per session
+
+Still required:
+
 - two session-specific virtual controllers
-- separate working, save, and temporary directories
-- no cross-session input leakage
-- independent process supervision and termination
-- stuck-button failsafe on disconnect
-- orphan-process cleanup
-- forced-crash recovery test
+- proof of no cross-session input leakage
+- concurrent save and NVRAM validation
+- abnormal process termination and recovery tests
+- cleanup of stale processes and resources
+- proof that one failed session does not interrupt another
 
-**Exit:** two sessions operate independently and one session can fail without affecting the other.
+**Exit:** two complete playable sessions operate independently and one can stop without affecting the other.
 
 ## Phase 1C — Control-Plane Orchestration
 
-Replace manual experiment configuration with the first durable platform slice.
+Status: **not started**.
 
 - control-plane service skeleton
 - runtime-host registration and heartbeat
 - minimal legal test catalog
 - versioned session lifecycle protocol
-- MAME runtime adapter
+- MAME runtime adapter configuration
+- automatic MAME metadata discovery
 - session allocation and connection grants
-- minimal seat client launch workflow
+- minimal seat launch workflow
 - diagnosable failure and recovery states
 
 **Exit:** a seat can browse the test catalog, request a session, connect to the assigned runtime, play, and return to browsing after normal termination or runtime loss.
