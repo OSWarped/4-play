@@ -27,7 +27,9 @@ Responsibilities:
 
 The control plane does not process normal controller packets or transcode every gameplay frame.
 
-### Runtime host agent
+Status: not yet implemented.
+
+### Runtime host agent and session runtime
 
 Responsibilities:
 
@@ -42,31 +44,100 @@ Responsibilities:
 
 The first deployment may place the control plane and runtime host agent on one Linux machine. They remain separate logical components so additional Linux or Windows runtime hosts can be added later.
 
-### Validated Linux runtime baseline
+A first Rust implementation now exists at `runtime/session-runtime`.
 
-The initial Linux host has successfully launched MAME without X11 by using SDL's KMSDRM video backend. The validated local execution path is:
+### Validated session runtime path
+
+The active development path is:
+
+```text
+Rust session runtime
+  ├─ prepares session directories and FIFOs
+  ├─ launches FFmpeg
+  ├─ starts concurrent media readers and writers
+  └─ launches headless MAME
+
+Headless MAME
+  ├─ raw BGR0 video FIFO
+  └─ raw 48 kHz stereo S16LE audio FIFO
+          ↓
+Rust media bridge
+  ├─ complete video-frame reads
+  ├─ 20 ms audio-block reads
+  ├─ bounded video queue
+  ├─ bounded audio queue
+  └─ queue and timing metrics
+          ↓
+FFmpeg
+  ├─ libx264 ultrafast/zerolatency
+  ├─ AAC audio
+  └─ MPEG-TS over UDP
+          ↓
+Remote seat media player
+```
+
+This path avoids desktop, window, or screen capture. MAME emits media directly through custom raw-output options.
+
+The validated runtime owns both MAME and FFmpeg. A one-command session launch has been demonstrated. Ctrl+C terminated the parent runtime and the observed child processes without leaving MAME or FFmpeg running.
+
+### Earlier local KMSDRM validation
+
+Before direct raw media output was established, the Linux host successfully launched MAME without X11 by using SDL's KMSDRM video backend:
 
 ```text
 runtime or SSH shell
-        -> MAME
-        -> SDL
-        -> KMSDRM / DRM/KMS
-        -> GPU and local display
+  → MAME
+  → SDL
+  → KMSDRM / DRM/KMS
+  → GPU and local display
 ```
 
-A locally attached keyboard also controlled MAME without X after the launching user received permission to read the relevant `/dev/input/event*` devices. Pressing `Esc` terminated MAME cleanly and returned control to the launching shell.
+That experiment remains useful evidence that X11, a desktop environment, a window manager, and a graphical terminal are not required. It is not the current remote media path.
 
-The validated command is:
+See [MAME KMSDRM Runtime Validation](../experiments/MAME_KMSDRM_VALIDATION.md).
 
-```bash
-mame -inipath /opt/4play/config/mame <rom>
-```
+### Game-specific media metadata
 
-This establishes that X11, a desktop environment, a window manager, and a graphical terminal are not required for the initial single-session local runtime experiment. It does **not** yet establish that multiple simultaneous MAME sessions can share one GPU or KMS device, nor does it settle the remote capture and streaming design.
+Raw video contains no self-describing frame boundary or refresh metadata. The runtime must know the correct width, height, pixel format, and refresh rate for each game.
 
-The production runtime should launch MAME through a dedicated service account with controlled access to required video, render, audio, and input devices. Broad membership in the Linux `input` group is acceptable for development validation but should be reconsidered during security hardening.
+Validated examples:
 
-See [MAME KMSDRM Runtime Validation](../experiments/MAME_KMSDRM_VALIDATION.md) for the experiment record and evidence.
+| Game | Resolution | Refresh rate |
+| --- | --- | --- |
+| Aliens | 288×224 | 59.185606 Hz |
+| TMNT | 320×224 | 60.000000 Hz |
+| Killer Instinct | 320×240 | 58.981183 Hz |
+
+Encoding TMNT at the Aliens refresh rate caused video duration to be stretched and audio to appear ahead. Re-encoding at TMNT's actual 60 Hz refresh restored synchronization. Therefore, refresh rate is game metadata and must not be represented as one shared default.
+
+The current CLI accepts width, height, and refresh rate explicitly. Automatic discovery from MAME metadata is planned.
+
+### Concurrent-session validation
+
+Two independent MAME sessions have run simultaneously with:
+
+- separate working directories
+- separate video and audio FIFOs
+- separate Rust bridges
+- separate encoders and UDP destinations
+- different resolutions and refresh rates
+
+Aliens and TMNT maintained independent media output. This validates media-side session isolation, but complete Phase 1B isolation still requires separate virtual controllers, no input leakage, abnormal termination tests, and save/NVRAM validation.
+
+### Virtual controllers
+
+A development tool at `tools/uinput-test` creates a Linux virtual controller through `/dev/uinput`.
+
+Validated controller shape:
+
+- two absolute axes: X and Y
+- eight buttons
+- Linux event-device handler
+- Linux joystick handler
+
+The controller has been verified with `jstest`. It has not yet been integrated into `session-runtime` or proven as MAME input.
+
+Production runtime processes should use a dedicated service account with narrowly controlled access to required render, audio, and input devices. Membership in the Linux `input` group and a development udev rule are acceptable for current validation but require security review before deployment.
 
 ### Seat client
 
@@ -81,6 +152,8 @@ Responsibilities:
 - direct real-time connection to the assigned runtime host
 - graceful handling of reconnect, host loss, and session termination
 
+Status: VLC currently acts only as a media receiver for experiments. A real seat client has not yet been implemented.
+
 ### Operator client
 
 Responsibilities:
@@ -92,6 +165,8 @@ Responsibilities:
 - manage approved game packages
 - review latency and reliability telemetry
 
+Status: not yet implemented.
+
 ## Control plane and data plane
 
 ### Control plane
@@ -100,11 +175,15 @@ Reliable request/response and event delivery handles device registration, catalo
 
 ### Real-time data plane
 
-Direct seat-to-runtime communication handles controller state, video, audio, and stream timing feedback. WebRTC is the leading candidate, but Phase 1 must measure practical local-network alternatives rather than standardizing prematurely.
+Direct seat-to-runtime communication handles controller state, video, audio, and stream timing feedback.
+
+The current media feasibility path uses unicast UDP MPEG-TS carrying H.264 and AAC. This is a development transport, not yet a permanent product standard.
+
+The current input direction is state-oriented controller packets rather than isolated key-down and key-up events. The detailed transport remains unimplemented and must be validated for loss, jitter, disconnect neutralization, and latency.
 
 ## Session lifecycle
 
-Canonical states:
+Canonical product states:
 
 1. `requested`
 2. `allocating`
@@ -116,7 +195,7 @@ Canonical states:
 
 Failure states include `allocation_failed`, `launch_failed`, `runtime_lost`, `unhealthy`, and `terminated`.
 
-State transitions are owned by the control plane. Runtime facts originate from the runtime host. Commands must be idempotent.
+The current Rust runtime contains an early local state enum and process abstractions, but not all transitions are wired into durable orchestration. State transitions will ultimately be owned by the control plane while runtime facts originate from the runtime host. Commands must become idempotent.
 
 ## Player slots
 
@@ -159,6 +238,8 @@ SQLite is acceptable for the first single-server proof of concept. PostgreSQL is
 
 Every session receives a correlation ID. Logs and metrics should include session ID, seat ID, runtime host ID, game package version, emulator adapter version, launch duration, stream setup duration, input packet loss, measurable encode/decode latency, disconnects, and recovery events.
 
+The current media bridge already tracks received video frames, received audio blocks and samples, dropped video frames, dropped audio blocks, queue depth, first-arrival timing, and observed frame rate. These metrics are development instrumentation and are not yet exported to a monitoring system.
+
 ## Failure model
 
 The design assumes processes, seats, networks, and hosts can fail independently.
@@ -167,7 +248,9 @@ Required behaviors:
 
 - runtime heartbeat loss changes session health
 - orphan emulator processes are reaped
-- duplicate start/stop commands are safe
+- duplicate start and stop commands are safe
 - stale slot leases expire
 - a seat can return to browsing without rebooting
 - one failed session does not terminate unrelated sessions
+
+Current evidence confirms clean termination in the tested Ctrl+C path and no remaining MAME or FFmpeg process afterward. Broader abnormal termination and recovery tests remain.
