@@ -6,6 +6,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 pub struct MameConfig {
     pub binary: PathBuf,
     pub ini_path: PathBuf,
+    pub controller_path: PathBuf,
+    pub controller_profile: String,
     pub rom: String,
     pub working_directory: PathBuf,
     pub video_path: PathBuf,
@@ -26,13 +28,25 @@ impl MameProcess {
 
         validate_path(&config.binary, "MAME binary")?;
         validate_path(&config.ini_path, "MAME INI path")?;
+        validate_path(&config.controller_path, "MAME controller path")?;
+
+        let controller_file = config
+            .controller_path
+            .join(format!("{}.cfg", config.controller_profile));
+
+        validate_path(&controller_file, "MAME controller profile")?;
 
         let mut command = Command::new(&config.binary);
 
         command
             .env("SDL_VIDEODRIVER", "offscreen")
+            .env("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")
             .arg("-inipath")
             .arg(&config.ini_path)
+            .arg("-ctrlrpath")
+            .arg(&config.controller_path)
+            .arg("-ctrlr")
+            .arg(&config.controller_profile)
             .arg("-cfg_directory")
             .arg(cfg_directory)
             .arg("-nvram_directory")
@@ -45,6 +59,11 @@ impl MameProcess {
             .arg(diff_directory)
             .arg("-sound")
             .arg("none")
+            .arg("-joystick")
+            .arg("-joystickprovider")
+            .arg("sdljoy")
+            .arg("-background_input")
+            .arg("-verbose")
             .arg("-skip_gameinfo")
             .arg("-rawvideowrite")
             .arg(&config.video_path)
@@ -57,7 +76,12 @@ impl MameProcess {
 
         let child = command.spawn()?;
 
-        println!("MAME started: PID={} ROM={}", child.id(), config.rom);
+        println!(
+            "MAME started: PID={} ROM={} controller={}",
+            child.id(),
+            config.rom,
+            config.controller_profile
+        );
 
         Ok(Self { child })
     }

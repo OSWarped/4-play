@@ -2,6 +2,7 @@ mod encoder;
 mod mame;
 mod media_bridge;
 mod session;
+mod virtual_controller;
 
 use encoder::{EncoderConfig, EncoderProcess};
 use mame::{MameConfig, MameProcess};
@@ -10,6 +11,7 @@ use session::{Session, SessionConfig};
 use std::env;
 use std::path::PathBuf;
 use std::process;
+use virtual_controller::VirtualController;
 
 #[derive(Debug)]
 struct RuntimeArgs {
@@ -186,9 +188,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge ready for session {}.", session.config.id);
 
+    let mut player_one = VirtualController::create(1)?;
+    player_one.neutralize()?;
+
+    println!(
+        "Virtual controller ready for session {}.",
+        session.config.id
+    );
+
     let mame_config = MameConfig {
         binary: PathBuf::from("/home/blake/src/mame-4play/mame"),
         ini_path: PathBuf::from("/opt/4play/config/mame"),
+        controller_path: PathBuf::from("/opt/4play/config/mame/ctrlr"),
+        controller_profile: String::from("4play"),
         rom: session.config.rom.clone(),
         working_directory: session.working_directory.clone(),
         video_path: session.video_path(),
@@ -197,9 +209,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut mame = MameProcess::spawn(&mame_config)?;
 
+    player_one.run_diagnostic_sequence()?;
+
+    println!("Diagnostic sequence finished. MAME will continue running.");
+
     let mame_status = mame.wait()?;
 
     println!("MAME exited with status: {mame_status}");
+
+    player_one.neutralize()?;
 
     bridge.stop()?;
     encoder.wait()?;
