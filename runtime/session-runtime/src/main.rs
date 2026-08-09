@@ -1,6 +1,7 @@
 mod encoder;
 mod mame;
 mod media_bridge;
+mod network_input;
 mod session;
 mod terminal_input;
 mod virtual_controller;
@@ -8,6 +9,7 @@ mod virtual_controller;
 use encoder::{EncoderConfig, EncoderProcess};
 use mame::{MameConfig, MameProcess};
 use media_bridge::{MediaBridge, MediaBridgeConfig};
+use network_input::run_network_input;
 use session::{Session, SessionConfig};
 use std::env;
 use std::path::PathBuf;
@@ -25,6 +27,7 @@ struct RuntimeArgs {
     destination_ip: String,
     udp_port: u16,
     terminal_input: bool,
+    input_port: Option<u16>,
 }
 
 fn print_usage(program: &str) {
@@ -38,7 +41,7 @@ fn print_usage(program: &str) {
     --fps <rate> \
     --udp-port <port> \
     [--destination-ip <address>] \
-    [--terminal-input]"
+    [--terminal-input | --input-port <port>]"
     );
 }
 
@@ -84,6 +87,7 @@ fn parse_args() -> RuntimeArgs {
     let mut udp_port = None;
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
+    let mut input_port = None;
 
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -120,6 +124,12 @@ fn parse_args() -> RuntimeArgs {
             "--terminal-input" => {
                 terminal_input = true;
             }
+            "--input-port" => {
+                input_port = Some(parse_value(
+                    require_value(&mut args, "--input-port"),
+                    "--input-port",
+                ));
+            }
             "--help" | "-h" => {
                 print_usage(&program);
                 process::exit(0);
@@ -141,6 +151,7 @@ fn parse_args() -> RuntimeArgs {
         destination_ip,
         udp_port: required(udp_port, "--udp-port", &program),
         terminal_input,
+        input_port,
     };
 
     if parsed.width == 0 || parsed.height == 0 {
@@ -150,6 +161,11 @@ fn parse_args() -> RuntimeArgs {
 
     if !parsed.fps.is_finite() || parsed.fps <= 0.0 {
         eprintln!("FPS must be a positive finite number.");
+        process::exit(2);
+    }
+
+    if parsed.terminal_input && parsed.input_port.is_some() {
+        eprintln!("--terminal-input and --input-port cannot be used together.");
         process::exit(2);
     }
 
@@ -197,8 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge ready for session {}.", session.config.id);
 
-    let mut controller = args
-        .terminal_input
+    let mut controller = (args.terminal_input || args.input_port.is_some())
         .then(|| VirtualController::create(1))
         .transpose()?;
 
@@ -214,7 +229,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mame = MameProcess::spawn(&mame_config)?;
 
     if let Some(controller) = controller.as_mut() {
-        let input_result = run_terminal_input(controller);
+        let input_result = if args.terminal_input {
+            run_terminal_input(controller)
+        } else {
+            run_network_input(controller, args.input_port.unwrap(), || {
+                Ok(mame.try_wait()?.is_some())
+            })
+        };
         let terminate_result = mame.terminate();
 
         input_result?;

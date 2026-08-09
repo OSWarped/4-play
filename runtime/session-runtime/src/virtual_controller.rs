@@ -2,6 +2,7 @@ use evdev::uinput::VirtualDevice;
 use evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup,
 };
+use input_protocol::{ControllerState, button};
 use std::io;
 use std::thread;
 use std::time::Duration;
@@ -20,6 +21,7 @@ pub enum ControllerButton {
 
 pub struct VirtualController {
     device: VirtualDevice,
+    state: ControllerState,
 }
 
 impl VirtualController {
@@ -50,7 +52,60 @@ impl VirtualController {
             .build()?;
 
         println!("Created virtual controller: {name}");
-        Ok(Self { device })
+        Ok(Self {
+            device,
+            state: ControllerState::default(),
+        })
+    }
+
+    pub fn apply_state(&mut self, state: ControllerState) -> io::Result<()> {
+        let mut events = Vec::new();
+        let old_x = axis_direction(self.state.axis_x);
+        let old_y = axis_direction(self.state.axis_y);
+        let new_x = axis_direction(state.axis_x);
+        let new_y = axis_direction(state.axis_y);
+
+        if old_x != new_x {
+            events.push(InputEvent::new(
+                EventType::ABSOLUTE.0,
+                AbsoluteAxisCode::ABS_X.0,
+                new_x,
+            ));
+        }
+        if old_y != new_y {
+            events.push(InputEvent::new(
+                EventType::ABSOLUTE.0,
+                AbsoluteAxisCode::ABS_Y.0,
+                new_y,
+            ));
+        }
+
+        for (mask, key) in [
+            (button::SOUTH, KeyCode::BTN_SOUTH),
+            (button::EAST, KeyCode::BTN_EAST),
+            (button::NORTH, KeyCode::BTN_NORTH),
+            (button::WEST, KeyCode::BTN_WEST),
+            (button::LEFT_SHOULDER, KeyCode::BTN_TL),
+            (button::RIGHT_SHOULDER, KeyCode::BTN_TR),
+            (button::COIN, KeyCode::BTN_SELECT),
+            (button::START, KeyCode::BTN_START),
+        ] {
+            let was_pressed = self.state.buttons & mask != 0;
+            let is_pressed = state.buttons & mask != 0;
+            if was_pressed != is_pressed {
+                events.push(InputEvent::new(
+                    EventType::KEY.0,
+                    key.0,
+                    i32::from(is_pressed),
+                ));
+            }
+        }
+
+        if !events.is_empty() {
+            self.device.emit(&events)?;
+        }
+        self.state = state;
+        Ok(())
     }
 
     pub fn tap_button(&mut self, button: ControllerButton, duration: Duration) -> io::Result<()> {
@@ -83,7 +138,9 @@ impl VirtualController {
             ]
             .map(|button| InputEvent::new(EventType::KEY.0, key_code(button).0, 0)),
         );
-        self.device.emit(&events)
+        self.device.emit(&events)?;
+        self.state = ControllerState::default();
+        Ok(())
     }
 
     fn set_button(&mut self, button: ControllerButton, pressed: bool) -> io::Result<()> {
@@ -108,6 +165,10 @@ impl VirtualController {
             ),
         ])
     }
+}
+
+fn axis_direction(value: i16) -> i32 {
+    i32::from(value.signum())
 }
 
 impl Drop for VirtualController {

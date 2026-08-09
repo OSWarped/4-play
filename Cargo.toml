@@ -2,5 +2,8 @@
 resolver = "2"
 
 members = [
-    "runtime/session-runtime", "tools/uinput-test",
+    "clients/seat-input",
+    "runtime/session-runtime",
+    "shared/input-protocol",
+    "tools/uinput-test",
 ]

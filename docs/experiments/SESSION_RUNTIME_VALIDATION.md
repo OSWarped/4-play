@@ -185,6 +185,52 @@ cargo run -p session-runtime -- \
 The terminal is restored and all virtual controls are neutralized when input
 mode ends. A terminal read failure also terminates the owned MAME process.
 
+### State-based seat input experiment
+
+The `seat-input` client replaces terminal-character taps with real key-down and
+key-up state captured on Windows. It sends a versioned controller snapshot
+immediately after each transition and every 50 ms as a heartbeat. One snapshot
+contains both axes and the complete button bitset, so diagonals, movement plus
+an action, and multi-button combinations remain simultaneous.
+
+Start the runtime receiver on Linux:
+
+```bash
+cargo run -p session-runtime -- \
+  --session-id 6 \
+  --rom tmnt \
+  --width 320 \
+  --height 224 \
+  --fps 60 \
+  --destination-ip 192.168.20.10 \
+  --udp-port 41006 \
+  --input-port 42000
+```
+
+Then start the input client from the repository on Windows:
+
+```powershell
+cargo run -p seat-input -- 192.168.20.68:42000
+```
+
+The runtime accepts one UDP source for this development session, rejects stale
+sequence numbers, and neutralizes the controller after 250 ms without a valid
+packet. After timeout, a restarted client may reconnect from a new source port.
+This experiment does not yet authenticate or encrypt input packets.
+
+To reduce player-side buffering while evaluating input latency, use a low-cache
+receiver. For VLC:
+
+```powershell
+vlc --network-caching=50 "udp://@:41006"
+```
+
+Or, when FFplay is available:
+
+```powershell
+ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 "udp://@:41006"
+```
+
 ## Current conclusions
 
 Validated:

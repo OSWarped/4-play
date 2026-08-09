@@ -1,10 +1,8 @@
 [package]
-name = "session-runtime"
+name = "seat-input"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-crossbeam-channel = "0.5"
-evdev = "0.13"
+crossterm = "0.29"
 input-protocol = { path = "../../shared/input-protocol" }
-libc = "0.2"

@@ -89,6 +89,8 @@ The next implementation milestone is to integrate that controller into `session-
 ## Repository map
 
 - `runtime/session-runtime/` — Rust session runtime, MAME lifecycle, media bridge, and encoder integration
+- `clients/seat-input/` — Windows development client for state-based keyboard input
+- `shared/input-protocol/` — versioned seat-to-runtime controller-state packets
 - `tools/uinput-test/` — development validation for runtime-created Linux virtual controllers
 - `docs/requirements/` — product and quality requirements
 - `docs/architecture/` — system boundaries, components, and validated data flows

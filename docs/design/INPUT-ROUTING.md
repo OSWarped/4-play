@@ -45,3 +45,15 @@ No global keyboard injection is permitted for normal gameplay.
 On timeout, the runtime host shall release all pressed buttons and center analog axes. A stuck-button failsafe is mandatory.
 
 During the reconnect grace period, the slot remains assigned but input remains neutral until the seat re-authenticates.
+
+## Phase 1A development transport
+
+The first state-based experiment uses UDP directly between `seat-input` and
+`session-runtime`. Packets contain a protocol version, player slot, monotonic
+sequence number, complete button bitset, signed X/Y axes, and development stop
+flag. The seat sends transitions immediately and a heartbeat every 50 ms.
+
+The runtime accepts one source per session, discards stale packets, and
+neutralizes its virtual controller after a 250 ms timeout. Authentication,
+session grants, timestamps, and encryption remain required before this protocol
+can be used outside the trusted development LAN.
