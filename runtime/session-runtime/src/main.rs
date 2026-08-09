@@ -2,6 +2,8 @@ mod encoder;
 mod mame;
 mod media_bridge;
 mod session;
+mod terminal_input;
+mod virtual_controller;
 
 use encoder::{EncoderConfig, EncoderProcess};
 use mame::{MameConfig, MameProcess};
@@ -10,6 +12,8 @@ use session::{Session, SessionConfig};
 use std::env;
 use std::path::PathBuf;
 use std::process;
+use terminal_input::run_terminal_input;
+use virtual_controller::VirtualController;
 
 #[derive(Debug)]
 struct RuntimeArgs {
@@ -20,6 +24,7 @@ struct RuntimeArgs {
     fps: f64,
     destination_ip: String,
     udp_port: u16,
+    terminal_input: bool,
 }
 
 fn print_usage(program: &str) {
@@ -32,7 +37,8 @@ fn print_usage(program: &str) {
     --height <pixels> \
     --fps <rate> \
     --udp-port <port> \
-    [--destination-ip <address>]"
+    [--destination-ip <address>] \
+    [--terminal-input]"
     );
 }
 
@@ -77,6 +83,7 @@ fn parse_args() -> RuntimeArgs {
     let mut fps = None;
     let mut udp_port = None;
     let mut destination_ip = String::from("192.168.20.10");
+    let mut terminal_input = false;
 
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -110,6 +117,9 @@ fn parse_args() -> RuntimeArgs {
                     "--udp-port",
                 ));
             }
+            "--terminal-input" => {
+                terminal_input = true;
+            }
             "--help" | "-h" => {
                 print_usage(&program);
                 process::exit(0);
@@ -130,6 +140,7 @@ fn parse_args() -> RuntimeArgs {
         fps: required(fps, "--fps", &program),
         destination_ip,
         udp_port: required(udp_port, "--udp-port", &program),
+        terminal_input,
     };
 
     if parsed.width == 0 || parsed.height == 0 {
@@ -186,6 +197,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge ready for session {}.", session.config.id);
 
+    let mut controller = args
+        .terminal_input
+        .then(|| VirtualController::create(1))
+        .transpose()?;
+
     let mame_config = MameConfig {
         binary: PathBuf::from("/home/blake/src/mame-4play/mame"),
         ini_path: PathBuf::from("/opt/4play/config/mame"),
@@ -196,6 +212,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut mame = MameProcess::spawn(&mame_config)?;
+
+    if let Some(controller) = controller.as_mut() {
+        let input_result = run_terminal_input(controller);
+        let terminate_result = mame.terminate();
+
+        input_result?;
+        terminate_result?;
+    }
 
     let mame_status = mame.wait()?;
 

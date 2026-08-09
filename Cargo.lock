@@ -94,6 +94,7 @@ name = "session-runtime"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "evdev",
  "libc",
 ]
 

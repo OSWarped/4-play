@@ -143,7 +143,47 @@ The `tools/uinput-test` crate creates `4-Play Virtual Controller` with:
 
 Linux exposed the device through both an event handler and joystick handler. `jstest` reported two axes and eight buttons and showed generated axis and button changes.
 
-The controller has not yet been integrated with the MAME session runtime.
+At the time of the initial validation, the controller had not yet been
+integrated with the MAME session runtime.
+
+### SSH terminal input experiment
+
+The current development build adds an opt-in `--terminal-input` mode to
+`session-runtime`. The runtime creates the virtual controller before MAME starts
+and reads individual characters from the controlling SSH terminal in raw mode.
+
+The development key layout is:
+
+| Terminal key | Controller input |
+| --- | --- |
+| `W`, `A`, `S`, `D` | up, left, down, right |
+| `J`, `K`, `L`, `;` | action buttons 1 through 4 |
+| `U`, `I` | action buttons 5 and 6 |
+| `1` | coin/select |
+| `2` | player start |
+| `Q` | stop MAME and end the session |
+
+Traditional SSH terminals do not transmit key-release events. Each received
+character therefore produces a 120 ms press followed by an explicit release.
+This mode is intended to validate playable terminal-to-MAME input, not to serve
+as the production seat input transport.
+
+Example for TMNT on the reference network:
+
+```bash
+cargo run -p session-runtime -- \
+  --session-id 5 \
+  --rom tmnt \
+  --width 320 \
+  --height 224 \
+  --fps 60 \
+  --destination-ip 192.168.20.10 \
+  --udp-port 41005 \
+  --terminal-input
+```
+
+The terminal is restored and all virtual controls are neutralized when input
+mode ends. A terminal read failure also terminates the owned MAME process.
 
 ## Current conclusions
 

@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 crossbeam-channel = "0.5"
+evdev = "0.13"
 libc = "0.2"
