@@ -22,7 +22,7 @@ Completed:
 
 ## Phase 1A — Remote-Play Feasibility
 
-Status: **in progress**.
+Status: **revise; architecture retained**.
 
 Validated:
 
@@ -42,12 +42,17 @@ Validated:
 - subjectively responsive control-to-video play through low-buffer FFplay
 - synchronized action and game sound during live TMNT play after applying
   wall-clock timestamps to the independent raw media inputs
+- thirty-minute sequential soak across TMNT, Aliens, and Killer Instinct with
+  clean cleanup, stable resources, and no audio drops
+- single-session host resource measurements and a Windows decoder-only lower
+  bound
 
 Still required:
 
 - measure local and remote button-to-photon latency
 - record median, 95th-percentile, and 99th-percentile results
-- document host and client resource use
+- correct or explicitly accept exact-60-Hz TMNT presentation near 50 fps
+- measure a rendered Windows player's resource use and memory plateau
 
 **Exit:** one remote seat can control a centrally hosted session, synchronized media remains stable, disconnect behavior is safe, and latency measurements support a go, revise, or pivot decision.
 

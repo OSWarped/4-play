@@ -2,10 +2,10 @@
 
 ## Status
 
-Decision deferred pending objective latency measurements. Remote input and
-responsive gameplay are now demonstrated, and the streamed action-to-sound lag
-has been resolved subjectively. The remaining decision evidence is objective
-measurement and resource characterization rather than basic feasibility.
+**Decision: revise.** Continue the direct seat-to-runtime architecture and
+targeted runtime hardening; do not pivot. Phase 1A is not closed because
+objective latency measurement is deferred and the exact-60-Hz TMNT profile is
+presented by FFmpeg at approximately 50 fps under wall-clock timestamping.
 
 ## Evidence available
 
@@ -28,27 +28,43 @@ measurement and resource characterization rather than basic feasibility.
 - wall-clock timestamps preserve elapsed time across unequal queue drops
 - live TMNT play confirmed synchronized sound and action while controls remained
   subjectively immediate
+- a thirty-minute sequential TMNT/Aliens/Killer Instinct soak completed with
+  exit status 0, clean cleanup, stable resources, empty final queues, and zero
+  audio drops for every session
+- one-session host use ranged from about 47% to 60% of one CPU and 344–383 MiB
+  summed maximum RSS across runtime, FFmpeg, and MAME
+- a Windows decoder-only TMNT benchmark averaged 0.44% of one CPU and 39.62 MiB
+  working set at approximately 1.40 Mbit/s
 
 ## Evidence still missing
 
 - local and remote button-to-photon distributions
 - objective local and streamed action-to-sound timing
-- complete reference-host resource measurements
+- rendered Windows-player resource and memory-plateau measurements
 - full two-session controller and failure isolation
+- native-rate presentation for the exact-60-Hz TMNT profile
 
 ## Provisional interpretation
 
-The direct seat-to-runtime architecture remains the leading approach. The current results justify continuing the experiment, but they do not justify beginning broad control-plane or Product MVP development yet.
+The direct seat-to-runtime architecture remains the leading approach. Tight
+subjective controls, synchronized sound, bounded long-running behavior, clean
+shutdown, and modest single-session resource use justify continued runtime
+engineering. Missing objective latency data and TMNT's presentation cadence do
+not justify broad control-plane or Product MVP development yet.
 
 ## Next decision gate
 
 Complete the following in order:
 
-1. measure local and remote input-to-video latency
-2. objectively confirm local and streamed action-to-sound timing
-3. record host and client resource use
-4. update this document with a go, revise, or pivot decision
+1. correct or explicitly accept the exact-60-Hz presentation cadence
+2. measure local and remote input-to-video latency when capture equipment is
+   available
+3. objectively confirm local and streamed action-to-sound timing
+4. run a longer rendered Windows-player resource test
+5. update this document and reconsider a `go` decision
 
 ## Final decision
 
-Pending.
+**Revise.** The architecture is viable and should continue. Phase 1A remains
+open for presentation-cadence correction and objective measurement; a pivot is
+not warranted.
