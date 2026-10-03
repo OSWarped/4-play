@@ -118,6 +118,9 @@ impl MediaBridge {
                     Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                        continue;
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -178,6 +181,9 @@ impl MediaBridge {
                     }
                     Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                        continue;
                     }
                     Err(error) => return Err(error),
                 }

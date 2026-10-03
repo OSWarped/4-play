@@ -28,14 +28,19 @@ Last updated: 2026-10-03
 - runtime metrics traced the game-only audio lag to unequal independent bridge
   drops: 254 video frames versus 179 20 ms audio blocks produced approximately
   650 ms of relative timeline skew
-- the current test branch preserves real elapsed time with wall-clock input
+- the runtime preserves real elapsed time with wall-clock input
   timestamps when its bounded low-latency queues discard stale media
 - live TMNT gameplay validated the result subjectively: controls remained tight
   and game sound was synchronized with visible action
+- a thirty-minute sequential TMNT/Aliens/Killer Instinct soak completed with
+  exit status 0, clean child-process cleanup, stable resources, empty final
+  queues, and no audio drops for all three sessions
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
+- correct or explicitly accept FFmpeg's approximately 50 fps presentation of
+  the synchronized exact-60-Hz TMNT input
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup of stale session FIFOs and directories

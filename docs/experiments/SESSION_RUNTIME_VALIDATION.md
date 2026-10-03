@@ -285,6 +285,32 @@ inherent to AAC, MPEG-TS, the network, FFplay, Windows mixing, or the HDMI
 output. The remaining investigation boundary is MAME timing and the raw
 audio/FIFO/bridge/input-queue path used only by game sessions.
 
+## Thirty-minute sequential soak
+
+On October 3, 2026, `tools/runtime-soak.sh` ran TMNT, Aliens, and Killer
+Instinct sequentially for approximately ten minutes each. The harness sampled
+runtime, FFmpeg, and MAME resources every ten seconds; requested shutdown with
+SIGTERM; and verified that all recorded PIDs were gone before starting the next
+game.
+
+| Game | Captured FPS | Audio | Bridge drops | FFmpeg output | Cleanup |
+| --- | ---: | ---: | ---: | --- | --- |
+| TMNT | 59.91 | 604.86 s | 359 video, 0 audio | 30,404 frames, 5,531 dropped, 50 fps | exit 0, clean |
+| Aliens | 59.11 | 605.00 s | 3 video, 0 audio | 35,775 frames, 31 dropped, 59 fps | exit 0, clean |
+| Killer Instinct | 58.94 | 604.40 s | 3 video, 0 audio | 35,385 frames, 262 dropped, 59 fps | exit 0, clean |
+
+All sessions ended with empty bridge queues. Raw video and audio began within
+2.1–2.3 ms of one another. No process survived its cleanup check, and sampled
+CPU and RSS remained stable. Killer Instinct was the heaviest MAME workload at
+about 41% of one CPU and 317 MiB RSS; FFmpeg remained roughly 14–16% of one CPU
+and about 58–61 MiB RSS across the observed profiles.
+
+The soak validates bounded long-running behavior and repeated cleanup. It also
+identifies a remaining exact-60-Hz presentation issue: TMNT capture remained at
+60 fps and synchronized, but wall-clock timestamp quantization caused FFmpeg to
+discard roughly one-sixth of its output frames. This requires a cadence fix or
+explicit acceptance before the Phase 1A decision.
+
 ## Current conclusions
 
 Validated:
@@ -300,17 +326,20 @@ Validated:
 - remote state-based input supports simultaneous controls
 - timeout neutralization and reconnect behavior work
 - low-buffer FFplay provides subjectively responsive input-to-video play
+- live TMNT play has subjectively synchronized sound and action
+- a thirty-minute, three-game sequential soak completed without queue growth,
+  audio loss, resource growth, or orphaned processes
 
 Not yet validated:
 
 - button-to-photon latency
-- objective action-to-sound delay and the best audio profile
-- long-duration soak behavior
+- objective action-to-sound timing
+- native-rate presentation for the exact-60-Hz TMNT profile
 - complete two-session controller and save isolation
 - hardware capacity limits
 
 ## Next experiment
 
-Measure the responsive baseline objectively, then compare AAC/20 ms,
-AAC/5 ms, and low-delay Opus/5 ms while holding all video and receiver settings
-constant.
+Measure the responsive baseline and action-to-sound timing objectively, then
+correct or explicitly accept the exact-60-Hz presentation cadence before the
+Phase 1A decision.
