@@ -49,7 +49,7 @@ pub struct EncoderInputs {
 }
 
 pub struct EncoderProcess {
-    child: Child,
+    child: Option<Child>,
 }
 
 impl EncoderProcess {
@@ -202,7 +202,7 @@ impl EncoderProcess {
         );
 
         Ok((
-            Self { child },
+            Self { child: Some(child) },
             EncoderInputs {
                 video: video_writer,
                 audio: audio_writer,
@@ -210,8 +210,12 @@ impl EncoderProcess {
         ))
     }
 
-    pub fn wait(mut self) -> io::Result<()> {
-        let status = self.child.wait()?;
+    pub fn wait(&mut self) -> io::Result<()> {
+        let status = self
+            .child
+            .take()
+            .ok_or_else(|| io::Error::other("FFmpeg process was already reaped"))?
+            .wait()?;
 
         if status.success() {
             Ok(())
@@ -222,12 +226,18 @@ impl EncoderProcess {
         }
     }
 
-    pub fn terminate(&mut self) -> io::Result<()> {
-        if self.child.try_wait()?.is_none() {
-            self.child.kill()?;
-        }
+}
 
-        Ok(())
+impl Drop for EncoderProcess {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
     }
 }
 

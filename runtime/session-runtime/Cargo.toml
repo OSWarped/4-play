@@ -8,3 +8,4 @@ crossbeam-channel = "0.5"
 evdev = "0.13"
 input-protocol = { path = "../../shared/input-protocol" }
 libc = "0.2"
+signal-hook = "0.3"

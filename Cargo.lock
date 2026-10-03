@@ -309,6 +309,7 @@ dependencies = [
  "evdev",
  "input-protocol",
  "libc",
+ "signal-hook",
 ]
 
 [[package]]

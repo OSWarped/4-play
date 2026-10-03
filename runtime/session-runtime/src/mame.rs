@@ -13,7 +13,7 @@ pub struct MameConfig {
 }
 
 pub struct MameProcess {
-    child: Child,
+    child: Option<Child>,
 }
 
 impl MameProcess {
@@ -59,27 +59,40 @@ impl MameProcess {
 
         println!("MAME started: PID={} ROM={}", child.id(), config.rom);
 
-        Ok(Self { child })
-    }
-
-    pub fn id(&self) -> u32 {
-        self.child.id()
-    }
-
-    pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        self.child.wait()
+        Ok(Self { child: Some(child) })
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        match self.child.as_mut() {
+            Some(child) => child.try_wait(),
+            None => Ok(None),
+        }
     }
 
-    pub fn terminate(&mut self) -> io::Result<()> {
-        if self.child.try_wait()?.is_none() {
-            self.child.kill()?;
+    pub fn terminate(&mut self) -> io::Result<Option<ExitStatus>> {
+        let Some(mut child) = self.child.take() else {
+            return Ok(None);
+        };
+
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
         }
 
-        Ok(())
+        child.kill()?;
+        child.wait().map(Some)
+    }
+}
+
+impl Drop for MameProcess {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
     }
 }
 
