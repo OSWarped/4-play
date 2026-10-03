@@ -122,19 +122,21 @@ Compare in this order:
 | Reduced queue | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 4` | Test FFmpeg raw-input backlog |
 | Small block | `--audio-codec aac --audio-block-ms 5 --audio-thread-queue-size 4` | Isolate bridge block contribution |
 | Opus | `--audio-codec opus --audio-block-ms 5 --audio-thread-queue-size 4` | Secondary codec comparison |
-| Lossless bridge | AAC defaults with blocking bounded bridge queues | Preserve equal raw timelines; current leading fix |
+| Wall-clock timestamps | AAC defaults with drop-oldest bridge queues | Preserve elapsed time across unequal drops; current leading fix |
 
 For every run, record runtime `video_start_ms`, `audio_start_ms`, `offset_ms`,
 queue depths, dropped blocks, perceived synchronization, and playback stability.
 
 The synthetic test result makes Opus a secondary experiment rather than the
 leading fix. AAC remained synchronized when the MAME/raw-PCM bridge was absent.
-The small-block and Opus tests are deferred until the lossless bridge is tested.
-The lossless bridge initially exposed FFmpeg's sequential input-analysis phase:
-MAME blocked while FFmpeg analyzed the first raw pipe and had not yet consumed
-the second. Both formats are already specified completely, so the runtime now
-uses the minimum probe size and a one-microsecond analysis ceiling for each raw
-input, and disables redundant FPS probing for the declared raw video rate.
+The small-block and Opus tests are deferred until wall-clock timestamps are
+tested. A lossless bounded bridge was rejected because FFmpeg opens its two raw
+inputs sequentially while MAME writes both FIFOs from one execution path;
+backpressure on the unopened input deadlocked startup. The bridge therefore
+retains drop-oldest behavior for responsiveness, while FFmpeg timestamps both
+raw inputs from wall-clock time so unequal drops preserve elapsed time. Both
+formats also use the minimum probe size and a one-microsecond analysis ceiling,
+and redundant FPS probing is disabled for the declared raw video rate.
 
 ## Interpretation
 

@@ -1,4 +1,4 @@
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -67,16 +67,16 @@ impl MediaBridge {
 
         let (audio_sender, audio_receiver) = bounded::<Vec<u8>>(AUDIO_QUEUE_CAPACITY);
 
-        self.start_video_reader(video_sender);
+        self.start_video_reader(video_sender, video_receiver.clone());
 
-        self.start_audio_reader(audio_sender);
+        self.start_audio_reader(audio_sender, audio_receiver.clone());
 
         self.start_video_writer(video_receiver, video_output);
         self.start_audio_writer(audio_receiver, audio_output);
         self.start_metrics_monitor(bridge_started);
     }
 
-    fn start_video_reader(&mut self, sender: Sender<Vec<u8>>) {
+    fn start_video_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
         let video_path = self.config.video_path.clone();
 
         let frame_bytes = self.config.width as usize * self.config.height as usize * 4;
@@ -104,7 +104,12 @@ impl MediaBridge {
                             .video_bytes
                             .fetch_add(frame_bytes as u64, Ordering::Relaxed);
 
-                        send_lossless(&sender, frame, "video")?;
+                        send_latest(
+                            &sender,
+                            &drop_receiver,
+                            frame,
+                            &metrics.video_frames_dropped,
+                        );
 
                         metrics
                             .video_queue_depth
@@ -122,7 +127,7 @@ impl MediaBridge {
         }));
     }
 
-    fn start_audio_reader(&mut self, sender: Sender<Vec<u8>>) {
+    fn start_audio_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
         let audio_path = self.config.audio_path.clone();
 
         let audio_block_ms = self.config.audio_block_ms;
@@ -160,7 +165,12 @@ impl MediaBridge {
                             .audio_bytes
                             .fetch_add(block_bytes as u64, Ordering::Relaxed);
 
-                        send_lossless(&sender, block, "audio")?;
+                        send_latest(
+                            &sender,
+                            &drop_receiver,
+                            block,
+                            &metrics.audio_blocks_dropped,
+                        );
 
                         metrics
                             .audio_queue_depth
@@ -289,17 +299,31 @@ impl MediaBridge {
     }
 }
 
-fn send_lossless(sender: &Sender<Vec<u8>>, value: Vec<u8>, stream: &str) -> io::Result<()> {
-    // FFmpeg derives timestamps for these raw inputs from the number of frames
-    // and samples it receives. Dropping from the two streams independently
-    // therefore creates a permanent A/V offset. Let the bounded channel apply
-    // backpressure so both timelines remain complete.
-    sender.send(value).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("{stream} bridge writer disconnected"),
-        )
-    })
+fn send_latest(
+    sender: &Sender<Vec<u8>>,
+    drop_receiver: &Receiver<Vec<u8>>,
+    value: Vec<u8>,
+    dropped_counter: &AtomicU64,
+) {
+    match sender.try_send(value) {
+        Ok(()) => {}
+
+        Err(TrySendError::Full(value)) => {
+            match drop_receiver.try_recv() {
+                Ok(_) => {
+                    dropped_counter.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return,
+            }
+
+            if sender.try_send(value).is_err() {
+                dropped_counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        Err(TrySendError::Disconnected(_)) => {}
+    }
 }
 
 fn record_first_video(metrics: &MediaBridgeMetrics) -> io::Result<()> {

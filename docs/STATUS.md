@@ -27,13 +27,13 @@ Last updated: 2026-10-03
 - runtime metrics traced the game-only audio lag to unequal independent bridge
   drops: 254 video frames versus 179 20 ms audio blocks produced approximately
   650 ms of relative timeline skew
-- the current test branch uses bounded backpressure rather than dropping raw
-  video and audio independently
+- the current test branch preserves real elapsed time with wall-clock input
+  timestamps when its bounded low-latency queues discard stale media
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
-- validate the lossless media bridge against the previously observed audio lag
+- validate wall-clock input timestamps against the previously observed audio lag
 - compare AAC/20 ms PCM blocks with low-delay Opus/5 ms PCM blocks only if the
   lossless bridge does not resolve the delay
 - replace manual width, height, and refresh arguments with MAME metadata discovery
