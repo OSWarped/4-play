@@ -46,12 +46,13 @@ Validated:
   clean cleanup, stable resources, and no audio drops
 - single-session host resource measurements and a Windows decoder-only lower
   bound
+- native-rate output for the exact-60-Hz TMNT profile, validated at 60.06 fps,
+  with Aliens and Killer Instinct retaining their non-integer native rates
 
 Still required:
 
 - measure local and remote button-to-photon latency
 - record median, 95th-percentile, and 99th-percentile results
-- correct or explicitly accept exact-60-Hz TMNT presentation near 50 fps
 - measure a rendered Windows player's resource use and memory plateau
 
 **Exit:** one remote seat can control a centrally hosted session, synchronized media remains stable, disconnect behavior is safe, and latency measurements support a go, revise, or pivot decision.

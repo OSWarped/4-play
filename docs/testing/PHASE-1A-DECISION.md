@@ -4,8 +4,8 @@
 
 **Decision: revise.** Continue the direct seat-to-runtime architecture and
 targeted runtime hardening; do not pivot. Phase 1A is not closed because
-objective latency measurement is deferred and the exact-60-Hz TMNT profile is
-presented by FFmpeg at approximately 50 fps under wall-clock timestamping.
+objective latency measurement is deferred and a rendered Windows-player
+resource soak is still outstanding.
 
 ## Evidence available
 
@@ -35,6 +35,12 @@ presented by FFmpeg at approximately 50 fps under wall-clock timestamping.
   summed maximum RSS across runtime, FFmpeg, and MAME
 - a Windows decoder-only TMNT benchmark averaged 0.44% of one CPU and 39.62 MiB
   working set at approximately 1.40 Mbit/s
+- high-resolution wall-clock video timestamps followed by native-rate filtering
+  corrected TMNT's approximately 50 fps presentation to 60.06 fps without
+  changing the wall-clock audio synchronization strategy
+- one-minute regression sessions encoded 3,737 of 3,739 TMNT frames, 3,708 of
+  3,710 Aliens frames, and 3,694 of 3,695 Killer Instinct frames while retaining
+  each game's configured cadence
 
 ## Evidence still missing
 
@@ -42,29 +48,28 @@ presented by FFmpeg at approximately 50 fps under wall-clock timestamping.
 - objective local and streamed action-to-sound timing
 - rendered Windows-player resource and memory-plateau measurements
 - full two-session controller and failure isolation
-- native-rate presentation for the exact-60-Hz TMNT profile
 
 ## Provisional interpretation
 
 The direct seat-to-runtime architecture remains the leading approach. Tight
-subjective controls, synchronized sound, bounded long-running behavior, clean
-shutdown, and modest single-session resource use justify continued runtime
-engineering. Missing objective latency data and TMNT's presentation cadence do
-not justify broad control-plane or Product MVP development yet.
+subjective controls, synchronized sound, native video cadence, bounded
+long-running behavior, clean shutdown, and modest single-session resource use
+justify continued runtime engineering. Missing objective latency and rendered
+client resource data do not justify broad control-plane or Product MVP
+development yet.
 
 ## Next decision gate
 
 Complete the following in order:
 
-1. correct or explicitly accept the exact-60-Hz presentation cadence
-2. measure local and remote input-to-video latency when capture equipment is
+1. measure local and remote input-to-video latency when capture equipment is
    available
-3. objectively confirm local and streamed action-to-sound timing
-4. run a longer rendered Windows-player resource test
-5. update this document and reconsider a `go` decision
+2. objectively confirm local and streamed action-to-sound timing
+3. run a longer rendered Windows-player resource test
+4. update this document and reconsider a `go` decision
 
 ## Final decision
 
 **Revise.** The architecture is viable and should continue. Phase 1A remains
-open for presentation-cadence correction and objective measurement; a pivot is
-not warranted.
+open for objective measurement and rendered-player resource validation; a
+pivot is not warranted.

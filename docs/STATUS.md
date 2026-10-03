@@ -37,14 +37,16 @@ Last updated: 2026-10-03
   queues, and no audio drops for all three sessions
 - host resource use is recorded from sixty samples per process per game; a
   Windows decoder-only benchmark establishes a low client resource floor
+- a 90 kHz raw-video timestamp clock plus native-rate filtering preserves
+  wall-clock synchronization while presenting exact-60-Hz TMNT at 60.06 fps
+- one-minute TMNT, Aliens, and Killer Instinct regression sessions encoded
+  essentially one frame for every captured frame at each configured native rate
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
 - complete a rendered Windows-player resource soak; the decoder-only working
   set rose from 27.67 MiB to 50.94 MiB during a 168-second sample
-- correct or explicitly accept FFmpeg's approximately 50 fps presentation of
-  the synchronized exact-60-Hz TMNT input
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup of stale session FIFOs and directories
