@@ -123,6 +123,12 @@ The runtime now launches MAME automatically, eliminating the second manual Linux
 
 A Ctrl+C test produced normal FFmpeg finalization output. Subsequent process inspection found no remaining `session-runtime`, `mame`, or `ffmpeg` process.
 
+On 2026-10-03, an isolated cleanup test recorded the exact runtime, FFmpeg, and
+MAME PIDs, sent SIGTERM only to the Rust runtime, and waited for shutdown. The
+runtime exited with status 0 and all three PIDs were absent afterward. The
+runtime now converts SIGINT and SIGTERM into an orderly shutdown request and
+also keeps kill-and-reap guards around both child processes for error paths.
+
 The session FIFOs remained in `/tmp/4play/session-4`. Removing stale session resources remains a cleanup task.
 
 ## Virtual-controller validation
