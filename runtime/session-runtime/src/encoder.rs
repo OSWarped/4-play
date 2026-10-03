@@ -5,6 +5,13 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 
+// Wall-clock timestamps are assigned by FFmpeg in the raw-video demuxer's time
+// base. Using the game's frame rate as that time base makes it too coarse for
+// an exact-60-Hz source: adjacent frames can land on the same timestamp and be
+// dropped. A 90 kHz clock preserves the capture arrival time, after which the
+// fps filter emits a stable stream at the game's native frame rate.
+const VIDEO_TIMESTAMP_CLOCK_HZ: u32 = 90_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioCodec {
     Aac,
@@ -87,7 +94,7 @@ impl EncoderProcess {
             .arg("-video_size")
             .arg(video_size)
             .arg("-framerate")
-            .arg(fps)
+            .arg(VIDEO_TIMESTAMP_CLOCK_HZ.to_string())
             .arg("-i")
             .arg("pipe:3")
             .arg("-thread_queue_size")
@@ -110,6 +117,10 @@ impl EncoderProcess {
             .arg("0:v:0")
             .arg("-map")
             .arg("1:a:0")
+            .arg("-filter:v")
+            .arg(format!("fps=fps={fps}:start_time=0:round=near"))
+            .arg("-fps_mode:v")
+            .arg("passthrough")
             .arg("-c:v")
             .arg("libx264")
             .arg("-preset")
@@ -193,10 +204,11 @@ impl EncoderProcess {
         let child = child_result?;
 
         println!(
-            "Encoder started: PID={} destination={}:{} audio_codec={} audio_thread_queue={}",
+            "Encoder started: PID={} destination={}:{} video_fps={fps} video_timestamp_clock_hz={} audio_codec={} audio_thread_queue={}",
             child.id(),
             config.destination_ip,
             config.udp_port,
+            VIDEO_TIMESTAMP_CLOCK_HZ,
             config.audio_codec.name(),
             config.audio_thread_queue_size
         );
@@ -225,7 +237,6 @@ impl EncoderProcess {
             )))
         }
     }
-
 }
 
 impl Drop for EncoderProcess {
