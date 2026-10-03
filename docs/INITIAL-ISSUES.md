@@ -31,24 +31,31 @@ This list now distinguishes completed feasibility work, active Phase 1A work, an
 
 These demonstrations do not close the broader remote-play or isolation milestones because controller integration and latency measurements remain.
 
+The controller-integration statement above is historical. Runtime-owned input,
+direct seat transport, simultaneous controls, timeout neutralization, and
+reconnection were subsequently demonstrated. Objective latency measurement is
+the remaining Phase 1A gate.
+
 ## Active Phase 1A issues
 
-1. **Integrate the virtual controller into `session-runtime`**
+1. **Integrate the virtual controller into `session-runtime` — demonstrated**
    - create the device before MAME launches
    - expose an API for directions, buttons, start, coin, and neutral state
    - prove MAME discovers and consumes the device
 
-2. **Prototype direct seat-to-runtime input transport**
+2. **Prototype direct seat-to-runtime input transport — demonstrated**
    - transmit complete controller-state snapshots
    - include sequence and session identity
    - measure update rate, loss, ordering, and jitter
    - neutralize input after timeout or disconnect
 
-3. **Measure local and remote MAME latency**
+3. **Measure local and remote MAME latency — active**
    - record a local baseline
    - measure remote button-to-photon latency
    - report median, 95th-percentile, and 99th-percentile results
    - separate encode, network, decode, and display contributions where practical
+   - characterize streamed action-to-sound delay
+   - compare AAC/20 ms, AAC/5 ms, and low-delay Opus/5 ms
 
 4. **Complete the reference-environment inventory**
    - hardware and operating system

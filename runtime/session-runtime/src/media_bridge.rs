@@ -12,8 +12,6 @@ use std::time::{Duration, Instant};
 const AUDIO_SAMPLE_RATE: usize = 48_000;
 const AUDIO_CHANNELS: usize = 2;
 const AUDIO_BYTES_PER_SAMPLE: usize = 2;
-const AUDIO_BLOCK_MS: usize = 20;
-
 const VIDEO_QUEUE_CAPACITY: usize = 2;
 const AUDIO_QUEUE_CAPACITY: usize = 4;
 
@@ -23,6 +21,7 @@ pub struct MediaBridgeConfig {
     pub audio_path: PathBuf,
     pub width: u32,
     pub height: u32,
+    pub audio_block_ms: usize,
 }
 
 #[derive(Debug, Default)]
@@ -61,6 +60,7 @@ impl MediaBridge {
     }
 
     pub fn start(&mut self, video_output: File, audio_output: File) {
+        let bridge_started = Instant::now();
         self.running.store(true, Ordering::Release);
 
         let (video_sender, video_receiver) = bounded::<Vec<u8>>(VIDEO_QUEUE_CAPACITY);
@@ -73,6 +73,7 @@ impl MediaBridge {
 
         self.start_video_writer(video_receiver, video_output);
         self.start_audio_writer(audio_receiver, audio_output);
+        self.start_metrics_monitor(bridge_started);
     }
 
     fn start_video_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
@@ -129,7 +130,8 @@ impl MediaBridge {
     fn start_audio_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
         let audio_path = self.config.audio_path.clone();
 
-        let block_samples = AUDIO_SAMPLE_RATE * AUDIO_BLOCK_MS / 1_000;
+        let audio_block_ms = self.config.audio_block_ms;
+        let block_samples = AUDIO_SAMPLE_RATE * audio_block_ms / 1_000;
 
         let block_bytes = block_samples * AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 
@@ -143,7 +145,7 @@ impl MediaBridge {
 
             println!(
                 "Audio reader connected: {} bytes per {} ms block",
-                block_bytes, AUDIO_BLOCK_MS
+                block_bytes, audio_block_ms
             );
 
             while running.load(Ordering::Acquire) {
@@ -220,66 +222,65 @@ impl MediaBridge {
         }));
     }
 
-    pub fn monitor_for(&self, duration: Duration) {
-        let monitor_started = Instant::now();
+    fn start_metrics_monitor(&mut self, bridge_started: Instant) {
+        let metrics = Arc::clone(&self.metrics);
+        let running = Arc::clone(&self.running);
 
-        while monitor_started.elapsed() < duration {
-            thread::sleep(Duration::from_secs(1));
+        self.handles.push(thread::spawn(move || {
+            while running.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_secs(1));
 
-            let frames = self.metrics.video_frames.load(Ordering::Relaxed);
+                let frames = metrics.video_frames.load(Ordering::Relaxed);
 
-            let audio_blocks = self.metrics.audio_blocks.load(Ordering::Relaxed);
+                let audio_blocks = metrics.audio_blocks.load(Ordering::Relaxed);
 
-            let audio_samples = self.metrics.audio_samples.load(Ordering::Relaxed);
+                let audio_samples = metrics.audio_samples.load(Ordering::Relaxed);
 
-            let dropped_video = self.metrics.video_frames_dropped.load(Ordering::Relaxed);
+                let dropped_video = metrics.video_frames_dropped.load(Ordering::Relaxed);
 
-            let dropped_audio = self.metrics.audio_blocks_dropped.load(Ordering::Relaxed);
+                let dropped_audio = metrics.audio_blocks_dropped.load(Ordering::Relaxed);
 
-            let video_queue = self.metrics.video_queue_depth.load(Ordering::Relaxed);
+                let video_queue = metrics.video_queue_depth.load(Ordering::Relaxed);
 
-            let audio_queue = self.metrics.audio_queue_depth.load(Ordering::Relaxed);
+                let audio_queue = metrics.audio_queue_depth.load(Ordering::Relaxed);
 
-            let first_video = self
-                .metrics
-                .first_video_at
-                .lock()
-                .ok()
-                .and_then(|value| *value);
+                let first_video = metrics.first_video_at.lock().ok().and_then(|value| *value);
 
-            let first_audio = self
-                .metrics
-                .first_audio_at
-                .lock()
-                .ok()
-                .and_then(|value| *value);
+                let first_audio = metrics.first_audio_at.lock().ok().and_then(|value| *value);
 
-            let video_fps = first_video
-                .map(|started| {
-                    let elapsed = started.elapsed().as_secs_f64();
+                let video_fps = first_video
+                    .map(|started| {
+                        let elapsed = started.elapsed().as_secs_f64();
 
-                    if elapsed > 0.0 {
-                        frames as f64 / elapsed
-                    } else {
-                        0.0
-                    }
-                })
-                .unwrap_or(0.0);
+                        if elapsed > 0.0 {
+                            frames as f64 / elapsed
+                        } else {
+                            0.0
+                        }
+                    })
+                    .unwrap_or(0.0);
 
-            let audio_seconds = audio_samples as f64 / AUDIO_SAMPLE_RATE as f64;
+                let audio_seconds = audio_samples as f64 / AUDIO_SAMPLE_RATE as f64;
 
-            let startup_offset_ms = startup_offset_ms(first_video, first_audio);
+                let video_start_ms = elapsed_ms(bridge_started, first_video);
+                let audio_start_ms = elapsed_ms(bridge_started, first_audio);
+                let startup_offset_ms = startup_offset_ms(first_video, first_audio);
 
-            println!(
-                "video_frames={frames:<6} video_fps={video_fps:<6.2} \
+                println!(
+                    "video_frames={frames:<6} video_fps={video_fps:<6.2} \
                  audio_blocks={audio_blocks:<6} \
                  audio_seconds={audio_seconds:<6.2} \
+                 video_start_ms={video_start_ms:<8.3} \
+                 audio_start_ms={audio_start_ms:<8.3} \
                  offset_ms={startup_offset_ms:+.3} \
                  dropped_v={dropped_video:<5} \
                  dropped_a={dropped_audio:<5} \
                  vq={video_queue} aq={audio_queue}"
-            );
-        }
+                );
+            }
+
+            Ok(())
+        }));
     }
 
     pub fn stop(mut self) -> io::Result<()> {
@@ -365,4 +366,10 @@ fn startup_offset_ms(video: Option<Instant>, audio: Option<Instant>) -> f64 {
 
         _ => 0.0,
     }
+}
+
+fn elapsed_ms(started: Instant, event: Option<Instant>) -> f64 {
+    event
+        .map(|event| event.duration_since(started).as_secs_f64() * 1_000.0)
+        .unwrap_or(0.0)
 }

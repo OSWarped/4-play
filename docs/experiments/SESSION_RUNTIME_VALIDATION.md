@@ -218,6 +218,13 @@ sequence numbers, and neutralizes the controller after 250 ms without a valid
 packet. After timeout, a restarted client may reconnect from a new source port.
 This experiment does not yet authenticate or encrypt input packets.
 
+Repeated play tests confirmed that the state-based path supports diagonals,
+movement plus actions, and multi-button combinations without stuck controls.
+With low-buffer FFplay, control-to-video response was subjectively excellent.
+The remaining noticeable issue was audio occurring after the corresponding
+visible action. A `-sync video` receiver experiment delayed all presentation and
+was rejected; the video path must remain latency-first while audio is tuned.
+
 To reduce player-side buffering while evaluating input latency, use a low-cache
 receiver. For VLC:
 
@@ -231,6 +238,47 @@ Or, when FFplay is available:
 ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 "udp://@:41006"
 ```
 
+The runtime now supports an audio-only experiment switch while leaving the
+validated video path unchanged:
+
+```text
+--audio-codec aac|opus
+--audio-block-ms 1..100
+```
+
+Defaults remain AAC and 20 ms. The low-delay comparison profile uses Opus with
+5 ms frames and 5 ms PCM bridge blocks:
+
+```text
+--audio-codec opus --audio-block-ms 5
+```
+
+Once per second the runtime reports first audio/video arrival, their startup
+offset, queue depth, and dropped media counts.
+
+The FFmpeg raw-audio input queue is independently configurable:
+
+```text
+--audio-thread-queue-size 1..1024
+```
+
+The historical default is 64 packets. Because the synchronized FFmpeg
+flash/beep test remained precisely aligned through the downstream delivery
+path, the first game test should reduce only this queue to 4 packets while
+retaining AAC and 20 ms bridge blocks.
+
+## Synthetic downstream A/V validation
+
+On October 3, 2026, FFmpeg's synchronized flash/beep source was encoded as
+H.264/AAC, muxed as MPEG-TS, sent over the wired LAN, and rendered by FFplay on
+Windows through the normal audio output. The visible marker and beep were
+perceptually simultaneous.
+
+This result indicates that the large game-only action-to-sound delay is not
+inherent to AAC, MPEG-TS, the network, FFplay, Windows mixing, or the HDMI
+output. The remaining investigation boundary is MAME timing and the raw
+audio/FIFO/bridge/input-queue path used only by game sessions.
+
 ## Current conclusions
 
 Validated:
@@ -242,19 +290,21 @@ Validated:
 - simultaneous media sessions can remain independent
 - CHD-backed games work through the same runtime shape
 - the runtime can create a suitable Linux virtual controller
+- MAME consumes runtime-owned controller state
+- remote state-based input supports simultaneous controls
+- timeout neutralization and reconnect behavior work
+- low-buffer FFplay provides subjectively responsive input-to-video play
 
 Not yet validated:
 
-- MAME consuming the runtime-created controller
-- remote seat input
-- safe disconnect and input timeout
 - button-to-photon latency
+- objective action-to-sound delay and the best audio profile
 - long-duration soak behavior
 - complete two-session controller and save isolation
 - hardware capacity limits
 
 ## Next experiment
 
-Integrate `VirtualController` into `session-runtime`, create it before launching MAME, and prove that generated Coin, Start, directional, and action-button states change the running game visible in the remote stream.
-
-Only after that local path works should the project add seat-to-runtime controller-state networking.
+Measure the responsive baseline objectively, then compare AAC/20 ms,
+AAC/5 ms, and low-delay Opus/5 ms while holding all video and receiver settings
+constant.

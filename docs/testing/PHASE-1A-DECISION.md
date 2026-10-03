@@ -2,7 +2,10 @@
 
 ## Status
 
-Decision deferred. Media feasibility is promising, but remote input and measured latency are still required before accepting or rejecting the architecture.
+Decision deferred pending objective latency measurements. Remote input and
+responsive gameplay are now demonstrated, and the streamed action-to-sound lag
+has been resolved subjectively. The remaining decision evidence is objective
+measurement and resource characterization rather than basic feasibility.
 
 ## Evidence available
 
@@ -13,13 +16,23 @@ Decision deferred. Media feasibility is promising, but remote input and measured
 - CHD-backed content works
 - two media sessions can run simultaneously
 - Linux virtual-controller creation and generated events work
+- MAME consumes the runtime-owned virtual controller
+- a Windows client delivers complete controller state directly to the runtime
+- simultaneous movement and action inputs work
+- timeout neutralization and client reconnection work
+- low-buffer FFplay playback feels highly responsive in repeated play tests
+- a synthetic synchronized flash/beep remained aligned through the downstream
+  AAC/MPEG-TS/network/player/audio-output path
+- runtime metrics traced the game-only sound lag to unequal media drops that
+  shortened the video timeline roughly 650 ms more than the audio timeline
+- wall-clock timestamps preserve elapsed time across unequal queue drops
+- live TMNT play confirmed synchronized sound and action while controls remained
+  subjectively immediate
 
 ## Evidence still missing
 
-- MAME response to the runtime-created controller
-- seat-to-runtime controller delivery
-- input timeout and disconnect neutralization
 - local and remote button-to-photon distributions
+- objective local and streamed action-to-sound timing
 - complete reference-host resource measurements
 - full two-session controller and failure isolation
 
@@ -31,12 +44,10 @@ The direct seat-to-runtime architecture remains the leading approach. The curren
 
 Complete the following in order:
 
-1. integrate the virtual controller into the session runtime
-2. prove local runtime-generated input reaches MAME
-3. implement a minimal remote controller-state sender
-4. verify timeout and disconnect behavior
-5. measure local and remote latency
-6. update this document with a go, revise, or pivot decision
+1. measure local and remote input-to-video latency
+2. objectively confirm local and streamed action-to-sound timing
+3. record host and client resource use
+4. update this document with a go, revise, or pivot decision
 
 ## Final decision
 
