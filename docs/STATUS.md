@@ -29,13 +29,12 @@ Last updated: 2026-10-03
   650 ms of relative timeline skew
 - the current test branch preserves real elapsed time with wall-clock input
   timestamps when its bounded low-latency queues discard stale media
+- live TMNT gameplay validated the result subjectively: controls remained tight
+  and game sound was synchronized with visible action
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
-- validate wall-clock input timestamps against the previously observed audio lag
-- compare AAC/20 ms PCM blocks with low-delay Opus/5 ms PCM blocks only if the
-  lossless bridge does not resolve the delay
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup of stale session FIFOs and directories
@@ -52,5 +51,5 @@ Last updated: 2026-10-03
 
 ## Next milestone
 
-Record repeatable local and remote input-to-video distributions and characterize
-the remaining audio delay without adding latency to the proven video path.
+Record repeatable local and remote input-to-video distributions and objectively
+confirm the subjectively synchronized action-to-sound result.

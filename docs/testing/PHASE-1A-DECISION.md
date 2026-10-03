@@ -3,8 +3,9 @@
 ## Status
 
 Decision deferred pending objective latency measurements. Remote input and
-responsive gameplay are now demonstrated, so the remaining decision evidence
-is measurement and audio characterization rather than basic feasibility.
+responsive gameplay are now demonstrated, and the streamed action-to-sound lag
+has been resolved subjectively. The remaining decision evidence is objective
+measurement and resource characterization rather than basic feasibility.
 
 ## Evidence available
 
@@ -22,6 +23,11 @@ is measurement and audio characterization rather than basic feasibility.
 - low-buffer FFplay playback feels highly responsive in repeated play tests
 - a synthetic synchronized flash/beep remained aligned through the downstream
   AAC/MPEG-TS/network/player/audio-output path
+- runtime metrics traced the game-only sound lag to unequal media drops that
+  shortened the video timeline roughly 650 ms more than the audio timeline
+- wall-clock timestamps preserve elapsed time across unequal queue drops
+- live TMNT play confirmed synchronized sound and action while controls remained
+  subjectively immediate
 
 ## Evidence still missing
 
@@ -38,12 +44,10 @@ The direct seat-to-runtime architecture remains the leading approach. The curren
 
 Complete the following in order:
 
-1. reproduce the responsive FFplay baseline
-2. measure local and remote input-to-video latency
-3. compare local and streamed action-to-sound timing
-4. compare the AAC and low-delay Opus experiment profiles
-5. record host and client resource use
-6. update this document with a go, revise, or pivot decision
+1. measure local and remote input-to-video latency
+2. objectively confirm local and streamed action-to-sound timing
+3. record host and client resource use
+4. update this document with a go, revise, or pivot decision
 
 ## Final decision
 

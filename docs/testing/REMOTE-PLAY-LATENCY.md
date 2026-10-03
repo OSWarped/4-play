@@ -4,7 +4,9 @@
 
 Not yet measured objectively. Subjective play tests completed in August and
 October 2026 found highly responsive control-to-video behavior with low-buffer
-FFplay. Streamed audio remained noticeably behind visible action.
+FFplay. Streamed audio initially followed visible action by roughly 250–650 ms;
+wall-clock timestamps for both raw FFmpeg inputs eliminated the perceptible lag
+in a subsequent live TMNT play test without degrading control response.
 
 ## What is already known
 
@@ -92,7 +94,8 @@ Observed:
 
 - input-to-video response feels excellent
 - simultaneous controls behave correctly
-- audio follows visible action by a noticeable subjective interval
+- before the wall-clock fix, audio followed visible action by a noticeable
+  subjective interval
 - VLC with 50 ms network caching is stable but retains modest audio delay
 - VLC with 20 ms caching is less stable and does not improve perceived synchronization
 - `ffplay -sync video` delays the visible game and is unsuitable
@@ -102,10 +105,12 @@ Observed:
   sustained 60.01 fps, but independently discarded 254 video frames and 179
   20 ms audio blocks; those losses shorten the video timeline about 650 ms
   more than the audio timeline and explain the observed audio lag
+- after both raw inputs were timestamped from wall-clock time, live TMNT play
+  retained tight controls and synchronized sound with visible action
 
 These observations are not substitutes for camera-based measurements.
 
-## Audio experiment matrix
+## Audio experiment record
 
 The synchronized synthetic test substantially reduces the likelihood that AAC,
 MPEG-TS, FFplay, Windows, or HDMI output creates the game-only delay. Runtime
@@ -114,24 +119,23 @@ timestamps the raw inputs from the frame and sample counts it receives, so
 discarding unequal durations permanently moves one media timeline ahead of the
 other.
 
-Compare in this order:
-
-| Profile | Runtime options | Purpose |
+| Profile | Runtime options | Result |
 | --- | --- | --- |
-| Baseline | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 64` | Reproduce the current path |
-| Reduced queue | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 4` | Test FFmpeg raw-input backlog |
-| Small block | `--audio-codec aac --audio-block-ms 5 --audio-thread-queue-size 4` | Isolate bridge block contribution |
-| Opus | `--audio-codec opus --audio-block-ms 5 --audio-thread-queue-size 4` | Secondary codec comparison |
-| Wall-clock timestamps | AAC defaults with drop-oldest bridge queues | Preserve elapsed time across unequal drops; current leading fix |
+| Baseline | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 64` | Reproduced the perceptible lag |
+| Reduced queue | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 4` | Did not eliminate the lag |
+| Small block | `--audio-codec aac --audio-block-ms 5 --audio-thread-queue-size 4` | Not needed after identifying timeline compression |
+| Opus | `--audio-codec opus --audio-block-ms 5 --audio-thread-queue-size 4` | Not needed after AAC synchronized successfully |
+| Wall-clock timestamps | AAC defaults with drop-oldest bridge queues | Successful: action and sound were subjectively synchronized |
 
 For every run, record runtime `video_start_ms`, `audio_start_ms`, `offset_ms`,
 queue depths, dropped blocks, perceived synchronization, and playback stability.
 
 The synthetic test result makes Opus a secondary experiment rather than the
 leading fix. AAC remained synchronized when the MAME/raw-PCM bridge was absent.
-The small-block and Opus tests are deferred until wall-clock timestamps are
-tested. A lossless bounded bridge was rejected because FFmpeg opens its two raw
-inputs sequentially while MAME writes both FIFOs from one execution path;
+The small-block and Opus tests were unnecessary after wall-clock timestamps
+resolved the perceived lag. A lossless bounded bridge was rejected because
+FFmpeg opens its two raw inputs sequentially while MAME writes both FIFOs from
+one execution path;
 backpressure on the unopened input deadlocked startup. The bridge therefore
 retains drop-oldest behavior for responsiveness, while FFmpeg timestamps both
 raw inputs from wall-clock time so unequal drops preserve elapsed time. Both
@@ -140,6 +144,7 @@ and redundant FPS probing is disabled for the declared raw video rate.
 
 ## Interpretation
 
-Remote input is implemented. The Phase 1A decision now depends on objective
-latency distributions and whether audio can be improved without compromising
-the responsive video path.
+Remote input is implemented, control response is subjectively immediate, and
+sound is subjectively synchronized with visible action. The Phase 1A decision
+now depends on objective latency distributions, objective confirmation of the
+action-to-sound result, and resource measurements.
