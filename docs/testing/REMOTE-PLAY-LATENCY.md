@@ -133,7 +133,8 @@ The small-block and Opus tests are deferred until the lossless bridge is tested.
 The lossless bridge initially exposed FFmpeg's sequential input-analysis phase:
 MAME blocked while FFmpeg analyzed the first raw pipe and had not yet consumed
 the second. Both formats are already specified completely, so the runtime now
-uses the minimum probe size and zero analysis duration for each raw input.
+uses the minimum probe size and a one-microsecond analysis ceiling for each raw
+input, and disables redundant FPS probing for the declared raw video rate.
 
 ## Interpretation
 
