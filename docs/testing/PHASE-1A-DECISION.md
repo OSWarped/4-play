@@ -2,7 +2,9 @@
 
 ## Status
 
-Decision deferred. Media feasibility is promising, but remote input and measured latency are still required before accepting or rejecting the architecture.
+Decision deferred pending objective latency measurements. Remote input and
+responsive gameplay are now demonstrated, so the remaining decision evidence
+is measurement and audio characterization rather than basic feasibility.
 
 ## Evidence available
 
@@ -13,13 +15,18 @@ Decision deferred. Media feasibility is promising, but remote input and measured
 - CHD-backed content works
 - two media sessions can run simultaneously
 - Linux virtual-controller creation and generated events work
+- MAME consumes the runtime-owned virtual controller
+- a Windows client delivers complete controller state directly to the runtime
+- simultaneous movement and action inputs work
+- timeout neutralization and client reconnection work
+- low-buffer FFplay playback feels highly responsive in repeated play tests
+- a synthetic synchronized flash/beep remained aligned through the downstream
+  AAC/MPEG-TS/network/player/audio-output path
 
 ## Evidence still missing
 
-- MAME response to the runtime-created controller
-- seat-to-runtime controller delivery
-- input timeout and disconnect neutralization
 - local and remote button-to-photon distributions
+- objective local and streamed action-to-sound timing
 - complete reference-host resource measurements
 - full two-session controller and failure isolation
 
@@ -31,11 +38,11 @@ The direct seat-to-runtime architecture remains the leading approach. The curren
 
 Complete the following in order:
 
-1. integrate the virtual controller into the session runtime
-2. prove local runtime-generated input reaches MAME
-3. implement a minimal remote controller-state sender
-4. verify timeout and disconnect behavior
-5. measure local and remote latency
+1. reproduce the responsive FFplay baseline
+2. measure local and remote input-to-video latency
+3. compare local and streamed action-to-sound timing
+4. compare the AAC and low-delay Opus experiment profiles
+5. record host and client resource use
 6. update this document with a go, revise, or pivot decision
 
 ## Final decision

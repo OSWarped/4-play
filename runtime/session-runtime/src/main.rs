@@ -6,7 +6,7 @@ mod session;
 mod terminal_input;
 mod virtual_controller;
 
-use encoder::{EncoderConfig, EncoderProcess};
+use encoder::{AudioCodec, EncoderConfig, EncoderProcess};
 use mame::{MameConfig, MameProcess};
 use media_bridge::{MediaBridge, MediaBridgeConfig};
 use network_input::run_network_input;
@@ -28,6 +28,9 @@ struct RuntimeArgs {
     udp_port: u16,
     terminal_input: bool,
     input_port: Option<u16>,
+    audio_codec: AudioCodec,
+    audio_block_ms: usize,
+    audio_thread_queue_size: usize,
 }
 
 fn print_usage(program: &str) {
@@ -41,7 +44,10 @@ fn print_usage(program: &str) {
     --fps <rate> \
     --udp-port <port> \
     [--destination-ip <address>] \
-    [--terminal-input | --input-port <port>]"
+    [--terminal-input | --input-port <port>] \
+    [--audio-codec <aac|opus>] \
+    [--audio-block-ms <milliseconds>] \
+    [--audio-thread-queue-size <packets>]"
     );
 }
 
@@ -88,6 +94,9 @@ fn parse_args() -> RuntimeArgs {
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
     let mut input_port = None;
+    let mut audio_codec = AudioCodec::Aac;
+    let mut audio_block_ms = 20;
+    let mut audio_thread_queue_size = 64;
 
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -130,6 +139,22 @@ fn parse_args() -> RuntimeArgs {
                     "--input-port",
                 ));
             }
+            "--audio-codec" => {
+                audio_codec =
+                    parse_value(require_value(&mut args, "--audio-codec"), "--audio-codec");
+            }
+            "--audio-block-ms" => {
+                audio_block_ms = parse_value(
+                    require_value(&mut args, "--audio-block-ms"),
+                    "--audio-block-ms",
+                );
+            }
+            "--audio-thread-queue-size" => {
+                audio_thread_queue_size = parse_value(
+                    require_value(&mut args, "--audio-thread-queue-size"),
+                    "--audio-thread-queue-size",
+                );
+            }
             "--help" | "-h" => {
                 print_usage(&program);
                 process::exit(0);
@@ -152,6 +177,9 @@ fn parse_args() -> RuntimeArgs {
         udp_port: required(udp_port, "--udp-port", &program),
         terminal_input,
         input_port,
+        audio_codec,
+        audio_block_ms,
+        audio_thread_queue_size,
     };
 
     if parsed.width == 0 || parsed.height == 0 {
@@ -166,6 +194,16 @@ fn parse_args() -> RuntimeArgs {
 
     if parsed.terminal_input && parsed.input_port.is_some() {
         eprintln!("--terminal-input and --input-port cannot be used together.");
+        process::exit(2);
+    }
+
+    if !(1..=100).contains(&parsed.audio_block_ms) {
+        eprintln!("--audio-block-ms must be between 1 and 100.");
+        process::exit(2);
+    }
+
+    if !(1..=1024).contains(&parsed.audio_thread_queue_size) {
+        eprintln!("--audio-thread-queue-size must be between 1 and 1024.");
         process::exit(2);
     }
 
@@ -198,6 +236,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fps: session.config.fps,
         destination_ip: session.config.destination_ip.clone(),
         udp_port: session.config.udp_port,
+        audio_codec: args.audio_codec,
+        audio_thread_queue_size: args.audio_thread_queue_size,
     };
 
     let (encoder, inputs) = EncoderProcess::spawn(&encoder_config)?;
@@ -207,6 +247,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio_path: session.audio_path(),
         width: session.config.width,
         height: session.config.height,
+        audio_block_ms: args.audio_block_ms,
     });
 
     bridge.start(inputs.video, inputs.audio);

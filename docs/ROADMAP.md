@@ -35,14 +35,17 @@ Validated:
 - synchronized playback for Aliens, TMNT, and Killer Instinct
 - CHD-backed title support
 - a Linux virtual controller with two axes and eight buttons
+- runtime-owned virtual-controller input consumed by MAME
+- direct Windows-seat-to-runtime controller-state transport
+- simultaneous directions and buttons
+- sequence rejection, timeout neutralization, and reconnect behavior
+- subjectively responsive control-to-video play through low-buffer FFplay
 
 Still required:
 
-- connect the virtual controller to the launched MAME session
-- implement seat-to-runtime controller transport
-- neutralize controls on disconnect or timeout
 - measure local and remote button-to-photon latency
 - record median, 95th-percentile, and 99th-percentile results
+- characterize and reduce streamed audio delay without delaying video
 - document host and client resource use
 
 **Exit:** one remote seat can control a centrally hosted session, synchronized media remains stable, disconnect behavior is safe, and latency measurements support a go, revise, or pivot decision.

@@ -3,6 +3,34 @@ use std::io;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioCodec {
+    Aac,
+    Opus,
+}
+
+impl AudioCodec {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Aac => "aac",
+            Self::Opus => "opus",
+        }
+    }
+}
+
+impl FromStr for AudioCodec {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "aac" => Ok(Self::Aac),
+            "opus" => Ok(Self::Opus),
+            _ => Err(format!("expected 'aac' or 'opus', got '{value}'")),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
@@ -11,6 +39,8 @@ pub struct EncoderConfig {
     pub fps: f64,
     pub destination_ip: String,
     pub udp_port: u16,
+    pub audio_codec: AudioCodec,
+    pub audio_thread_queue_size: usize,
 }
 
 pub struct EncoderInputs {
@@ -53,7 +83,7 @@ impl EncoderProcess {
             .arg("-i")
             .arg("pipe:3")
             .arg("-thread_queue_size")
-            .arg("64")
+            .arg(config.audio_thread_queue_size.to_string())
             .arg("-f")
             .arg("s16le")
             .arg("-ar")
@@ -84,10 +114,27 @@ impl EncoderProcess {
             .arg("0")
             .arg("-refs")
             .arg("1")
-            .arg("-c:a")
-            .arg("aac")
-            .arg("-b:a")
-            .arg("128k")
+            .arg("-c:a");
+
+        match config.audio_codec {
+            AudioCodec::Aac => {
+                command.arg("aac").arg("-b:a").arg("128k");
+            }
+            AudioCodec::Opus => {
+                command
+                    .arg("libopus")
+                    .arg("-b:a")
+                    .arg("128k")
+                    .arg("-application")
+                    .arg("lowdelay")
+                    .arg("-frame_duration")
+                    .arg("5")
+                    .arg("-vbr")
+                    .arg("off");
+            }
+        }
+
+        command
             .arg("-fflags")
             .arg("nobuffer")
             .arg("-flags")
@@ -132,10 +179,12 @@ impl EncoderProcess {
         let child = child_result?;
 
         println!(
-            "Encoder started: PID={} destination={}:{}",
+            "Encoder started: PID={} destination={}:{} audio_codec={} audio_thread_queue={}",
             child.id(),
             config.destination_ip,
-            config.udp_port
+            config.udp_port,
+            config.audio_codec.name(),
+            config.audio_thread_queue_size
         );
 
         Ok((
@@ -209,4 +258,16 @@ fn install_child_descriptor(source: RawFd, destination: RawFd) -> io::Result<()>
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AudioCodec;
+
+    #[test]
+    fn parses_supported_audio_codecs() {
+        assert_eq!("aac".parse(), Ok(AudioCodec::Aac));
+        assert_eq!("OPUS".parse(), Ok(AudioCodec::Opus));
+        assert!("mp3".parse::<AudioCodec>().is_err());
+    }
 }

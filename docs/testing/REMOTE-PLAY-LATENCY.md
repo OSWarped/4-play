@@ -2,7 +2,9 @@
 
 ## Status
 
-Not yet measured. This document defines the evidence still required before Phase 1A can be closed.
+Not yet measured objectively. Subjective play tests completed in August and
+October 2026 found highly responsive control-to-video behavior with low-buffer
+FFplay. Streamed audio remained noticeably behind visible action.
 
 ## What is already known
 
@@ -12,6 +14,12 @@ Not yet measured. This document defines the evidence still required before Phase
 - stale video can be discarded instead of accumulated
 - simultaneous sessions have run without observed media cross-talk
 - per-game refresh metadata is required for correct timing
+- MAME consumes the runtime-owned virtual controller
+- complete controller state reaches the runtime directly from Windows
+- diagonals and simultaneous action combinations work
+- controls neutralize after 250 ms without valid input packets
+- FFplay's low-buffer profile feels substantially more responsive than buffered playback
+- forcing FFplay to use `-sync video` caused unacceptable presentation latency and is rejected
 
 These observations are useful but do not measure button-to-photon latency.
 
@@ -66,10 +74,57 @@ These remain experiment goals rather than universal product requirements.
 
 Use a high-frame-rate camera that can see both the physical input action and the display response. Capture enough repeated samples to calculate a distribution rather than one anecdotal result. Document camera frame rate, display refresh rate, game state, input action, sample exclusions, and measurement uncertainty.
 
-## Results
+## Subjective results
 
-Pending.
+The current low-latency reference receiver is:
+
+```powershell
+ffplay -f mpegts `
+  -fflags nobuffer `
+  -flags low_delay `
+  -framedrop `
+  -probesize 32768 `
+  -analyzeduration 0 `
+  "udp://0.0.0.0:41008?fifo_size=1000000&overrun_nonfatal=1"
+```
+
+Observed:
+
+- input-to-video response feels excellent
+- simultaneous controls behave correctly
+- audio follows visible action by a noticeable subjective interval
+- VLC with 50 ms network caching is stable but retains modest audio delay
+- VLC with 20 ms caching is less stable and does not improve perceived synchronization
+- `ffplay -sync video` delays the visible game and is unsuitable
+- a synchronized synthetic flash/beep remained precisely aligned through AAC,
+  MPEG-TS, the wired network, FFplay, Windows, and HDMI audio
+
+These observations are not substitutes for camera-based measurements.
+
+## Audio experiment matrix
+
+The synchronized synthetic test substantially reduces the likelihood that AAC,
+MPEG-TS, FFplay, Windows, or HDMI output creates the game-only delay. The next
+experiment therefore targets the raw PCM input path while keeping all video and
+receiver settings unchanged.
+
+Compare in this order:
+
+| Profile | Runtime options | Purpose |
+| --- | --- | --- |
+| Baseline | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 64` | Reproduce the current path |
+| Reduced queue | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 4` | Test FFmpeg raw-input backlog |
+| Small block | `--audio-codec aac --audio-block-ms 5 --audio-thread-queue-size 4` | Isolate bridge block contribution |
+| Opus | `--audio-codec opus --audio-block-ms 5 --audio-thread-queue-size 4` | Secondary codec comparison |
+
+For every run, record runtime `video_start_ms`, `audio_start_ms`, `offset_ms`,
+queue depths, dropped blocks, perceived synchronization, and playback stability.
+
+The synthetic test result makes Opus a secondary experiment rather than the
+leading fix. AAC remained synchronized when the MAME/raw-PCM bridge was absent.
 
 ## Interpretation
 
-Pending remote input implementation and measurement.
+Remote input is implemented. The Phase 1A decision now depends on objective
+latency distributions and whether audio can be improved without compromising
+the responsive video path.
