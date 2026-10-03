@@ -16,7 +16,8 @@ Last updated: 2026-10-03
 - audio/video synchronization is validated across multiple titles
 - CHD-backed MAME content is validated
 - two media sessions can run simultaneously
-- Ctrl+C leaves no observed MAME or FFmpeg process running
+- SIGINT and SIGTERM request orderly runtime shutdown; MAME and FFmpeg are
+  killed when necessary and reaped before the runtime exits
 - Rust can create and drive a Linux virtual controller
 - MAME consumes a runtime-owned virtual controller
 - the Windows `seat-input` client sends complete controller-state snapshots over UDP

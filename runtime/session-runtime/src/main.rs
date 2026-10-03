@@ -11,9 +11,18 @@ use mame::{MameConfig, MameProcess};
 use media_bridge::{MediaBridge, MediaBridgeConfig};
 use network_input::run_network_input;
 use session::{Session, SessionConfig};
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
+use signal_hook::flag;
 use std::env;
+use std::io;
 use std::path::PathBuf;
 use std::process;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
+use std::time::Duration;
 use terminal_input::run_terminal_input;
 use virtual_controller::VirtualController;
 
@@ -212,6 +221,7 @@ fn parse_args() -> RuntimeArgs {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
+    let shutdown_requested = install_shutdown_handlers()?;
 
     let config = SessionConfig {
         id: args.session_id,
@@ -240,7 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio_thread_queue_size: args.audio_thread_queue_size,
     };
 
-    let (encoder, inputs) = EncoderProcess::spawn(&encoder_config)?;
+    let (mut encoder, inputs) = EncoderProcess::spawn(&encoder_config)?;
 
     let mut bridge = MediaBridge::new(MediaBridgeConfig {
         video_path: session.video_path(),
@@ -269,26 +279,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut mame = MameProcess::spawn(&mame_config)?;
 
-    if let Some(controller) = controller.as_mut() {
-        let input_result = if args.terminal_input {
-            run_terminal_input(controller)
+    let input_result = if let Some(controller) = controller.as_mut() {
+        if args.terminal_input {
+            run_terminal_input(controller, || {
+                Ok(shutdown_requested.load(Ordering::Acquire) || mame.try_wait()?.is_some())
+            })
         } else {
             run_network_input(controller, args.input_port.unwrap(), || {
-                Ok(mame.try_wait()?.is_some())
+                Ok(shutdown_requested.load(Ordering::Acquire) || mame.try_wait()?.is_some())
             })
-        };
-        let terminate_result = mame.terminate();
+        }
+    } else {
+        wait_for_shutdown_or_mame(&mut mame, &shutdown_requested)
+    };
 
-        input_result?;
-        terminate_result?;
+    if shutdown_requested.load(Ordering::Acquire) {
+        println!(
+            "Shutdown requested; stopping session {}.",
+            session.config.id
+        );
     }
 
-    let mame_status = mame.wait()?;
+    // Always attempt every cleanup stage. Preserve the first operational error
+    // only after MAME, bridge threads, and FFmpeg have all been stopped/reaped.
+    let mame_result = mame.terminate();
+    let bridge_result = bridge.stop();
+    let encoder_result = encoder.wait();
 
-    println!("MAME exited with status: {mame_status}");
+    input_result?;
 
-    bridge.stop()?;
-    encoder.wait()?;
+    if let Some(status) = mame_result? {
+        println!("MAME exited with status: {status}");
+    }
+
+    bridge_result?;
+    encoder_result?;
+
+    Ok(())
+}
+
+fn install_shutdown_handlers() -> io::Result<Arc<AtomicBool>> {
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+
+    flag::register(SIGINT, Arc::clone(&shutdown_requested))?;
+    flag::register(SIGTERM, Arc::clone(&shutdown_requested))?;
+
+    Ok(shutdown_requested)
+}
+
+fn wait_for_shutdown_or_mame(
+    mame: &mut MameProcess,
+    shutdown_requested: &AtomicBool,
+) -> io::Result<()> {
+    while !shutdown_requested.load(Ordering::Acquire) && mame.try_wait()?.is_none() {
+        thread::sleep(Duration::from_millis(25));
+    }
 
     Ok(())
 }

@@ -33,7 +33,13 @@ impl Drop for RawTerminal {
     }
 }
 
-pub fn run_terminal_input(controller: &mut VirtualController) -> io::Result<()> {
+pub fn run_terminal_input<F>(
+    controller: &mut VirtualController,
+    mut should_stop: F,
+) -> io::Result<()>
+where
+    F: FnMut() -> io::Result<bool>,
+{
     println!("Terminal controls: W/A/S/D move, J/K/L/; actions, U/I shoulders");
     println!("                   1 coin, 2 start, Q ends the session");
     println!("SSH terminals do not report releases; each key is a 120 ms tap.");
@@ -43,6 +49,30 @@ pub fn run_terminal_input(controller: &mut VirtualController) -> io::Result<()> 
     let mut input = [0_u8; 1];
 
     loop {
+        if should_stop()? {
+            break;
+        }
+
+        let mut descriptor = libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+
+        let poll_result = unsafe { libc::poll(&mut descriptor, 1, 50) };
+
+        if poll_result == -1 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+
+        if poll_result == 0 || descriptor.revents & libc::POLLIN == 0 {
+            continue;
+        }
+
         stdin.read_exact(&mut input)?;
         let handled = match input[0].to_ascii_lowercase() {
             b'w' => controller.tap_direction(0, -1, TAP_DURATION),
