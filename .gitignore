@@ -27,6 +27,7 @@ bios/
 saves/
 sessions/
 media-cache/
+measurements/
 
 # IDEs
 .idea/runtime/session-runtime/target/

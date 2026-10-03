@@ -76,6 +76,40 @@ These remain experiment goals rather than universal product requirements.
 
 Use a high-frame-rate camera that can see both the physical input action and the display response. Capture enough repeated samples to calculate a distribution rather than one anecdotal result. Document camera frame rate, display refresh rate, game state, input action, sample exclusions, and measurement uncertainty.
 
+### Capture procedure
+
+1. Create `measurements/latency-samples.csv` from
+   `docs/testing/LATENCY-SAMPLES.example.csv`. The `measurements/` directory is
+   intentionally ignored by Git so large clips and local measurements cannot
+   be committed accidentally.
+2. Fix a phone at 120 or 240 fps so the same recording clearly shows the input
+   key and the entire display. Do not move the phone between local and remote
+   trials.
+3. Use the same TMNT scene and the same discrete action for every trial. Record
+   at least 30 local presses and 30 remote presses, leaving enough time between
+   presses for the character to return to a stable state.
+4. For each trial, record the first frame in which the key is visibly actuated
+   as `press_frame` and the first frame containing the corresponding visible
+   game response as `response_frame`. Apply the same definitions to every row.
+5. Calculate the distribution from PowerShell:
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass `
+     -File .\tools\summarize-latency.ps1 `
+     -Path .\measurements\latency-samples.csv `
+     -OutputPath .\measurements\latency-derived.csv
+   ```
+
+The calculator reports minimum, median, p95, p99, maximum, added remote median,
+and added remote p95. At 240 fps, each camera frame represents about 4.17 ms of
+measurement resolution; at 120 fps, each frame represents about 8.33 ms.
+
+For objective action-to-sound confirmation, also record a normal-speed clip
+that includes the display and speaker audio during at least ten sharp TMNT hit
+events. Retain the original audio track. Compare the first visible impact frame
+with the corresponding audio waveform transient; do not use a re-encoded clip
+from a messaging application.
+
 ## Subjective results
 
 The current low-latency reference receiver is:

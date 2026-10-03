@@ -1,0 +1,3 @@
+mode,sample,press_frame,response_frame,camera_fps
+local,1,100,112,240
+remote,1,200,216,240
