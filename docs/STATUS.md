@@ -24,13 +24,18 @@ Last updated: 2026-10-03
 - sequence checks discard stale input packets
 - a 250 ms input timeout neutralizes controls and permits reconnection
 - low-buffer FFplay playback provides subjectively excellent control-to-video response
+- runtime metrics traced the game-only audio lag to unequal independent bridge
+  drops: 254 video frames versus 179 20 ms audio blocks produced approximately
+  650 ms of relative timeline skew
+- the current test branch uses bounded backpressure rather than dropping raw
+  video and audio independently
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
-- isolate a noticeable streamed audio delay from the responsive video path
-- compare AAC/20 ms PCM blocks with low-delay Opus/5 ms PCM blocks
-- test whether the 64-packet FFmpeg raw-audio input queue accumulates game audio
+- validate the lossless media bridge against the previously observed audio lag
+- compare AAC/20 ms PCM blocks with low-delay Opus/5 ms PCM blocks only if the
+  lossless bridge does not resolve the delay
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup of stale session FIFOs and directories

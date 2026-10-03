@@ -98,15 +98,21 @@ Observed:
 - `ffplay -sync video` delays the visible game and is unsuitable
 - a synchronized synthetic flash/beep remained precisely aligned through AAC,
   MPEG-TS, the wired network, FFplay, Windows, and HDMI audio
+- a five-minute game run started raw video and audio only 2.29 ms apart and
+  sustained 60.01 fps, but independently discarded 254 video frames and 179
+  20 ms audio blocks; those losses shorten the video timeline about 650 ms
+  more than the audio timeline and explain the observed audio lag
 
 These observations are not substitutes for camera-based measurements.
 
 ## Audio experiment matrix
 
 The synchronized synthetic test substantially reduces the likelihood that AAC,
-MPEG-TS, FFplay, Windows, or HDMI output creates the game-only delay. The next
-experiment therefore targets the raw PCM input path while keeping all video and
-receiver settings unchanged.
+MPEG-TS, FFplay, Windows, or HDMI output creates the game-only delay. Runtime
+metrics then identified independent media dropping as the leading cause. FFmpeg
+timestamps the raw inputs from the frame and sample counts it receives, so
+discarding unequal durations permanently moves one media timeline ahead of the
+other.
 
 Compare in this order:
 
@@ -116,12 +122,14 @@ Compare in this order:
 | Reduced queue | `--audio-codec aac --audio-block-ms 20 --audio-thread-queue-size 4` | Test FFmpeg raw-input backlog |
 | Small block | `--audio-codec aac --audio-block-ms 5 --audio-thread-queue-size 4` | Isolate bridge block contribution |
 | Opus | `--audio-codec opus --audio-block-ms 5 --audio-thread-queue-size 4` | Secondary codec comparison |
+| Lossless bridge | AAC defaults with blocking bounded bridge queues | Preserve equal raw timelines; current leading fix |
 
 For every run, record runtime `video_start_ms`, `audio_start_ms`, `offset_ms`,
 queue depths, dropped blocks, perceived synchronization, and playback stability.
 
 The synthetic test result makes Opus a secondary experiment rather than the
 leading fix. AAC remained synchronized when the MAME/raw-PCM bridge was absent.
+The small-block and Opus tests are deferred until the lossless bridge is tested.
 
 ## Interpretation
 
