@@ -8,6 +8,7 @@ repository_root="$(cd "$script_directory/.." && pwd)"
 control_plane_binary="$repository_root/target/release/control-plane-server"
 agent_binary="$repository_root/target/release/runtime-host-agent"
 session_runtime_binary="$repository_root/target/release/session-runtime"
+seat_input_binary="$repository_root/target/release/seat-input"
 bind_address="127.0.0.1:41810"
 base_url="http://$bind_address"
 host_id="phase-1c-smoke"
@@ -128,7 +129,7 @@ create_session() {
         "$base_url/api/v1/sessions" >"$output_path"
 }
 
-for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary"; do
+for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary" "$seat_input_binary"; do
     if [[ -x "$binary" ]]; then
         pass "release binary exists: $(basename "$binary")"
     else
@@ -280,6 +281,20 @@ if curl -fsS "$base_url/api/v1/games" >"$games_after_failure" \
     pass "seat returns to browsing while the runtime host remains healthy"
 else
     fail "seat returns to browsing while the runtime host remains healthy"
+fi
+
+seat_log="$results_directory/seat-client.log"
+if "$seat_input_binary" \
+    --control-plane "$base_url" \
+    --seat-id "phase-1c-seat-client" \
+    --destination-ip "127.0.0.1" \
+    --game tmnt \
+    --no-media \
+    --play-for-ms 500 >"$seat_log" 2>&1 \
+    && grep -Fq 'returning to browsing' "$seat_log"; then
+    pass "seat client browses, requests, connects, stops, and returns to browsing"
+else
+    fail "seat client browses, requests, connects, stops, and returns to browsing"
 fi
 
 sessions_json="$results_directory/sessions.json"

@@ -67,7 +67,17 @@ const SCHEMA: &str = "
     );
 ";
 
-type AssignmentRow = (String, String, String, String, i64, i64, String, String);
+type AssignmentRow = (
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+);
 
 #[derive(Clone)]
 pub struct RuntimeHostStore {
@@ -619,7 +629,8 @@ impl RuntimeHostStore {
                 }
                 let mut statement = connection.prepare(
                     "SELECT s.id, s.game_id, g.rom_name, s.destination_address,
-                            s.media_udp_port, s.input_udp_port, s.runtime_profile_json, s.state
+                            s.media_udp_port, s.input_udp_port, s.grant_token,
+                            s.runtime_profile_json, s.state
                      FROM sessions s
                      JOIN games g ON g.id = s.game_id
                      WHERE s.runtime_host_id = ?1
@@ -638,6 +649,7 @@ impl RuntimeHostStore {
                             row.get::<_, i64>(5)?,
                             row.get::<_, String>(6)?,
                             row.get::<_, String>(7)?,
+                            row.get::<_, String>(8)?,
                         ))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
@@ -656,6 +668,7 @@ impl RuntimeHostStore {
                     destination_address,
                     media,
                     input,
+                    input_token,
                     profile,
                     state,
                 )| {
@@ -670,6 +683,7 @@ impl RuntimeHostStore {
                         input_udp_port: u16::try_from(input).map_err(|_| {
                             StoreError::data("input UDP port is outside the supported range")
                         })?,
+                        input_token,
                         runtime_profile: serde_json::from_str(&profile)
                             .map_err(StoreError::serialization)?,
                         state: parse_session_state(&state)?,

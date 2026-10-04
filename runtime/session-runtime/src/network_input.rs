@@ -1,5 +1,8 @@
 use crate::virtual_controller::VirtualController;
-use input_protocol::{ControllerState, FLAG_STOP, PACKET_SIZE};
+use input_protocol::{
+    AUTHENTICATED_PACKET_SIZE, AuthenticatedControllerState, ControllerState, FLAG_STOP,
+    PACKET_SIZE, SessionToken,
+};
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
@@ -10,6 +13,7 @@ const INPUT_TIMEOUT: Duration = Duration::from_millis(250);
 pub fn run_network_input<F>(
     controller: &mut VirtualController,
     port: u16,
+    required_token: Option<SessionToken>,
     mut emulator_exited: F,
 ) -> io::Result<()>
 where
@@ -19,7 +23,7 @@ where
     socket.set_read_timeout(Some(RECEIVE_POLL))?;
     println!("Waiting for seat controller state on UDP port {port}.");
 
-    let mut buffer = [0_u8; PACKET_SIZE];
+    let mut buffer = [0_u8; AUTHENTICATED_PACKET_SIZE];
     let mut active_source: Option<SocketAddr> = None;
     let mut last_sequence: Option<u32> = None;
     let mut last_packet: Option<Instant> = None;
@@ -32,8 +36,21 @@ where
 
         match socket.recv_from(&mut buffer) {
             Ok((size, source)) => {
-                let Ok(state) = ControllerState::decode(&buffer[..size]) else {
-                    continue;
+                let state = if let Some(required_token) = required_token {
+                    let Ok(authenticated) = AuthenticatedControllerState::decode(&buffer[..size])
+                    else {
+                        continue;
+                    };
+                    if !tokens_equal(authenticated.token, required_token) {
+                        continue;
+                    }
+                    authenticated.state
+                } else {
+                    let Ok(state) = ControllerState::decode(&buffer[..size.min(PACKET_SIZE)])
+                    else {
+                        continue;
+                    };
+                    state
                 };
                 if active_source.is_some_and(|active| active != source) {
                     continue;
@@ -79,6 +96,17 @@ where
     controller.neutralize()
 }
 
+fn tokens_equal(candidate: SessionToken, required: SessionToken) -> bool {
+    candidate
+        .0
+        .iter()
+        .zip(required.0)
+        .fold(0_u8, |difference, (candidate, required)| {
+            difference | (*candidate ^ required)
+        })
+        == 0
+}
+
 fn sequence_is_newer(candidate: u32, previous: u32) -> bool {
     let difference = candidate.wrapping_sub(previous);
     difference != 0 && difference < (1 << 31)
@@ -86,7 +114,8 @@ fn sequence_is_newer(candidate: u32, previous: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::sequence_is_newer;
+    use super::{sequence_is_newer, tokens_equal};
+    use input_protocol::SessionToken;
 
     #[test]
     fn sequence_comparison_handles_wraparound() {
@@ -94,5 +123,11 @@ mod tests {
         assert!(!sequence_is_newer(10, 10));
         assert!(!sequence_is_newer(9, 10));
         assert!(sequence_is_newer(0, u32::MAX));
+    }
+
+    #[test]
+    fn session_tokens_must_match_every_byte() {
+        assert!(tokens_equal(SessionToken([7; 16]), SessionToken([7; 16])));
+        assert!(!tokens_equal(SessionToken([7; 16]), SessionToken([8; 16])));
     }
 }

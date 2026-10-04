@@ -1,14 +1,42 @@
+use control_protocol::{
+    CatalogGame, CatalogGameList, CreateSessionRequest, RuntimeHostStatus, Session, SessionState,
+};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use input_protocol::{ControllerState, FLAG_STOP, button};
+use input_protocol::{
+    AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
+};
+use reqwest::blocking::Client;
 use std::collections::HashSet;
 use std::env;
-use std::io;
-use std::net::{SocketAddr, UdpSocket};
-use std::process;
-use std::time::{Duration, Instant};
+use std::io::{self, Write};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::process::{self, Child, Command, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(50);
+const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SESSION_START_TIMEOUT: Duration = Duration::from_secs(30);
+
+enum Mode {
+    Direct(SocketAddr),
+    Orchestrated(SeatConfig),
+}
+
+struct SeatConfig {
+    control_plane_url: String,
+    seat_id: String,
+    destination_address: IpAddr,
+    game_id: Option<String>,
+    ffplay_path: String,
+    no_media: bool,
+    play_for: Option<Duration>,
+}
 
 struct RawMode;
 
@@ -28,13 +56,319 @@ impl Drop for RawMode {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let destination = parse_destination();
+    match parse_mode() {
+        Mode::Direct(destination) => run_direct(destination),
+        Mode::Orchestrated(config) => run_orchestrated(config),
+    }
+}
+
+fn run_direct(destination: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    println!("4-Play direct seat input -> {destination}");
+    println!("Press Esc to disconnect and stop the development session.");
+    run_controller(destination, None, true, || false)
+}
+
+fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::builder().timeout(Duration::from_secs(3)).build()?;
+    let one_shot = config.game_id.is_some();
+    let mut selected_game = config.game_id.clone();
+
+    loop {
+        let games = fetch_available_games(&client, &config.control_plane_url)?;
+        let Some(game_id) = select_game(&games, selected_game.take())? else {
+            println!("Seat client stopped.");
+            return Ok(());
+        };
+        let session = create_session(&client, &config, &game_id)?;
+        println!("Session requested: {}", session.id);
+
+        let active = match wait_for_active(&client, &config.control_plane_url, &session.id) {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!("Session did not start: {error}");
+                if one_shot {
+                    return Err(error);
+                }
+                continue;
+            }
+        };
+        if active.connection_grant.expires_unix_ms <= unix_time_ms() {
+            request_stop(&client, &config.control_plane_url, &active.id)?;
+            return Err("connection grant expired before the session became active".into());
+        }
+
+        let input_destination = format!(
+            "{}:{}",
+            active.connection_grant.runtime_host_address, active.connection_grant.input_udp_port
+        )
+        .parse::<SocketAddr>()?;
+        let input_token = active.connection_grant.token.parse::<SessionToken>()?;
+        let mut media = if config.no_media {
+            None
+        } else {
+            match spawn_ffplay(&config.ffplay_path, active.connection_grant.media_udp_port) {
+                Ok(child) => Some(child),
+                Err(error) => {
+                    let _ = request_stop(&client, &config.control_plane_url, &active.id);
+                    return Err(error.into());
+                }
+            }
+        };
+
+        println!(
+            "Playing {} through host {}. Press Esc to stop and return to browsing.",
+            active.game_id, active.runtime_host_id
+        );
+        let runtime_ended = Arc::new(AtomicBool::new(false));
+        let monitor = spawn_session_monitor(
+            client.clone(),
+            config.control_plane_url.clone(),
+            active.id.clone(),
+            Arc::clone(&runtime_ended),
+        );
+        let mut stopped = || {
+            runtime_ended.load(Ordering::Acquire)
+                || media
+                    .as_mut()
+                    .and_then(|child| child.try_wait().ok().flatten())
+                    .is_some()
+        };
+        let input_result = if let Some(duration) = config.play_for {
+            run_automated_controller(input_destination, input_token, duration, &mut stopped)
+        } else {
+            run_controller(input_destination, Some(input_token), false, &mut stopped)
+        };
+
+        if !runtime_ended.load(Ordering::Acquire) {
+            request_stop(&client, &config.control_plane_url, &active.id)?;
+        }
+        runtime_ended.store(true, Ordering::Release);
+        let _ = monitor.join();
+        stop_media(&mut media);
+        input_result?;
+
+        let final_session = wait_for_terminal(&client, &config.control_plane_url, &active.id)?;
+        println!(
+            "Session {} ended in state {:?}; returning to browsing.",
+            final_session.id, final_session.state
+        );
+        if one_shot {
+            return Ok(());
+        }
+    }
+}
+
+fn fetch_available_games(
+    client: &Client,
+    control_plane_url: &str,
+) -> Result<Vec<CatalogGame>, Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    Ok(catalog
+        .games
+        .into_iter()
+        .filter(|game| {
+            game.availability
+                .iter()
+                .any(|entry| entry.runtime_host_status == RuntimeHostStatus::Online)
+        })
+        .collect())
+}
+
+fn select_game(
+    games: &[CatalogGame],
+    requested: Option<String>,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if games.is_empty() {
+        return Err("no games are currently available on an online runtime host".into());
+    }
+    if let Some(game_id) = requested {
+        if games.iter().any(|game| game.id == game_id) {
+            return Ok(Some(game_id));
+        }
+        return Err(format!("game '{game_id}' is not currently available").into());
+    }
+
+    println!("\nAvailable games:");
+    for (index, game) in games.iter().enumerate() {
+        println!("  {}. {} ({})", index + 1, game.display_name, game.id);
+    }
+    print!("Choose a game number, or q to quit: ");
+    io::stdout().flush()?;
+    let mut selection = String::new();
+    io::stdin().read_line(&mut selection)?;
+    let selection = selection.trim();
+    if selection.eq_ignore_ascii_case("q") {
+        return Ok(None);
+    }
+    let index = selection
+        .parse::<usize>()
+        .map_err(|_| "selection must be a game number or q")?;
+    games
+        .get(index.saturating_sub(1))
+        .map(|game| Some(game.id.clone()))
+        .ok_or_else(|| "game selection is outside the displayed range".into())
+}
+
+fn create_session(
+    client: &Client,
+    config: &SeatConfig,
+    game_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    Ok(client
+        .post(format!("{}/api/v1/sessions", config.control_plane_url))
+        .json(&CreateSessionRequest {
+            game_id: game_id.to_owned(),
+            seat_id: config.seat_id.clone(),
+            destination_address: config.destination_address.to_string(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
+fn get_session(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+) -> Result<Session, reqwest::Error> {
+    client
+        .get(format!("{control_plane_url}/api/v1/sessions/{session_id}"))
+        .send()?
+        .error_for_status()?
+        .json()
+}
+
+fn wait_for_active(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    loop {
+        let session = get_session(client, control_plane_url, session_id)?;
+        if session.state == SessionState::Active {
+            return Ok(session);
+        }
+        if session.state.is_terminal() {
+            return Err(format!(
+                "session entered {:?}: {}",
+                session.state,
+                session
+                    .failure_reason
+                    .as_deref()
+                    .unwrap_or("no reason reported")
+            )
+            .into());
+        }
+        if started.elapsed() >= SESSION_START_TIMEOUT {
+            let _ = request_stop(client, control_plane_url, session_id);
+            return Err("session start timed out after 30 seconds".into());
+        }
+        thread::sleep(SESSION_POLL_INTERVAL);
+    }
+}
+
+fn wait_for_terminal(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    loop {
+        let session = get_session(client, control_plane_url, session_id)?;
+        if session.state.is_terminal() {
+            return Ok(session);
+        }
+        if started.elapsed() >= SESSION_START_TIMEOUT {
+            return Err("session stop timed out after 30 seconds".into());
+        }
+        thread::sleep(SESSION_POLL_INTERVAL);
+    }
+}
+
+fn request_stop(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+) -> Result<Session, reqwest::Error> {
+    client
+        .post(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/stop"
+        ))
+        .send()?
+        .error_for_status()?
+        .json()
+}
+
+fn spawn_session_monitor(
+    client: Client,
+    control_plane_url: String,
+    session_id: String,
+    ended: Arc<AtomicBool>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        while !ended.load(Ordering::Acquire) {
+            match get_session(&client, &control_plane_url, &session_id) {
+                Ok(session) if session.state.is_terminal() => {
+                    ended.store(true, Ordering::Release);
+                    break;
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("Session monitor request failed: {error}"),
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+    })
+}
+
+fn spawn_ffplay(path: &str, port: u16) -> io::Result<Child> {
+    let source = format!("udp://0.0.0.0:{port}?fifo_size=1000000&overrun_nonfatal=1");
+    Command::new(path)
+        .args([
+            "-f",
+            "mpegts",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-framedrop",
+            "-probesize",
+            "32768",
+            "-analyzeduration",
+            "0",
+            &source,
+        ])
+        .stdin(Stdio::null())
+        .spawn()
+}
+
+fn stop_media(media: &mut Option<Child>) {
+    let Some(mut child) = media.take() else {
+        return;
+    };
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+fn run_controller<F>(
+    destination: SocketAddr,
+    input_token: Option<SessionToken>,
+    send_stop_flag: bool,
+    mut externally_stopped: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> bool,
+{
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect(destination)?;
-
     println!("4-Play seat input -> {destination}");
     println!("W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start");
-    println!("Press Esc to disconnect and stop the development session.");
 
     let _raw_mode = RawMode::enter()?;
     let mut held = HashSet::new();
@@ -44,41 +378,123 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let wait = HEARTBEAT_INTERVAL.saturating_sub(last_send.elapsed());
         let mut changed = false;
-
         if event::poll(wait)?
             && let Event::Key(key) = event::read()?
         {
             if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press {
-                send_state(&socket, &held, &mut sequence, FLAG_STOP)?;
+                send_state(
+                    &socket,
+                    &held,
+                    &mut sequence,
+                    if send_stop_flag { FLAG_STOP } else { 0 },
+                    input_token,
+                )?;
                 break;
             }
             changed = update_held_keys(&mut held, key);
         }
-
+        if externally_stopped() {
+            break;
+        }
         if changed || last_send.elapsed() >= HEARTBEAT_INTERVAL {
-            send_state(&socket, &held, &mut sequence, 0)?;
+            send_state(&socket, &held, &mut sequence, 0, input_token)?;
             last_send = Instant::now();
         }
     }
-
     Ok(())
 }
 
-fn parse_destination() -> SocketAddr {
+fn run_automated_controller<F>(
+    destination: SocketAddr,
+    input_token: SessionToken,
+    duration: Duration,
+    mut externally_stopped: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> bool,
+{
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect(destination)?;
+    let held = HashSet::new();
+    let mut sequence = 0_u32;
+    let started = Instant::now();
+    while started.elapsed() < duration && !externally_stopped() {
+        send_state(&socket, &held, &mut sequence, 0, Some(input_token))?;
+        thread::sleep(HEARTBEAT_INTERVAL);
+    }
+    Ok(())
+}
+
+fn parse_mode() -> Mode {
     let mut args = env::args();
     let program = args.next().unwrap_or_else(|| "seat-input".into());
-    let destination = args.next().unwrap_or_else(|| {
-        eprintln!("Usage: {program} <runtime-address:input-port>");
-        process::exit(2);
-    });
-    if args.next().is_some() {
-        eprintln!("Usage: {program} <runtime-address:input-port>");
-        process::exit(2);
+    let values = args.collect::<Vec<_>>();
+    if values.len() == 1
+        && let Ok(destination) = values[0].parse::<SocketAddr>()
+    {
+        return Mode::Direct(destination);
     }
-    destination.parse().unwrap_or_else(|error| {
-        eprintln!("Invalid runtime address '{destination}': {error}");
-        process::exit(2);
+
+    let mut control_plane_url = None;
+    let mut seat_id = env::var("FOURPLAY_SEAT_ID").unwrap_or_else(|_| "seat-dev".to_owned());
+    let mut destination_address = env::var("FOURPLAY_SEAT_ADDRESS").ok();
+    let mut game_id = None;
+    let mut ffplay_path = env::var("FOURPLAY_FFPLAY_PATH").unwrap_or_else(|_| "ffplay".to_owned());
+    let mut no_media = false;
+    let mut play_for = None;
+    let mut index = 0;
+    while index < values.len() {
+        let option = &values[index];
+        let value = |index: &mut usize| {
+            *index += 1;
+            values
+                .get(*index)
+                .cloned()
+                .unwrap_or_else(|| usage(&program))
+        };
+        match option.as_str() {
+            "--control-plane" => control_plane_url = Some(value(&mut index)),
+            "--seat-id" => seat_id = value(&mut index),
+            "--destination-ip" => destination_address = Some(value(&mut index)),
+            "--game" => game_id = Some(value(&mut index)),
+            "--ffplay-path" => ffplay_path = value(&mut index),
+            "--no-media" => no_media = true,
+            "--play-for-ms" => {
+                let milliseconds = value(&mut index).parse::<u64>().unwrap_or_else(|error| {
+                    eprintln!("Invalid --play-for-ms value: {error}");
+                    process::exit(2);
+                });
+                play_for = Some(Duration::from_millis(milliseconds));
+            }
+            "--help" | "-h" => usage(&program),
+            _ => usage(&program),
+        }
+        index += 1;
+    }
+    let control_plane_url = control_plane_url.unwrap_or_else(|| usage(&program));
+    let destination_address = destination_address
+        .unwrap_or_else(|| usage(&program))
+        .parse::<IpAddr>()
+        .unwrap_or_else(|error| {
+            eprintln!("Invalid seat destination address: {error}");
+            process::exit(2);
+        });
+    Mode::Orchestrated(SeatConfig {
+        control_plane_url: control_plane_url.trim_end_matches('/').to_owned(),
+        seat_id,
+        destination_address,
+        game_id,
+        ffplay_path,
+        no_media,
+        play_for,
     })
+}
+
+fn usage(program: &str) -> ! {
+    eprintln!(
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--game <id>] [--ffplay-path <path>] [--no-media] [--play-for-ms <milliseconds>]"
+    );
+    process::exit(2)
 }
 
 fn update_held_keys(held: &mut HashSet<KeyCode>, key: KeyEvent) -> bool {
@@ -112,10 +528,15 @@ fn send_state(
     held: &HashSet<KeyCode>,
     sequence: &mut u32,
     flags: u8,
+    input_token: Option<SessionToken>,
 ) -> io::Result<()> {
     *sequence = sequence.wrapping_add(1);
     let state = state_from_keys(held, *sequence, flags);
-    socket.send(&state.encode())?;
+    if let Some(token) = input_token {
+        socket.send(&AuthenticatedControllerState { token, state }.encode())?;
+    } else {
+        socket.send(&state.encode())?;
+    }
     Ok(())
 }
 
@@ -123,7 +544,6 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
     let is_held = |character| held.contains(&KeyCode::Char(character));
     let axis_x = (i16::from(is_held('d')) - i16::from(is_held('a'))) * i16::MAX;
     let axis_y = (i16::from(is_held('s')) - i16::from(is_held('w'))) * i16::MAX;
-
     let mut buttons = 0;
     for (key, mask) in [
         ('j', button::ACTION_1),
@@ -139,7 +559,6 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
             buttons |= mask;
         }
     }
-
     ControllerState {
         sequence,
         buttons,
@@ -147,6 +566,15 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
         axis_y,
         flags,
     }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -162,7 +590,6 @@ mod tests {
             KeyCode::Char('k'),
         ]);
         let state = state_from_keys(&held, 7, 0);
-
         assert_eq!(state.axis_x, i16::MAX);
         assert_eq!(state.axis_y, -i16::MAX);
         assert_eq!(state.buttons, button::ACTION_1 | button::ACTION_2);

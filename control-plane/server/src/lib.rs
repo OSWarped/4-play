@@ -1092,6 +1092,10 @@ mod tests {
         assert_eq!(assignments["sessions"][0]["session_id"], session_id);
         assert_eq!(assignments["sessions"][0]["rom_name"], "tmnt");
         assert_eq!(assignments["sessions"][0]["state"], "allocating");
+        assert_eq!(
+            assignments["sessions"][0]["input_token"],
+            created["connection_grant"]["token"]
+        );
 
         let state_path =
             format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");

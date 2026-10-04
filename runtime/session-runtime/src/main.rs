@@ -7,6 +7,7 @@ mod terminal_input;
 mod virtual_controller;
 
 use encoder::{AudioCodec, EncoderConfig, EncoderProcess};
+use input_protocol::SessionToken;
 use mame::{MameConfig, MameProcess};
 use media_bridge::{MediaBridge, MediaBridgeConfig};
 use network_input::run_network_input;
@@ -38,6 +39,7 @@ struct RuntimeArgs {
     udp_port: u16,
     terminal_input: bool,
     input_port: Option<u16>,
+    input_token: Option<SessionToken>,
     autosave: bool,
     audio_codec: AudioCodec,
     audio_block_ms: usize,
@@ -78,6 +80,7 @@ fn print_usage(program: &str) {
     --udp-port <port> \
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
+    [--input-token <uuid>] \
     [--autosave] \
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
@@ -131,6 +134,7 @@ fn parse_args() -> RuntimeArgs {
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
     let mut input_port = None;
+    let mut input_token = None;
     let mut autosave = false;
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
@@ -178,6 +182,12 @@ fn parse_args() -> RuntimeArgs {
                 input_port = Some(parse_value(
                     require_value(&mut args, "--input-port"),
                     "--input-port",
+                ));
+            }
+            "--input-token" => {
+                input_token = Some(parse_value(
+                    require_value(&mut args, "--input-token"),
+                    "--input-token",
                 ));
             }
             "--autosave" => {
@@ -230,6 +240,7 @@ fn parse_args() -> RuntimeArgs {
         udp_port: required(udp_port, "--udp-port", &program),
         terminal_input,
         input_port,
+        input_token,
         autosave,
         audio_codec,
         audio_block_ms,
@@ -251,6 +262,10 @@ fn parse_args() -> RuntimeArgs {
 
     if parsed.terminal_input && parsed.input_port.is_some() {
         eprintln!("--terminal-input and --input-port cannot be used together.");
+        process::exit(2);
+    }
+    if parsed.input_token.is_some() && parsed.input_port.is_none() {
+        eprintln!("--input-token requires --input-port.");
         process::exit(2);
     }
 
@@ -360,14 +375,19 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
                 )
             })
         } else {
-            run_network_input(controller, args.input_port.unwrap(), || {
-                should_stop(
-                    &shutdown_requested,
-                    &mut mame,
-                    &mut encoder,
-                    &mut child_failure,
-                )
-            })
+            run_network_input(
+                controller,
+                args.input_port.unwrap(),
+                args.input_token,
+                || {
+                    should_stop(
+                        &shutdown_requested,
+                        &mut mame,
+                        &mut encoder,
+                        &mut child_failure,
+                    )
+                },
+            )
         }
     } else {
         wait_for_shutdown_or_child(

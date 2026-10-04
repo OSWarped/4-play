@@ -120,6 +120,8 @@ impl RuntimeSupervisor {
             .arg(assignment.media_udp_port.to_string())
             .arg("--input-port")
             .arg(assignment.input_udp_port.to_string())
+            .arg("--input-token")
+            .arg(&assignment.input_token)
             .arg("--mame-path")
             .arg(&self.config.mame_path)
             .arg("--mame-ini-path")
