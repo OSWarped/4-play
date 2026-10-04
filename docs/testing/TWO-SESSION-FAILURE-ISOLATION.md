@@ -65,9 +65,7 @@ as an abnormal child exit and returns failure. The harness records the child
 it deliberately killed but does not assume a kernel-defined reap order for
 dependent children.
 
-## Remaining Phase 1B work
+## Phase 1B follow-up
 
-Concurrent save/NVRAM isolation remains unvalidated. The runtime now preserves
-the required per-session directories, but a test must still write distinct
-game state in two live sessions, restart both, and prove each session restores
-only its own state.
+Concurrent save-state and NVRAM isolation was subsequently validated. See
+[Two-Session Persistence Isolation](TWO-SESSION-PERSISTENCE-ISOLATION.md).

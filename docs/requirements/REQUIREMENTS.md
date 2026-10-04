@@ -122,7 +122,10 @@ Current evidence covers media synchronization and observed real-time production 
 - Seats shall return to a usable state after session loss without rebooting.
 - Start, stop, and cleanup commands shall be idempotent once those commands exist.
 
-Current evidence confirms separate media directories and pipelines for simultaneous sessions. Controller, save, and failure isolation remain to be proven.
+Current evidence confirms separate media directories, pipelines, controllers,
+process trees, save states, and NVRAM for simultaneous sessions. It also proves
+that a child failure or orderly shutdown in one session leaves its peer
+operating.
 
 ### Security and maintainability
 
@@ -164,9 +167,10 @@ The demonstration shall:
 5. show that the other session continues operating
 6. clean up the stopped session's processes, controllers, and temporary resources
 
-Progress: items 1 through 6 are demonstrated for unexpected MAME and FFmpeg
-child termination. Concurrent save/NVRAM isolation remains an additional
-roadmap criterion before Phase 1B is closed.
+Progress: **complete on the reference host.** Items 1 through 6 are demonstrated
+for orderly shutdown and unexpected MAME and FFmpeg child termination.
+Concurrent save-state and NVRAM isolation is also demonstrated across save,
+restart, restore, and independent shutdown cycles.
 
 ### Phase 1C — Orchestration
 

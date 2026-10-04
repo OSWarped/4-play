@@ -113,8 +113,9 @@ remain.
 
 ### Phase 1B — Runtime isolation
 
-Media, controller, and abnormal child-failure isolation have been demonstrated.
-Concurrent save/NVRAM isolation remains.
+Complete on the reference host. Media, controller, process, abnormal
+child-failure, save-state, and NVRAM isolation have all been demonstrated with
+two concurrent sessions.
 
 ### Phase 1C — Control-plane orchestration
 

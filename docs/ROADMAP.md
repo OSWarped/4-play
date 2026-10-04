@@ -59,7 +59,7 @@ Still required:
 
 ## Phase 1B — Runtime Isolation
 
-Status: **partially validated ahead of schedule**.
+Status: **validated on the reference host**.
 
 Already demonstrated:
 
@@ -82,12 +82,15 @@ Already demonstrated:
   through both child-failure cases
 - a failed session can restart repeatedly with the same session ID and ports
   while preserving its configuration and NVRAM directories
+- graceful runtime shutdown asks MAME to exit normally so autosave state and
+  NVRAM are flushed before the remaining process tree is reaped
+- two concurrent WWF WrestleMania sessions write separate autosave and NVRAM
+  files, restore only their assigned paths, and retain isolation when either
+  session stops
 
-Still required:
-
-- concurrent save and NVRAM validation
-
-**Exit:** two complete playable sessions operate independently and one can stop without affecting the other.
+**Exit achieved:** two complete playable sessions operate independently and one
+can stop without affecting the other. See
+[the persistence isolation record](testing/TWO-SESSION-PERSISTENCE-ISOLATION.md).
 
 ## Phase 1C — Control-Plane Orchestration
 

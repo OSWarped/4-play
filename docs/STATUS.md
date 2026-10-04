@@ -55,13 +55,17 @@ Last updated: 2026-10-04
   input port, and transient media FIFOs
 - a second session continues streaming and accepting input while its peer
   fails, and the failed session can restart on the same ID and ports
+- normal runtime shutdown requests a graceful MAME exit and can flush MAME
+  autosave state before child-process cleanup
+- a 39-assertion concurrent persistence test proved distinct save-state and
+  NVRAM files, session-specific restore paths, and shutdown isolation
+- Phase 1B runtime isolation is complete on the reference host
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
 - complete a rendered Windows-player resource soak; the decoder-only working
   set rose from 27.67 MiB to 50.94 MiB during a 168-second sample
-- validate concurrent save and NVRAM isolation
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup after the runtime process itself is killed without a chance

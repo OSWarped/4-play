@@ -29,7 +29,9 @@ This list now distinguishes completed feasibility work, active Phase 1A work, an
    - Linux event and joystick handlers
    - generated states verified with `jstest`
 
-These demonstrations do not close the broader remote-play or isolation milestones because controller integration and latency measurements remain.
+These early demonstrations did not by themselves close the broader remote-play
+or isolation milestones. Phase 1B isolation was subsequently completed;
+objective latency measurement remains the Phase 1A gate.
 
 The controller-integration statement above is historical. Runtime-owned input,
 direct seat transport, simultaneous controls, timeout neutralization, and
@@ -80,11 +82,13 @@ the remaining Phase 1A gate.
    - reject ambiguous multi-screen configurations
    - remove manual media dimensions from normal session requests
 
-8. **Prove complete two-session isolation**
+8. **Prove complete two-session isolation — demonstrated**
    - separate virtual controllers
    - no input leakage
    - independent saves and NVRAM
    - stop one session without disturbing the other
+   - survive abnormal MAME and FFmpeg child termination without disturbing the
+     other session
 
 9. **Implement robust cleanup and recovery**
    - remove stale FIFOs and session resources

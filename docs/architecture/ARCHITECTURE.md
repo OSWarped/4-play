@@ -122,7 +122,10 @@ Two independent MAME sessions have run simultaneously with:
 - separate encoders and UDP destinations
 - different resolutions and refresh rates
 
-Aliens and TMNT maintained independent media output. This validates media-side session isolation, but complete Phase 1B isolation still requires separate virtual controllers, no input leakage, abnormal termination tests, and save/NVRAM validation.
+Aliens and TMNT maintained independent media output. Subsequent automated and
+manual tests also demonstrated separate virtual controllers, no input leakage,
+independent child-failure cleanup, and isolated save-state/NVRAM restoration.
+Together these results complete Phase 1B isolation on the reference host.
 
 ### Virtual controllers
 
