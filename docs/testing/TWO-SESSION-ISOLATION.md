@@ -116,16 +116,27 @@ The runtime now:
   uinput devices are enumerated even though they are not present in SDL's
   game-controller mapping database
 
-The strengthened automated harness passed on 2026-10-04. It verified that the
-two generated profiles contained different device IDs, both MAME commands
-explicitly selected their own profiles, controller events remained isolated,
-and session B advanced from 270 to 922 frames after session A stopped. The
-manual procedure below must now be repeated to verify visible game response.
+The strengthened automated harness passed all 49 checks on 2026-10-04 using
+commit `33e407d`. It verified that the two generated profiles contained
+different device IDs, both MAME commands explicitly selected their own
+profiles and the `sdljoy` provider, controller events remained isolated, and
+session B advanced from 268 to 623 frames after session A stopped.
 
 ## Manual MAME-level input isolation
 
 The automated result must be followed by this visual test. Use two SSH windows
 on the Linux host and four PowerShell windows on the Windows seat.
+
+The runtime host firewall must allow input UDP from the seat. The reference
+environment uses this narrowly scoped UFW rule:
+
+```bash
+sudo ufw allow from 192.168.20.10 to any port 42011:42012 proto udp \
+  comment '4-play two-session input'
+```
+
+Without this rule, the input clients continue running and sending heartbeats,
+but neither runtime logs `Seat input connected` and no controls register.
 
 ### 1. Start both Windows receivers
 
@@ -210,14 +221,20 @@ Record this manual matrix:
 
 | Assertion | Result | Notes |
 | --- | --- | --- |
-| Input A affects TMNT | | |
-| Input A does not affect KI | | |
-| Input B affects KI | | |
-| Input B does not affect TMNT | | |
-| Simultaneous controls work in A | | |
-| Simultaneous controls work in B | | |
-| B remains playable after A stops | | |
-| Both sessions clean up | | |
+| Input A affects TMNT | PASS | User confirmed visible movement and attacks. |
+| Input A does not affect KI | PASS | User confirmed the two inputs remained isolated. |
+| Input B affects KI | PASS | User confirmed movement and all six attack controls. |
+| Input B does not affect TMNT | PASS | User confirmed the two inputs remained isolated. |
+| Simultaneous controls work in A | PENDING | The attempted run was interrupted before a conclusive result. |
+| Simultaneous controls work in B | PENDING | The attempted run was interrupted before a conclusive result. |
+| B remains playable after A stops | PASS | KI's runtime, MAME, encoder, receiver, and input client survived a complete TMNT stop/restart. |
+| Both sessions clean up | PENDING | Both sessions remain active for continued testing. |
+
+During the 2026-10-04 manual run, TMNT was stopped and relaunched using the
+same session ID and ports. KI continued playing without a process restart, and
+the relaunched TMNT input client reconnected successfully. This confirms the
+manual session-restart isolation path in addition to the automated shutdown
+test.
 
 If either game responds to the other session's input, the test has found a real
 Phase 1B isolation failure. Do not reinterpret it as a test-harness problem:
