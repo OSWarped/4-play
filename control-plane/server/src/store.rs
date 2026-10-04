@@ -1,8 +1,9 @@
 use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 
 use control_protocol::{
-    CatalogGame, GameAvailability, GameRuntimeProfile, RegisterRuntimeHost, RuntimeHost,
-    RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus,
+    CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
+    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    RuntimeHostHeartbeat, RuntimeHostStatus, Session, SessionState,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -32,6 +33,37 @@ const SCHEMA: &str = "
         PRIMARY KEY (runtime_host_id, game_id),
         FOREIGN KEY (runtime_host_id) REFERENCES runtime_hosts(id) ON DELETE CASCADE,
         FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        game_id TEXT NOT NULL,
+        seat_id TEXT NOT NULL,
+        destination_address TEXT NOT NULL,
+        runtime_host_id TEXT NOT NULL,
+        runtime_host_address TEXT NOT NULL,
+        runtime_profile_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        grant_token TEXT NOT NULL UNIQUE,
+        grant_expires_unix_ms INTEGER NOT NULL,
+        media_udp_port INTEGER NOT NULL,
+        input_udp_port INTEGER NOT NULL,
+        created_unix_ms INTEGER NOT NULL,
+        updated_unix_ms INTEGER NOT NULL,
+        failure_reason TEXT,
+        FOREIGN KEY (game_id) REFERENCES games(id),
+        FOREIGN KEY (runtime_host_id) REFERENCES runtime_hosts(id)
+    );
+    CREATE INDEX IF NOT EXISTS sessions_runtime_state
+        ON sessions(runtime_host_id, state);
+    CREATE INDEX IF NOT EXISTS sessions_seat_state
+        ON sessions(seat_id, state);
+    CREATE TABLE IF NOT EXISTS session_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        occurred_unix_ms INTEGER NOT NULL,
+        detail TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 ";
 
@@ -389,6 +421,190 @@ impl RuntimeHostStore {
             .find(|game| game.id == game_id)
             .ok_or(StoreError::GameNotFound)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn allocate_session(
+        &self,
+        session_id: String,
+        grant_token: String,
+        request: CreateSessionRequest,
+        now_unix_ms: u64,
+        grant_expires_unix_ms: u64,
+        offline_after_ms: u64,
+        media_port_start: u16,
+        input_port_start: u16,
+        port_count: u16,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "session timestamp")?;
+        let grant_expires = to_sql_integer(grant_expires_unix_ms, "grant expiry")?;
+        let cutoff = to_sql_integer(
+            now_unix_ms.saturating_sub(offline_after_ms),
+            "offline cutoff",
+        )?;
+        let stored = self
+            .connection
+            .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, AllocationRejection>> {
+                let transaction = connection.transaction()?;
+                mark_expired_offline(&transaction, cutoff)?;
+
+                let seat_busy = transaction.query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM sessions
+                        WHERE seat_id = ?1 AND state NOT IN
+                            ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                    )",
+                    [&request.seat_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if seat_busy {
+                    return Ok(Err(AllocationRejection::SeatBusy));
+                }
+
+                let game_exists = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?1)",
+                    [&request.game_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if !game_exists {
+                    return Ok(Err(AllocationRejection::GameNotFound));
+                }
+
+                let selected = transaction
+                    .query_row(
+                        "SELECT h.id, h.capabilities_json, rp.profile_json
+                         FROM runtime_hosts h
+                         JOIN runtime_profiles rp ON rp.runtime_host_id = h.id
+                         WHERE rp.game_id = ?1 AND h.status = 'online'
+                         ORDER BY (
+                            SELECT COUNT(*) FROM sessions s
+                            WHERE s.runtime_host_id = h.id AND s.state NOT IN
+                                ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                         ), h.id
+                         LIMIT 1",
+                        [&request.game_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                    )
+                    .optional()?;
+                let Some((runtime_host_id, capabilities_json, runtime_profile_json)) = selected else {
+                    return Ok(Err(AllocationRejection::GameUnavailable));
+                };
+                let capabilities: RuntimeHostCapabilities = match serde_json::from_str(&capabilities_json) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(AllocationRejection::InvalidHostCapabilities)),
+                };
+                if capabilities.data_plane_address.trim().is_empty() {
+                    return Ok(Err(AllocationRejection::MissingDataPlaneAddress));
+                }
+
+                let mut selected_ports = None;
+                for offset in 0..port_count {
+                    let Some(media_port) = media_port_start.checked_add(offset) else { break };
+                    let Some(input_port) = input_port_start.checked_add(offset) else { break };
+                    let in_use = transaction.query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM sessions
+                            WHERE runtime_host_id = ?1
+                              AND state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                              AND (media_udp_port = ?2 OR input_udp_port = ?3)
+                        )",
+                        params![runtime_host_id, i64::from(media_port), i64::from(input_port)],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !in_use {
+                        selected_ports = Some((media_port, input_port));
+                        break;
+                    }
+                }
+                let Some((media_udp_port, input_udp_port)) = selected_ports else {
+                    return Ok(Err(AllocationRejection::PortsExhausted));
+                };
+
+                transaction.execute(
+                    "INSERT INTO sessions (
+                        id, game_id, seat_id, destination_address, runtime_host_id,
+                        runtime_host_address, runtime_profile_json, state, grant_token,
+                        grant_expires_unix_ms, media_udp_port, input_udp_port,
+                        created_unix_ms, updated_unix_ms, failure_reason
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, ?12, NULL)",
+                    params![
+                        session_id,
+                        request.game_id,
+                        request.seat_id,
+                        request.destination_address,
+                        runtime_host_id,
+                        capabilities.data_plane_address,
+                        runtime_profile_json,
+                        grant_token,
+                        grant_expires,
+                        i64::from(media_udp_port),
+                        i64::from(input_udp_port),
+                        now,
+                    ],
+                )?;
+                transaction.execute(
+                    "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                     VALUES (?1, 'requested', ?2, NULL), (?1, 'allocating', ?2, NULL)",
+                    params![session_id, now],
+                )?;
+                let stored = transaction.query_row(
+                    &session_select_sql("WHERE id = ?1"),
+                    [&session_id],
+                    StoredSession::from_row,
+                )?;
+                transaction.commit()?;
+                Ok(Ok(stored))
+            })
+            .await
+            .map_err(StoreError::database)?
+            .map_err(StoreError::from_allocation_rejection)?;
+        stored.into_session()
+    }
+
+    pub async fn get_session(&self, session_id: String) -> Result<Session, StoreError> {
+        let stored = self
+            .connection
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )
+                    .optional()
+            })
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::SessionNotFound)?;
+        stored.into_session()
+    }
+
+    pub async fn list_sessions(&self) -> Result<Vec<Session>, StoreError> {
+        let stored = self
+            .connection
+            .call(move |connection| {
+                let mut statement =
+                    connection.prepare(&session_select_sql("ORDER BY created_unix_ms, id"))?;
+                statement
+                    .query_map([], StoredSession::from_row)?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(StoreError::database)?;
+        stored
+            .into_iter()
+            .map(StoredSession::into_session)
+            .collect()
+    }
+}
+
+fn session_select_sql(suffix: &str) -> String {
+    format!(
+        "SELECT id, game_id, seat_id, destination_address, runtime_host_id,
+                runtime_host_address, runtime_profile_json, state, grant_token,
+                grant_expires_unix_ms, media_udp_port, input_udp_port,
+                created_unix_ms, updated_unix_ms, failure_reason
+         FROM sessions {suffix}"
+    )
 }
 
 fn mark_expired_offline(
@@ -451,6 +667,97 @@ impl StoredHost {
     }
 }
 
+struct StoredSession {
+    id: String,
+    game_id: String,
+    seat_id: String,
+    destination_address: String,
+    runtime_host_id: String,
+    runtime_host_address: String,
+    runtime_profile_json: String,
+    state: String,
+    grant_token: String,
+    grant_expires_unix_ms: i64,
+    media_udp_port: i64,
+    input_udp_port: i64,
+    created_unix_ms: i64,
+    updated_unix_ms: i64,
+    failure_reason: Option<String>,
+}
+
+impl StoredSession {
+    fn from_row(row: &tokio_rusqlite::rusqlite::Row<'_>) -> tokio_rusqlite::rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            game_id: row.get(1)?,
+            seat_id: row.get(2)?,
+            destination_address: row.get(3)?,
+            runtime_host_id: row.get(4)?,
+            runtime_host_address: row.get(5)?,
+            runtime_profile_json: row.get(6)?,
+            state: row.get(7)?,
+            grant_token: row.get(8)?,
+            grant_expires_unix_ms: row.get(9)?,
+            media_udp_port: row.get(10)?,
+            input_udp_port: row.get(11)?,
+            created_unix_ms: row.get(12)?,
+            updated_unix_ms: row.get(13)?,
+            failure_reason: row.get(14)?,
+        })
+    }
+
+    fn into_session(self) -> Result<Session, StoreError> {
+        let runtime_profile =
+            serde_json::from_str::<GameRuntimeProfile>(&self.runtime_profile_json)
+                .map_err(StoreError::serialization)?;
+        Ok(Session {
+            id: self.id,
+            game_id: self.game_id,
+            seat_id: self.seat_id,
+            destination_address: self.destination_address,
+            runtime_host_id: self.runtime_host_id.clone(),
+            runtime_profile,
+            state: parse_session_state(&self.state)?,
+            connection_grant: ConnectionGrant {
+                token: self.grant_token,
+                expires_unix_ms: from_sql_integer(
+                    self.grant_expires_unix_ms,
+                    "grant_expires_unix_ms",
+                )?,
+                runtime_host_id: self.runtime_host_id,
+                runtime_host_address: self.runtime_host_address,
+                media_udp_port: u16::try_from(self.media_udp_port).map_err(|_| {
+                    StoreError::data("media UDP port is outside the supported range")
+                })?,
+                input_udp_port: u16::try_from(self.input_udp_port).map_err(|_| {
+                    StoreError::data("input UDP port is outside the supported range")
+                })?,
+            },
+            created_unix_ms: from_sql_integer(self.created_unix_ms, "created_unix_ms")?,
+            updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
+            failure_reason: self.failure_reason,
+        })
+    }
+}
+
+fn parse_session_state(state: &str) -> Result<SessionState, StoreError> {
+    match state {
+        "requested" => Ok(SessionState::Requested),
+        "allocating" => Ok(SessionState::Allocating),
+        "starting" => Ok(SessionState::Starting),
+        "ready" => Ok(SessionState::Ready),
+        "active" => Ok(SessionState::Active),
+        "stopping" => Ok(SessionState::Stopping),
+        "stopped" => Ok(SessionState::Stopped),
+        "allocation_failed" => Ok(SessionState::AllocationFailed),
+        "launch_failed" => Ok(SessionState::LaunchFailed),
+        "runtime_lost" => Ok(SessionState::RuntimeLost),
+        "unhealthy" => Ok(SessionState::Unhealthy),
+        "terminated" => Ok(SessionState::Terminated),
+        _ => Err(StoreError::data("session has an unknown state")),
+    }
+}
+
 fn to_sql_integer(value: u64, field: &str) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::data(format!("{field} is too large for SQLite")))
 }
@@ -465,10 +772,24 @@ enum HeartbeatRejection {
     SequenceConflict,
 }
 
+enum AllocationRejection {
+    GameNotFound,
+    GameUnavailable,
+    SeatBusy,
+    PortsExhausted,
+    InvalidHostCapabilities,
+    MissingDataPlaneAddress,
+}
+
 #[derive(Debug)]
 pub enum StoreError {
     NotFound,
     GameNotFound,
+    GameUnavailable,
+    SessionNotFound,
+    SeatBusy,
+    PortsExhausted,
+    MissingDataPlaneAddress,
     StaleHeartbeat,
     HeartbeatSequenceConflict,
     Database(String),
@@ -496,6 +817,19 @@ impl StoreError {
             HeartbeatRejection::SequenceConflict => Self::HeartbeatSequenceConflict,
         }
     }
+
+    fn from_allocation_rejection(rejection: AllocationRejection) -> Self {
+        match rejection {
+            AllocationRejection::GameNotFound => Self::GameNotFound,
+            AllocationRejection::GameUnavailable => Self::GameUnavailable,
+            AllocationRejection::SeatBusy => Self::SeatBusy,
+            AllocationRejection::PortsExhausted => Self::PortsExhausted,
+            AllocationRejection::InvalidHostCapabilities => {
+                Self::data("runtime host capabilities could not be decoded")
+            }
+            AllocationRejection::MissingDataPlaneAddress => Self::MissingDataPlaneAddress,
+        }
+    }
 }
 
 impl fmt::Display for StoreError {
@@ -503,6 +837,15 @@ impl fmt::Display for StoreError {
         match self {
             Self::NotFound => write!(formatter, "runtime host was not found"),
             Self::GameNotFound => write!(formatter, "catalog game was not found"),
+            Self::GameUnavailable => write!(formatter, "catalog game has no online runtime host"),
+            Self::SessionNotFound => write!(formatter, "session was not found"),
+            Self::SeatBusy => write!(formatter, "seat already has a nonterminal session"),
+            Self::PortsExhausted => {
+                write!(formatter, "runtime host has no available session ports")
+            }
+            Self::MissingDataPlaneAddress => {
+                write!(formatter, "runtime host has no data-plane address")
+            }
             Self::StaleHeartbeat => write!(formatter, "heartbeat sequence is stale"),
             Self::HeartbeatSequenceConflict => write!(formatter, "heartbeat sequence conflicts"),
             Self::Database(message) => write!(formatter, "database error: {message}"),

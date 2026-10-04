@@ -31,6 +31,8 @@ pub struct StatusResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeHostCapabilities {
+    #[serde(default)]
+    pub data_plane_address: String,
     pub operating_system: String,
     pub architecture: String,
     pub logical_cpu_count: u32,
@@ -121,6 +123,43 @@ pub struct CatalogGameList {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateSessionRequest {
+    pub game_id: String,
+    pub seat_id: String,
+    pub destination_address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionGrant {
+    pub token: String,
+    pub expires_unix_ms: u64,
+    pub runtime_host_id: String,
+    pub runtime_host_address: String,
+    pub media_udp_port: u16,
+    pub input_udp_port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub game_id: String,
+    pub seat_id: String,
+    pub destination_address: String,
+    pub runtime_host_id: String,
+    pub runtime_profile: GameRuntimeProfile,
+    pub state: SessionState,
+    pub connection_grant: ConnectionGrant,
+    pub created_unix_ms: u64,
+    pub updated_unix_ms: u64,
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionList {
+    pub sessions: Vec<Session>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub code: String,
     pub message: String,
@@ -201,6 +240,7 @@ mod tests {
             display_name: "Reference Linux Host".to_owned(),
             agent_version: "0.1.0".to_owned(),
             capabilities: RuntimeHostCapabilities {
+                data_plane_address: "192.0.2.10".to_owned(),
                 operating_system: "linux".to_owned(),
                 architecture: "x86_64".to_owned(),
                 logical_cpu_count: 4,

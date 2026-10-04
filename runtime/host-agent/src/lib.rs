@@ -204,6 +204,10 @@ impl RuntimeHostAgent {
 
 pub fn discover_capabilities() -> RuntimeHostCapabilities {
     RuntimeHostCapabilities {
+        data_plane_address: env::var("FOURPLAY_RUNTIME_HOST_ADDRESS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| host_name().unwrap_or_else(|| "127.0.0.1".to_owned())),
         operating_system: env::consts::OS.to_owned(),
         architecture: env::consts::ARCH.to_owned(),
         logical_cpu_count: std::thread::available_parallelism()
@@ -358,6 +362,7 @@ mod tests {
                 heartbeat_interval: Duration::from_millis(10),
             },
             RuntimeHostCapabilities {
+                data_plane_address: "127.0.0.1".to_owned(),
                 operating_system: "linux".to_owned(),
                 architecture: "x86_64".to_owned(),
                 logical_cpu_count: 4,

@@ -1,6 +1,7 @@
 mod store;
 
 use std::{
+    net::IpAddr,
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,18 +14,24 @@ use axum::{
     routing::{get, post},
 };
 use control_protocol::{
-    ApiInfo, CatalogGame, CatalogGameList, ErrorResponse, RegisterRuntimeHost, RuntimeHost,
-    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList, ServiceStatus, StatusResponse,
+    ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, ErrorResponse,
+    RegisterRuntimeHost, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList,
+    ServiceStatus, Session, SessionList, StatusResponse,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
 
 pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
+pub const DEFAULT_GRANT_TTL: Duration = Duration::from_secs(300);
+const MEDIA_PORT_START: u16 = 41_000;
+const INPUT_PORT_START: u16 = 42_000;
+const SESSION_PORT_COUNT: u16 = 1_000;
 
 #[derive(Clone)]
 pub struct AppState {
     runtime_hosts: RuntimeHostStore,
     offline_after_ms: u64,
+    grant_ttl_ms: u64,
 }
 
 impl AppState {
@@ -32,6 +39,7 @@ impl AppState {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::in_memory().await?,
             offline_after_ms: duration_ms(offline_after),
+            grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
         })
     }
 
@@ -42,6 +50,7 @@ impl AppState {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
             offline_after_ms: duration_ms(offline_after),
+            grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
         })
     }
 }
@@ -69,6 +78,8 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
+        .route("/api/v1/sessions", get(list_sessions).post(create_session))
+        .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
             "/api/v1/runtime-hosts/{host_id}",
             get(get_runtime_host).put(register_runtime_host),
@@ -195,6 +206,51 @@ async fn get_catalog_game(
         .map_err(ApiError::store)
 }
 
+async fn create_session(
+    State(state): State<AppState>,
+    Json(request): Json<CreateSessionRequest>,
+) -> Result<(StatusCode, Json<Session>), ApiError> {
+    validate_session_request(&request)?;
+    let now = unix_time_ms();
+    let session = state
+        .runtime_hosts
+        .allocate_session(
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            request,
+            now,
+            now.saturating_add(state.grant_ttl_ms),
+            state.offline_after_ms,
+            MEDIA_PORT_START,
+            INPUT_PORT_START,
+            SESSION_PORT_COUNT,
+        )
+        .await
+        .map_err(ApiError::store)?;
+    Ok((StatusCode::CREATED, Json(session)))
+}
+
+async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList>, ApiError> {
+    state
+        .runtime_hosts
+        .list_sessions()
+        .await
+        .map(|sessions| Json(SessionList { sessions }))
+        .map_err(ApiError::store)
+}
+
+async fn get_session(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Session>, ApiError> {
+    state
+        .runtime_hosts
+        .get_session(session_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
 fn validate_host_id(host_id: &str) -> Result<(), ApiError> {
     let valid = !host_id.is_empty()
         && host_id.len() <= 64
@@ -230,6 +286,51 @@ fn validate_registration(registration: &RegisterRuntimeHost) -> Result<(), ApiEr
             "logical CPU count must be greater than zero",
         ));
     }
+    if registration
+        .capabilities
+        .data_plane_address
+        .trim()
+        .is_empty()
+        || registration.capabilities.data_plane_address.len() > 253
+        || registration
+            .capabilities
+            .data_plane_address
+            .chars()
+            .any(char::is_whitespace)
+    {
+        return Err(ApiError::bad_request(
+            "invalid_data_plane_address",
+            "data-plane address must be a nonempty IP address or hostname without whitespace",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_session_request(request: &CreateSessionRequest) -> Result<(), ApiError> {
+    for (code, label, value) in [
+        ("invalid_game_id", "game ID", &request.game_id),
+        ("invalid_seat_id", "seat ID", &request.seat_id),
+    ] {
+        let valid = !value.is_empty()
+            && value.len() <= 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !valid {
+            return Err(ApiError::bad_request(
+                code,
+                &format!(
+                    "{label} must contain 1-64 ASCII letters, digits, dots, dashes, or underscores"
+                ),
+            ));
+        }
+    }
+    request.destination_address.parse::<IpAddr>().map_err(|_| {
+        ApiError::bad_request(
+            "invalid_destination_address",
+            "destination address must be an IPv4 or IPv6 address",
+        )
+    })?;
     Ok(())
 }
 
@@ -301,6 +402,31 @@ impl ApiError {
                 "catalog_game_not_found",
                 "catalog game was not found",
             ),
+            StoreError::GameUnavailable => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "catalog_game_unavailable",
+                "catalog game has no online runtime host",
+            ),
+            StoreError::SessionNotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "session_not_found",
+                "session was not found",
+            ),
+            StoreError::SeatBusy => Self::new(
+                StatusCode::CONFLICT,
+                "seat_session_conflict",
+                "seat already has a nonterminal session",
+            ),
+            StoreError::PortsExhausted => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "session_ports_exhausted",
+                "runtime host has no available session ports",
+            ),
+            StoreError::MissingDataPlaneAddress => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "runtime_host_address_unavailable",
+                "runtime host did not advertise a usable data-plane address",
+            ),
             StoreError::StaleHeartbeat => Self::new(
                 StatusCode::CONFLICT,
                 "stale_heartbeat",
@@ -357,6 +483,7 @@ mod tests {
             "display_name": "Reference Linux Host",
             "agent_version": "0.1.0",
             "capabilities": {
+                "data_plane_address": "127.0.0.1",
                 "operating_system": "linux",
                 "architecture": "x86_64",
                 "logical_cpu_count": 4,
@@ -694,6 +821,165 @@ mod tests {
         .await;
         assert_eq!(status, 404);
         assert_eq!(error["code"], "runtime_host_not_found");
+    }
+
+    async fn register_host_and_catalog(service: &axum::Router) {
+        let (host_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux",
+            Some(registration()),
+        )
+        .await;
+        assert!(matches!(host_status, 200 | 201));
+        let (catalog_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux/catalog",
+            Some(catalog()),
+        )
+        .await;
+        assert_eq!(catalog_status, 200);
+    }
+
+    fn session_request(seat_id: &str) -> Value {
+        json!({
+            "game_id": "tmnt",
+            "seat_id": seat_id,
+            "destination_address": "192.0.2.25"
+        })
+    }
+
+    #[tokio::test]
+    async fn session_allocation_returns_persisted_grant_and_isolates_ports() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("control-plane.sqlite3");
+        let service = app_with_database(&database, Duration::from_secs(15))
+            .await
+            .unwrap();
+        register_host_and_catalog(&service).await;
+
+        let (first_status, first) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(first_status, 201);
+        assert_eq!(first["state"], "allocating");
+        assert_eq!(first["runtime_host_id"], "reference-linux");
+        assert_eq!(
+            first["connection_grant"]["runtime_host_address"],
+            "127.0.0.1"
+        );
+        assert_eq!(first["connection_grant"]["media_udp_port"], 41_000);
+        assert_eq!(first["connection_grant"]["input_udp_port"], 42_000);
+        assert!(first["connection_grant"]["token"].as_str().unwrap().len() >= 32);
+
+        let (busy_status, busy) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(busy_status, 409);
+        assert_eq!(busy["code"], "seat_session_conflict");
+
+        let (second_status, second) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-two")),
+        )
+        .await;
+        assert_eq!(second_status, 201);
+        assert_eq!(second["connection_grant"]["media_udp_port"], 41_001);
+        assert_eq!(second["connection_grant"]["input_udp_port"], 42_001);
+
+        let reopened = app_with_database(&database, Duration::from_secs(15))
+            .await
+            .unwrap();
+        let path = format!("/api/v1/sessions/{}", first["id"].as_str().unwrap());
+        let (get_status, persisted) =
+            request_json(reopened.clone(), Method::GET, &path, None).await;
+        assert_eq!(get_status, 200);
+        assert_eq!(persisted["connection_grant"], first["connection_grant"]);
+
+        let (list_status, list) =
+            request_json(reopened, Method::GET, "/api/v1/sessions", None).await;
+        assert_eq!(list_status, 200);
+        assert_eq!(list["sessions"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn session_allocation_rejects_invalid_unknown_and_unavailable_requests() {
+        let service = app().await.unwrap();
+        let (invalid_status, invalid) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(json!({
+                "game_id": "tmnt",
+                "seat_id": "seat-one",
+                "destination_address": "not an ip"
+            })),
+        )
+        .await;
+        assert_eq!(invalid_status, 400);
+        assert_eq!(invalid["code"], "invalid_destination_address");
+
+        let (unknown_status, unknown) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(unknown_status, 404);
+        assert_eq!(unknown["code"], "catalog_game_not_found");
+
+        register_host_and_catalog(&service).await;
+        request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/runtime-hosts/reference-linux/heartbeat",
+            Some(json!({ "sequence": 1, "active_session_count": 0 })),
+        )
+        .await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(created["state"], "allocating");
+
+        let (missing_status, missing) =
+            request_json(service, Method::GET, "/api/v1/sessions/missing", None).await;
+        assert_eq!(missing_status, 404);
+        assert_eq!(missing["code"], "session_not_found");
+
+        let expiry_directory = tempfile::tempdir().unwrap();
+        let expiring = app_with_database(
+            expiry_directory.path().join("control-plane.sqlite3"),
+            Duration::from_millis(5),
+        )
+        .await
+        .unwrap();
+        register_host_and_catalog(&expiring).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let (unavailable_status, unavailable) = request_json(
+            expiring,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-two")),
+        )
+        .await;
+        assert_eq!(unavailable_status, 503);
+        assert_eq!(unavailable["code"], "catalog_game_unavailable");
     }
 
     #[tokio::test]
