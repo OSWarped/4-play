@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 ## Working now
 
@@ -41,12 +41,18 @@ Last updated: 2026-10-03
   wall-clock synchronization while presenting exact-60-Hz TMNT at 60.06 fps
 - one-minute TMNT, Aliens, and Killer Instinct regression sessions encoded
   essentially one frame for every captured frame at each configured native rate
+- an automated two-session isolation harness proved distinct media endpoints,
+  streams, processes, virtual controllers, and UDP input routes
+- orderly termination of one concurrent session left the other session's
+  stream and controller input operating normally
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
 - complete a rendered Windows-player resource soak; the decoder-only working
   set rose from 27.67 MiB to 50.94 MiB during a 168-second sample
+- visually confirm that two concurrent MAME processes consume only their own
+  virtual controllers
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup of stale session FIFOs and directories

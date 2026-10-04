@@ -47,7 +47,6 @@ resource soak is still outstanding.
 - local and remote button-to-photon distributions
 - objective local and streamed action-to-sound timing
 - rendered Windows-player resource and memory-plateau measurements
-- full two-session controller and failure isolation
 
 ## Provisional interpretation
 

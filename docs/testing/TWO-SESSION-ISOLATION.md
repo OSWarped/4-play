@@ -74,6 +74,25 @@ PIDs and attempts to clean up both sessions and both local receivers after
 success, failure, interruption, or termination. It intentionally retains the
 session directories and test logs for inspection.
 
+### Automated validation record
+
+The harness passed on the reference Linux host on 2026-10-04:
+
+- TMNT and Aliens produced and decoded separate 320x224 and 288x224 streams
+- the runtimes created `/dev/input/event21` and `/dev/input/event22`
+- action 1 plus left reached only session A's device
+- action 6 plus right reached only session B's device
+- session A exited with status 0 and reaped its MAME and FFmpeg children
+- session A's virtual controller disappeared while session B's remained
+- session B advanced from 274 to 925 video frames after session A stopped
+- session B continued to accept a second action/direction pattern
+- session B then exited with status 0 and reaped its children
+- the final process check found no remaining runtime, MAME, FFmpeg, or evtest
+  process
+
+All automated assertions passed. This establishes resource and runtime-input
+routing isolation, but not yet MAME-level input consumption isolation.
+
 ## Manual MAME-level input isolation
 
 The automated result must be followed by this visual test. Use two SSH windows

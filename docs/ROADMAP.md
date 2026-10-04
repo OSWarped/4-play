@@ -69,11 +69,14 @@ Already demonstrated:
 - different game resolutions and refresh rates in parallel
 - no observed media cross-talk between Aliens and TMNT
 - one-command ownership of MAME and FFmpeg per session
+- two simultaneously running sessions own distinct virtual input devices and
+  receive different controller patterns without event-device cross-talk
+- orderly shutdown of one session removes its processes and virtual controller
+  while the other session continues streaming and accepting input
 
 Still required:
 
-- two session-specific virtual controllers
-- proof of no cross-session input leakage
+- manual proof that each MAME process consumes only its intended controller
 - concurrent save and NVRAM validation
 - abnormal process termination and recovery tests
 - cleanup of stale processes and resources
