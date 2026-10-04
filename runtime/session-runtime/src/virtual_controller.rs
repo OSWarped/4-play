@@ -4,7 +4,6 @@ use evdev::{
     UinputAbsSetup,
 };
 use input_protocol::{ControllerState, button};
-use std::ffi::CString;
 use std::io;
 use std::thread;
 use std::time::Duration;
@@ -47,14 +46,10 @@ impl VirtualController {
         let abs_x = UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, AbsInfo::new(0, -1, 1, 0, 0, 0));
         let abs_y = UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, AbsInfo::new(0, -1, 1, 0, 0, 0));
         let name = format!("4-Play Session {session_id} Player {player_number}");
-        let physical_path =
-            CString::new(format!("4play/session-{session_id}/player-{player_number}"))
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
         let device = VirtualDevice::builder()?
             .name(&name)
             .input_id(controller_input_id(session_id, player_number))
-            .with_phys(&physical_path)?
             .with_keys(&keys)?
             .with_absolute_axis(&abs_x)?
             .with_absolute_axis(&abs_y)?
