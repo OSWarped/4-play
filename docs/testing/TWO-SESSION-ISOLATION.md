@@ -93,6 +93,32 @@ The harness passed on the reference Linux host on 2026-10-04:
 All automated assertions passed. This establishes resource and runtime-input
 routing isolation, but not yet MAME-level input consumption isolation.
 
+### Per-session MAME controller assignment
+
+The first manual dual-window attempt found that neither game responded to its
+seat client. Live process inspection showed that TMNT had opened the first
+virtual controller while Killer Instinct had opened both virtual controllers.
+The runtimes used new per-session MAME `cfg` directories, but neither MAME
+process loaded the previously created `4play.cfg` controller profile. Both
+virtual controllers also exposed the same Linux input identity, so merely
+enabling that shared profile would not have selected the correct device.
+
+The runtime now:
+
+- gives every session/player controller a unique USB vendor/product/version
+  identity derived from the full session ID and player number
+- gives the controller a session-specific display name
+- generates `ctrlr/4play-session.cfg` inside the session directory
+- maps only that controller's stable device-ID substring to `JOYCODE_1`
+- supplies explicit direction, six-action, coin, and start mappings
+- launches MAME with the session's `-ctrlrpath` and `-ctrlr 4play-session`
+
+The strengthened automated harness passed on 2026-10-04. It verified that the
+two generated profiles contained different device IDs, both MAME commands
+explicitly selected their own profiles, controller events remained isolated,
+and session B advanced from 270 to 922 frames after session A stopped. The
+manual procedure below must now be repeated to verify visible game response.
+
 ## Manual MAME-level input isolation
 
 The automated result must be followed by this visual test. Use two SSH windows

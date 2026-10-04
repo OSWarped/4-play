@@ -45,6 +45,9 @@ Last updated: 2026-10-04
   streams, processes, virtual controllers, and UDP input routes
 - orderly termination of one concurrent session left the other session's
   stream and controller input operating normally
+- virtual controllers now have session-specific identities, and each MAME
+  process explicitly loads a generated profile that maps only its assigned
+  device to `JOYCODE_1`
 
 ## In progress
 
