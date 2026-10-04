@@ -115,7 +115,11 @@ Validated examples:
 
 Encoding TMNT at the Aliens refresh rate caused video duration to be stretched and audio to appear ahead. Re-encoding at TMNT's actual 60 Hz refresh restored synchronization. Therefore, refresh rate is game metadata and must not be represented as one shared default.
 
-The current CLI accepts width, height, and refresh rate explicitly. Automatic discovery from MAME metadata is planned.
+The development runtime CLI still accepts width, height, and refresh rate
+explicitly. The Phase 1C runtime agent now verifies allowlisted ROMs and derives
+these values from MAME XML before publishing per-host runtime profiles to the
+control-plane catalog. Session allocation will consume those profiles rather
+than accepting arbitrary client values.
 
 ### Concurrent-session validation
 

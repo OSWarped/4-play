@@ -75,8 +75,8 @@ Windows seat-input client
   → MAME
 ```
 
-The next implementation milestone is a minimal legal game catalog with MAME
-metadata discovery and validated runtime profiles.
+The next implementation milestone is durable session allocation, connection
+grants, and lifecycle transitions.
 
 ## Product principles
 

@@ -76,6 +76,10 @@ Last updated: 2026-10-04
   control-plane restart
 - heartbeat expiry marks a host offline, and agent restart resumes its sequence
   and returns the host online
+- the runtime agent verifies the four-title legal allowlist with MAME and
+  publishes automatically discovered native runtime profiles
+- the SQLite catalog exposes Aliens, Killer Instinct, TMNT, and WWF
+  WrestleMania with per-host online/offline availability
 
 ## In progress
 
@@ -83,7 +87,7 @@ Last updated: 2026-10-04
 - wire the session state machine into actual runtime transitions
 - improve cleanup after the runtime process itself is killed without a chance
   to run its normal teardown
-- implement the minimal legal catalog and automatic MAME metadata discovery
+- implement durable session allocation, connection grants, and lifecycle state
 
 ## Not started
 
@@ -94,5 +98,5 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Browse a minimal legal catalog whose runtime profiles are derived from MAME
-metadata rather than manually supplied dimensions and refresh rates.
+Allocate a catalog game to an online compatible runtime and issue the first
+time-limited media/input connection grant.

@@ -110,10 +110,13 @@ Implemented foundation:
   and clean shutdown
 - SQLite-backed runtime-host state that survives control-plane restarts
 - heartbeat expiry, offline status, and agent recovery to online
+- four-title legal allowlist with installed-ROM verification
+- automatic MAME runtime profiles for dimensions, native refresh, rotation,
+  players, buttons, and save-state support
+- SQLite-backed catalog with per-host availability and liveness
 
 Still required:
 
-- minimal legal test catalog
 - versioned session lifecycle protocol
 - MAME runtime adapter configuration
 - automatic MAME metadata discovery
