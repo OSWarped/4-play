@@ -37,6 +37,7 @@ struct RuntimeArgs {
     udp_port: u16,
     terminal_input: bool,
     input_port: Option<u16>,
+    autosave: bool,
     audio_codec: AudioCodec,
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
@@ -73,6 +74,7 @@ fn print_usage(program: &str) {
     --udp-port <port> \
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
+    [--autosave] \
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
     [--audio-thread-queue-size <packets>]"
@@ -122,6 +124,7 @@ fn parse_args() -> RuntimeArgs {
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
     let mut input_port = None;
+    let mut autosave = false;
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
     let mut audio_thread_queue_size = 64;
@@ -167,6 +170,9 @@ fn parse_args() -> RuntimeArgs {
                     "--input-port",
                 ));
             }
+            "--autosave" => {
+                autosave = true;
+            }
             "--audio-codec" => {
                 audio_codec =
                     parse_value(require_value(&mut args, "--audio-codec"), "--audio-codec");
@@ -205,6 +211,7 @@ fn parse_args() -> RuntimeArgs {
         udp_port: required(udp_port, "--udp-port", &program),
         terminal_input,
         input_port,
+        autosave,
         audio_codec,
         audio_block_ms,
         audio_thread_queue_size,
@@ -297,6 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         video_path: session.video_path(),
         audio_path: session.audio_path(),
         controller_device_id,
+        autosave: args.autosave,
     };
 
     let mut mame = MameProcess::spawn(&mame_config)?;

@@ -2,8 +2,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const CONTROLLER_PROFILE_NAME: &str = "4play-session";
+const CONTROL_SCRIPT_NAME: &str = "4play-runtime-control.lua";
+const STOP_REQUEST_NAME: &str = "stop-mame.request";
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const GRACEFUL_STOP_POLL: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Clone)]
 pub struct MameConfig {
@@ -14,10 +20,12 @@ pub struct MameConfig {
     pub video_path: PathBuf,
     pub audio_path: PathBuf,
     pub controller_device_id: Option<String>,
+    pub autosave: bool,
 }
 
 pub struct MameProcess {
     child: Option<Child>,
+    stop_request_path: PathBuf,
 }
 
 impl MameProcess {
@@ -28,9 +36,16 @@ impl MameProcess {
         let snapshot_directory = config.working_directory.join("snap");
         let diff_directory = config.working_directory.join("diff");
         let controller_directory = config.working_directory.join("ctrlr");
+        let control_script_path = config.working_directory.join(CONTROL_SCRIPT_NAME);
+        let stop_request_path = config.working_directory.join(STOP_REQUEST_NAME);
 
         validate_path(&config.binary, "MAME binary")?;
         validate_path(&config.ini_path, "MAME INI path")?;
+        remove_if_present(&stop_request_path)?;
+        fs::write(
+            &control_script_path,
+            runtime_control_script(&stop_request_path),
+        )?;
 
         let mut command = Command::new(&config.binary);
 
@@ -53,11 +68,19 @@ impl MameProcess {
             .arg("-joystick")
             .arg("-joystickprovider")
             .arg("sdljoy")
+            .arg("-autoboot_script")
+            .arg(&control_script_path)
+            .arg("-autoboot_delay")
+            .arg("0")
             .arg("-skip_gameinfo")
             .arg("-rawvideowrite")
             .arg(&config.video_path)
             .arg("-rawaudiowrite")
             .arg(&config.audio_path);
+
+        if config.autosave {
+            command.arg("-autosave");
+        }
 
         if let Some(device_id) = config.controller_device_id.as_deref() {
             fs::create_dir_all(&controller_directory)?;
@@ -82,7 +105,10 @@ impl MameProcess {
 
         println!("MAME started: PID={} ROM={}", child.id(), config.rom);
 
-        Ok(Self { child: Some(child) })
+        Ok(Self {
+            child: Some(child),
+            stop_request_path,
+        })
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
@@ -98,11 +124,59 @@ impl MameProcess {
         };
 
         if let Some(status) = child.try_wait()? {
+            remove_if_present(&self.stop_request_path)?;
             return Ok(Some(status));
         }
 
+        if let Err(error) = fs::write(&self.stop_request_path, b"stop\n") {
+            eprintln!(
+                "Failed to request graceful MAME shutdown through {}: {error}",
+                self.stop_request_path.display()
+            );
+        } else {
+            let started = Instant::now();
+            while started.elapsed() < GRACEFUL_STOP_TIMEOUT {
+                if let Some(status) = child.try_wait()? {
+                    remove_if_present(&self.stop_request_path)?;
+                    return Ok(Some(status));
+                }
+                thread::sleep(GRACEFUL_STOP_POLL);
+            }
+            eprintln!(
+                "MAME did not exit within {} ms; forcing termination.",
+                GRACEFUL_STOP_TIMEOUT.as_millis()
+            );
+        }
+
         child.kill()?;
-        child.wait().map(Some)
+        let status = child.wait().map(Some);
+        remove_if_present(&self.stop_request_path)?;
+        status
+    }
+}
+
+fn runtime_control_script(stop_request_path: &Path) -> String {
+    format!(
+        r#"local stop_request_path = [[{}]]
+
+emu.register_periodic(function()
+    local request = io.open(stop_request_path, "r")
+    if request then
+        request:close()
+        os.remove(stop_request_path)
+        manager.machine:exit()
+    end
+end)
+"#,
+        stop_request_path.display()
+    )
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -142,6 +216,7 @@ impl Drop for MameProcess {
             let _ = child.kill();
         }
         let _ = child.wait();
+        let _ = remove_if_present(&self.stop_request_path);
     }
 }
 
@@ -158,7 +233,8 @@ fn validate_path(path: &Path, label: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::controller_profile;
+    use super::{controller_profile, runtime_control_script};
+    use std::path::Path;
 
     #[test]
     fn controller_profile_maps_only_the_assigned_device_to_player_one() {
@@ -170,5 +246,14 @@ mod tests {
         assert!(profile.contains("JOYCODE_1_BUTTON6"));
         assert!(profile.contains("JOYCODE_1_BUTTON8"));
         assert!(!profile.contains("JOYCODE_2"));
+    }
+
+    #[test]
+    fn runtime_control_script_requests_a_scheduled_machine_exit() {
+        let script = runtime_control_script(Path::new("/tmp/session-7/stop-mame.request"));
+
+        assert!(script.contains("/tmp/session-7/stop-mame.request"));
+        assert!(script.contains("emu.register_periodic"));
+        assert!(script.contains("manager.machine:exit()"));
     }
 }
