@@ -1,0 +1,177 @@
+# Two-Session Isolation Test
+
+## Purpose
+
+This test separates four different claims that are easy to conflate:
+
+1. two sessions can run concurrently
+2. each session owns distinct media, process, port, and virtual-input resources
+3. input sent to one runtime reaches only that runtime's virtual controller
+4. each MAME process consumes only its intended virtual controller
+
+The automated harness proves the first three claims and independent shutdown.
+The short manual dual-window procedure is required for the fourth claim because
+observing an event on the correct Linux input device does not prove that another
+MAME process has not also opened that device.
+
+Save and NVRAM *path* separation is visible during this test. Save-content
+isolation is a separate follow-up because it requires games that reliably write
+identifiable persistent data.
+
+## Automated test
+
+### Coverage
+
+`tools/two-session-isolation.sh`:
+
+- launches TMNT and Aliens concurrently
+- assigns different session IDs, working directories, stream ports, and input
+  ports
+- receives and decodes both MPEG-TS streams on separate localhost ports
+- verifies the streams have their expected, different resolutions
+- identifies the separate `/dev/input/event*` devices created by each runtime
+- injects a distinct button/direction pattern into each UDP input port
+- verifies each pattern appears only on the expected virtual input device
+- stops session A and verifies its MAME, FFmpeg, and virtual controller are gone
+- verifies session B continues producing video and accepting input
+- stops session B and verifies its resources are cleaned up
+- writes every assertion and supporting log into a timestamped result directory
+
+### Prerequisites
+
+- `/dev/uinput` is writable by the test user
+- the test user can read `/dev/input/event*`
+- `evtest`, FFmpeg, and the Rust toolchain are installed
+- the TMNT and Aliens ROMs are available to the configured MAME installation
+- UDP ports 41301, 41302, 42301, and 42302 are unused
+
+### Run
+
+From the repository on the Linux runtime host:
+
+```bash
+source /home/blake/.cargo/env
+cd ~/src/4-play
+cargo build -p session-runtime -p input-inject
+./tools/two-session-isolation.sh
+```
+
+The optional first argument controls how many seconds session B must continue
+after session A stops. The optional second argument sets the result directory:
+
+```bash
+./tools/two-session-isolation.sh 30 /tmp/4play-two-session-validation
+```
+
+Success ends with:
+
+```text
+OVERALL PASS
+```
+
+Any failed assertion makes the script exit nonzero. The script tracks exact
+PIDs and attempts to clean up both sessions and both local receivers after
+success, failure, interruption, or termination. It intentionally retains the
+session directories and test logs for inspection.
+
+## Manual MAME-level input isolation
+
+The automated result must be followed by this visual test. Use two SSH windows
+on the Linux host and four PowerShell windows on the Windows seat.
+
+### 1. Start both Windows receivers
+
+Receiver A:
+
+```powershell
+.\ffplay.exe -f mpegts `
+  -fflags nobuffer -flags low_delay -framedrop `
+  -probesize 32768 -analyzeduration 0 `
+  "udp://0.0.0.0:41011?fifo_size=1000000&overrun_nonfatal=1"
+```
+
+Receiver B:
+
+```powershell
+.\ffplay.exe -f mpegts `
+  -fflags nobuffer -flags low_delay -framedrop `
+  -probesize 32768 -analyzeduration 0 `
+  "udp://0.0.0.0:41012?fifo_size=1000000&overrun_nonfatal=1"
+```
+
+### 2. Start both Linux sessions
+
+Session A (TMNT):
+
+```bash
+cd ~/src/4-play
+./target/release/session-runtime \
+  --session-id 11 \
+  --rom tmnt \
+  --width 320 \
+  --height 224 \
+  --fps 60 \
+  --destination-ip 192.168.20.10 \
+  --udp-port 41011 \
+  --input-port 42011
+```
+
+Session B (Killer Instinct):
+
+```bash
+cd ~/src/4-play
+./target/release/session-runtime \
+  --session-id 12 \
+  --rom kinst \
+  --width 320 \
+  --height 240 \
+  --fps 58.981183 \
+  --destination-ip 192.168.20.10 \
+  --udp-port 41012 \
+  --input-port 42012
+```
+
+### 3. Start both Windows input clients
+
+Input A:
+
+```powershell
+cargo run -p seat-input -- 192.168.20.68:42011
+```
+
+Input B:
+
+```powershell
+cargo run -p seat-input -- 192.168.20.68:42012
+```
+
+Only the focused PowerShell window receives keyboard events, so test one seat
+at a time:
+
+1. Focus Input A. Insert a coin, start TMNT, move, and attack. Confirm KI never
+   responds.
+2. Focus Input B. Insert a coin, start KI, move, and use several attacks.
+   Confirm TMNT never responds.
+3. Alternate between inputs several times and test held directions plus
+   simultaneous movement/actions.
+4. Press `Esc` in Input A. Confirm session A closes while session B continues
+   streaming and accepting input for at least five minutes.
+5. Press `Esc` in Input B and confirm it also shuts down cleanly.
+
+Record this manual matrix:
+
+| Assertion | Result | Notes |
+| --- | --- | --- |
+| Input A affects TMNT | | |
+| Input A does not affect KI | | |
+| Input B affects KI | | |
+| Input B does not affect TMNT | | |
+| Simultaneous controls work in A | | |
+| Simultaneous controls work in B | | |
+| B remains playable after A stops | | |
+| Both sessions clean up | | |
+
+If either game responds to the other session's input, the test has found a real
+Phase 1B isolation failure. Do not reinterpret it as a test-harness problem:
+the next implementation task would be restricting each MAME process to its own
+virtual input device.
