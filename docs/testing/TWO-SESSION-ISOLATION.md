@@ -228,13 +228,20 @@ Record this manual matrix:
 | Simultaneous controls work in A | PENDING | The attempted run was interrupted before a conclusive result. |
 | Simultaneous controls work in B | PENDING | The attempted run was interrupted before a conclusive result. |
 | B remains playable after A stops | PASS | KI's runtime, MAME, encoder, receiver, and input client survived a complete TMNT stop/restart. |
-| Both sessions clean up | PENDING | Both sessions remain active for continued testing. |
+| Both sessions clean up | PARTIAL | Both runtimes, MAME children, server FFmpeg encoders, input clients, and input ports cleaned up. The standalone Windows FFplay receivers required manual termination. |
 
 During the 2026-10-04 manual run, TMNT was stopped and relaunched using the
 same session ID and ports. KI continued playing without a process restart, and
 the relaunched TMNT input client reconnected successfully. This confirms the
 manual session-restart isolation path in addition to the automated shutdown
 test.
+
+Pressing `Esc` in each input client sends the runtime stop flag and cleanly
+stops the corresponding Linux runtime, MAME process, and FFmpeg encoder. It
+does not stop the independently launched Windows FFplay receiver. MPEG-TS over
+UDP has no connection close or end-of-stream signal, so receiver lifecycle
+management remains a seat-orchestration task. The two receivers were closed
+manually at the end of this test.
 
 If either game responds to the other session's input, the test has found a real
 Phase 1B isolation failure. Do not reinterpret it as a test-harness problem:
