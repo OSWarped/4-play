@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     socket.connect(destination)?;
 
     println!("4-Play seat input -> {destination}");
-    println!("W/A/S/D move; J/K/L/; actions; U/I shoulders; 1 coin; 2 start");
+    println!("W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start");
     println!("Press Esc to disconnect and stop the development session.");
 
     let _raw_mode = RawMode::enter()?;
@@ -103,7 +103,12 @@ fn normalize_key(key: KeyCode) -> KeyCode {
 fn is_control_key(key: KeyCode) -> bool {
     matches!(
         key,
-        KeyCode::Char('w' | 'a' | 's' | 'd' | 'j' | 'k' | 'l' | ';' | 'u' | 'i' | '1' | '2')
+        KeyCode::Char(
+            'w' | 'a' | 's' | 'd'
+                | 'j' | 'k' | 'l'
+                | 'm' | ',' | '.'
+                | '1' | '2'
+        )
     )
 }
 
@@ -126,12 +131,12 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
 
     let mut buttons = 0;
     for (key, mask) in [
-        ('j', button::SOUTH),
-        ('k', button::EAST),
-        ('l', button::NORTH),
-        (';', button::WEST),
-        ('u', button::LEFT_SHOULDER),
-        ('i', button::RIGHT_SHOULDER),
+        ('j', button::ACTION_1),
+        ('k', button::ACTION_2),
+        ('l', button::ACTION_3),
+        ('m', button::ACTION_4),
+        (',', button::ACTION_5),
+        ('.', button::ACTION_6),
         ('1', button::COIN),
         ('2', button::START),
     ] {
@@ -165,6 +170,6 @@ mod tests {
 
         assert_eq!(state.axis_x, i16::MAX);
         assert_eq!(state.axis_y, -i16::MAX);
-        assert_eq!(state.buttons, button::SOUTH | button::EAST);
+        assert_eq!(state.buttons, button::ACTION_1 | button::ACTION_2);
     }
 }
