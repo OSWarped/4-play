@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io;
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::str::FromStr;
 
 // Wall-clock timestamps are assigned by FFmpeg in the raw-video demuxer's time
@@ -235,6 +235,13 @@ impl EncoderProcess {
             Err(io::Error::other(format!(
                 "FFmpeg exited with status {status}"
             )))
+        }
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        match self.child.as_mut() {
+            Some(child) => child.try_wait(),
+            None => Ok(None),
         }
     }
 }

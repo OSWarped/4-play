@@ -112,6 +112,25 @@ impl Session {
     }
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        for path in [self.video_path(), self.audio_path()] {
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+
+            if metadata.file_type().is_fifo()
+                && let Err(error) = fs::remove_file(&path)
+            {
+                eprintln!(
+                    "Failed to remove session endpoint {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
 impl fmt::Display for Session {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(formatter, "4-Play Session Runtime")?;

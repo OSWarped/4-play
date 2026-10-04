@@ -16,7 +16,7 @@ use signal_hook::flag;
 use std::env;
 use std::io;
 use std::path::PathBuf;
-use std::process;
+use std::process::{self, ExitStatus};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -40,6 +40,25 @@ struct RuntimeArgs {
     audio_codec: AudioCodec,
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
+}
+
+#[derive(Debug)]
+enum ChildFailure {
+    Mame(ExitStatus),
+    Encoder(ExitStatus),
+}
+
+impl std::fmt::Display for ChildFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mame(status) => {
+                write!(formatter, "MAME exited unexpectedly with status {status}")
+            }
+            Self::Encoder(status) => {
+                write!(formatter, "FFmpeg exited unexpectedly with status {status}")
+            }
+        }
+    }
 }
 
 fn print_usage(program: &str) {
@@ -281,19 +300,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut mame = MameProcess::spawn(&mame_config)?;
+    let mut child_failure = None;
 
     let input_result = if let Some(controller) = controller.as_mut() {
         if args.terminal_input {
             run_terminal_input(controller, || {
-                Ok(shutdown_requested.load(Ordering::Acquire) || mame.try_wait()?.is_some())
+                should_stop(
+                    &shutdown_requested,
+                    &mut mame,
+                    &mut encoder,
+                    &mut child_failure,
+                )
             })
         } else {
             run_network_input(controller, args.input_port.unwrap(), || {
-                Ok(shutdown_requested.load(Ordering::Acquire) || mame.try_wait()?.is_some())
+                should_stop(
+                    &shutdown_requested,
+                    &mut mame,
+                    &mut encoder,
+                    &mut child_failure,
+                )
             })
         }
     } else {
-        wait_for_shutdown_or_mame(&mut mame, &shutdown_requested)
+        wait_for_shutdown_or_child(
+            &mut mame,
+            &mut encoder,
+            &shutdown_requested,
+            &mut child_failure,
+        )
     };
 
     if shutdown_requested.load(Ordering::Acquire) {
@@ -310,6 +345,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let encoder_result = encoder.wait();
 
     input_result?;
+
+    if let Some(failure) = child_failure {
+        return Err(io::Error::other(failure.to_string()).into());
+    }
 
     if let Some(status) = mame_result? {
         println!("MAME exited with status: {status}");
@@ -330,13 +369,37 @@ fn install_shutdown_handlers() -> io::Result<Arc<AtomicBool>> {
     Ok(shutdown_requested)
 }
 
-fn wait_for_shutdown_or_mame(
-    mame: &mut MameProcess,
+fn should_stop(
     shutdown_requested: &AtomicBool,
-) -> io::Result<()> {
-    while !shutdown_requested.load(Ordering::Acquire) && mame.try_wait()?.is_none() {
-        thread::sleep(Duration::from_millis(25));
+    mame: &mut MameProcess,
+    encoder: &mut EncoderProcess,
+    child_failure: &mut Option<ChildFailure>,
+) -> io::Result<bool> {
+    if shutdown_requested.load(Ordering::Acquire) {
+        return Ok(true);
     }
 
+    if let Some(status) = mame.try_wait()? {
+        *child_failure = Some(ChildFailure::Mame(status));
+        return Ok(true);
+    }
+
+    if let Some(status) = encoder.try_wait()? {
+        *child_failure = Some(ChildFailure::Encoder(status));
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn wait_for_shutdown_or_child(
+    mame: &mut MameProcess,
+    encoder: &mut EncoderProcess,
+    shutdown_requested: &AtomicBool,
+    child_failure: &mut Option<ChildFailure>,
+) -> io::Result<()> {
+    while !should_stop(shutdown_requested, mame, encoder, child_failure)? {
+        thread::sleep(Duration::from_millis(25));
+    }
     Ok(())
 }
