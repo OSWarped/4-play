@@ -26,6 +26,9 @@ use std::time::Duration;
 use terminal_input::run_terminal_input;
 use virtual_controller::{VirtualController, mame_device_id_match};
 
+const CHILD_EXIT_SETTLE: Duration = Duration::from_millis(100);
+const CHILD_EXIT_POLL: Duration = Duration::from_millis(10);
+
 #[derive(Debug)]
 struct RuntimeArgs {
     session_id: u32,
@@ -385,6 +388,19 @@ fn should_stop(
     }
 
     if let Some(status) = encoder.try_wait()? {
+        // MAME owns the upstream FIFO writers. If MAME crashes, FFmpeg can
+        // observe EOF and exit successfully before the parent reaps MAME.
+        // Give the upstream child a short settlement window so the root cause
+        // is not misreported as a clean encoder exit.
+        let settle_started = std::time::Instant::now();
+        while settle_started.elapsed() < CHILD_EXIT_SETTLE {
+            if let Some(mame_status) = mame.try_wait()? {
+                *child_failure = Some(ChildFailure::Mame(mame_status));
+                return Ok(true);
+            }
+            thread::sleep(CHILD_EXIT_POLL);
+        }
+
         *child_failure = Some(ChildFailure::Encoder(status));
         return Ok(true);
     }
