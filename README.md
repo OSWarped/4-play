@@ -8,7 +8,8 @@ The table is the reference implementation. The reusable product is the platform 
 
 ## Current status
 
-4-Play has completed the first major runtime and media feasibility work and is now finishing the remote-input portion of Phase 1A.
+4-Play has completed its reference-host remote-play and runtime-isolation proof
+and has begun Phase 1C control-plane orchestration.
 
 Validated capabilities include:
 
@@ -30,12 +31,10 @@ Validated capabilities include:
 
 Not yet complete:
 
-- connecting the runtime-owned virtual controller to MAME
-- seat-to-runtime network input
-- disconnect neutralization and reconnect behavior
-- objective local and remote button-to-photon latency measurements
 - automatic MAME metadata discovery
-- complete session state transitions and production-grade cleanup
+- durable session state transitions and production-grade cleanup
+- runtime-host agent registration and recurring heartbeat
+- catalog, allocation, connection grants, and the complete seat launch workflow
 
 The technical-feasibility milestone remains distinct from the product MVP:
 
@@ -66,16 +65,18 @@ FFmpeg
 Remote seat player
 ```
 
-The virtual-controller validation path currently exists separately:
+The validated input path is:
 
 ```text
-Rust uinput test
-  → /dev/uinput
-  → Linux input subsystem
-  → virtual joystick with two axes and eight buttons
+Windows seat-input client
+  → state-oriented UDP input
+  → Rust session runtime
+  → session-owned /dev/uinput controller
+  → MAME
 ```
 
-The next implementation milestone is to integrate that controller into `session-runtime`, prove that MAME consumes it, and then add the real seat input transport.
+The next implementation milestone is a runtime-host agent that registers the
+reference server with the control plane and maintains its heartbeat.
 
 ## Product principles
 
@@ -89,16 +90,17 @@ The next implementation milestone is to integrate that controller into `session-
 ## Repository map
 
 - `runtime/session-runtime/` — Rust session runtime, MAME lifecycle, media bridge, and encoder integration
+- `control-plane/server/` — Phase 1C HTTP control-plane service
 - `clients/seat-input/` — Windows development client for state-based keyboard input
+- `shared/control-protocol/` — versioned control-plane messages and lifecycle states
 - `shared/input-protocol/` — versioned seat-to-runtime controller-state packets
 - `tools/uinput-test/` — development validation for runtime-created Linux virtual controllers
 - `docs/requirements/` — product and quality requirements
 - `docs/architecture/` — system boundaries, components, and validated data flows
 - `docs/experiments/` — experiment records and evidence
 - `docs/adr/` — accepted and proposed architectural decisions
-- `server/` — future control-plane API and orchestration
 - `clients/` — future seat, operator, and spectator clients
-- `shared/` — future shared schemas, protocol definitions, and domain types
+- `shared/` — shared schemas, protocol definitions, and domain types
 - `tools/` — development, validation, packaging, and administration tools
 - `examples/` — legal sample manifests and synthetic fixtures
 - `assets/` — project-owned branding and documentation assets
@@ -108,8 +110,8 @@ The next implementation milestone is to integrate that controller into `session-
 ### Phase 1A — Remote-play feasibility
 
 Media transport, runtime-owned controllers, and direct remote seat input are
-validated. Objective latency measurement and the rendered-player resource soak
-remain.
+validated. The architecture is accepted for Phase 1C; objective timing and the
+rendered-player resource soak are deferred rather than blocking.
 
 ### Phase 1B — Runtime isolation
 

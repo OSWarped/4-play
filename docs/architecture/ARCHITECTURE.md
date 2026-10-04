@@ -27,7 +27,10 @@ Responsibilities:
 
 The control plane does not process normal controller packets or transcode every gameplay frame.
 
-Status: not yet implemented.
+Status: the initial Rust service exposes health, readiness, a versioned API
+root, shared lifecycle-state types, and in-memory runtime-host registration and
+heartbeat. Durable storage, an active host agent, allocation, and orchestration
+remain to be implemented.
 
 ### Runtime host agent and session runtime
 
@@ -138,7 +141,8 @@ Validated controller shape:
 - Linux event-device handler
 - Linux joystick handler
 
-The controller has been verified with `jstest`. It has not yet been integrated into `session-runtime` or proven as MAME input.
+The controller is integrated into `session-runtime`, consumed by MAME, and
+isolated across simultaneous sessions.
 
 Production runtime processes should use a dedicated service account with narrowly controlled access to required render, audio, and input devices. Membership in the Linux `input` group and a development udev rule are acceptable for current validation but require security review before deployment.
 
@@ -182,7 +186,10 @@ Direct seat-to-runtime communication handles controller state, video, audio, and
 
 The current media feasibility path uses unicast UDP MPEG-TS carrying H.264 and AAC. This is a development transport, not yet a permanent product standard.
 
-The current input direction is state-oriented controller packets rather than isolated key-down and key-up events. The detailed transport remains unimplemented and must be validated for loss, jitter, disconnect neutralization, and latency.
+The current input transport uses state-oriented controller packets rather than
+isolated key-down and key-up events. Sequence rejection, simultaneous input,
+disconnect neutralization, and reconnection have been validated over UDP on the
+reference network.
 
 ## Session lifecycle
 

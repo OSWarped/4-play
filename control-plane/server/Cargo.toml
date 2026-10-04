@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 axum = "0.8"
 control-protocol = { path = "../../shared/control-protocol" }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

@@ -34,7 +34,10 @@ The user may start a new game or join an existing game without needing to know w
 
 The project has demonstrated that a Linux runtime host can launch independent headless MAME sessions and send synchronized live audio/video to a remote Windows seat. Multiple simultaneous sessions, game-specific resolutions and refresh rates, CHD-backed content, and runtime-created Linux virtual controllers have also been validated.
 
-These results support the central thin-seat architecture, but they do not yet prove the complete user experience. Remote controller delivery, objective latency measurement, session discovery, joining, spectating, and player-slot workflows remain future milestones.
+These results support the central thin-seat architecture, including direct
+remote controller delivery and isolated concurrent sessions. The complete user
+experience still requires automated session discovery and launch, joining,
+spectating, and player-slot workflows.
 
 ## Near-term product proof
 
@@ -43,7 +46,9 @@ The next meaningful product proof is a single remote seat that can:
 1. request or launch one approved game session
 2. send controller state to the runtime host
 3. receive synchronized live media
-4. play with measured practical latency
+4. play with practical latency validated through live use
 5. disconnect without leaving controls stuck
 
-Once that foundation is measured and repeatable, development can advance toward the social discovery and shared-session experience that defines 4-Play.
+That foundation is now repeatable. Phase 1C automates it through the control
+plane before development advances to the social discovery and shared-session
+experience that defines 4-Play.

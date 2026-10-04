@@ -2,10 +2,10 @@
 
 ## Status
 
-**Decision: revise.** Continue the direct seat-to-runtime architecture and
-targeted runtime hardening; do not pivot. Phase 1A is not closed because
-objective latency measurement is deferred and a rendered Windows-player
-resource soak is still outstanding.
+**Decision: go.** Continue the direct seat-to-runtime architecture into Phase
+1C. On 2026-10-04, the project owner explicitly waived objective latency
+measurement as a prerequisite. The rendered Windows-player resource soak is
+also deferred and does not block orchestration.
 
 ## Evidence available
 
@@ -42,33 +42,33 @@ resource soak is still outstanding.
   3,710 Aliens frames, and 3,694 of 3,695 Killer Instinct frames while retaining
   each game's configured cadence
 
-## Evidence still missing
+## Deferred evidence
 
 - local and remote button-to-photon distributions
 - objective local and streamed action-to-sound timing
 - rendered Windows-player resource and memory-plateau measurements
 
-## Provisional interpretation
+## Interpretation
 
 The direct seat-to-runtime architecture remains the leading approach. Tight
 subjective controls, synchronized sound, native video cadence, bounded
 long-running behavior, clean shutdown, and modest single-session resource use
-justify continued runtime engineering. Missing objective latency and rendered
-client resource data do not justify broad control-plane or Product MVP
-development yet.
+justify control-plane orchestration. Objective latency and rendered-client
+resource data remain useful optimization evidence but are no longer gate
+criteria.
 
-## Next decision gate
+## Follow-up measurements
 
-Complete the following in order:
+Perform these when they become useful for optimization or deployment decisions:
 
 1. measure local and remote input-to-video latency when capture equipment is
    available
 2. objectively confirm local and streamed action-to-sound timing
 3. run a longer rendered Windows-player resource test
-4. update this document and reconsider a `go` decision
+4. establish formal performance targets before commercial deployment
 
 ## Final decision
 
-**Revise.** The architecture is viable and should continue. Phase 1A remains
-open for objective measurement and rendered-player resource validation; a
-pivot is not warranted.
+**Go.** Phase 1A is accepted and closed for planning purposes. Begin Phase 1C
+control-plane orchestration. Deferred measurement may refine the architecture
+later but does not reopen the gate by itself.

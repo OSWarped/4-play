@@ -22,7 +22,7 @@ Completed:
 
 ## Phase 1A — Remote-Play Feasibility
 
-Status: **revise; architecture retained**.
+Status: **accepted for orchestration; optional measurements deferred**.
 
 Validated:
 
@@ -49,13 +49,16 @@ Validated:
 - native-rate output for the exact-60-Hz TMNT profile, validated at 60.06 fps,
   with Aliens and Killer Instinct retaining their non-integer native rates
 
-Still required:
+Deferred, non-blocking measurements:
 
 - measure local and remote button-to-photon latency
 - record median, 95th-percentile, and 99th-percentile results
 - measure a rendered Windows player's resource use and memory plateau
 
-**Exit:** one remote seat can control a centrally hosted session, synchronized media remains stable, disconnect behavior is safe, and latency measurements support a go, revise, or pivot decision.
+**Exit achieved:** one remote seat controls a centrally hosted session,
+synchronized media remains stable, disconnect behavior is safe, and repeated
+live play supports proceeding with the architecture. The project owner waived
+objective timing as a Phase 1C prerequisite.
 
 ## Phase 1B — Runtime Isolation
 
@@ -94,10 +97,20 @@ can stop without affecting the other. See
 
 ## Phase 1C — Control-Plane Orchestration
 
-Status: **not started**.
+Status: **started**.
 
-- control-plane service skeleton
-- runtime-host registration and heartbeat
+Implemented foundation:
+
+- runnable Rust control-plane HTTP service
+- health and readiness endpoints
+- `/api/v1` service boundary
+- shared, serialized canonical session states
+- in-memory runtime-host registration, lookup, listing, and heartbeat API
+
+Still required:
+
+- runtime-host agent and recurring heartbeat
+- durable control-plane storage
 - minimal legal test catalog
 - versioned session lifecycle protocol
 - MAME runtime adapter configuration

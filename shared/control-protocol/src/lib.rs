@@ -29,6 +29,58 @@ pub struct StatusResponse {
     pub status: ServiceStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHostCapabilities {
+    pub operating_system: String,
+    pub architecture: String,
+    pub logical_cpu_count: u32,
+    pub memory_bytes: u64,
+    pub encoder_names: Vec<String>,
+    pub emulator_adapters: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisterRuntimeHost {
+    pub display_name: String,
+    pub agent_version: String,
+    pub capabilities: RuntimeHostCapabilities,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHostHeartbeat {
+    pub sequence: u64,
+    pub active_session_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeHostStatus {
+    Online,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHost {
+    pub id: String,
+    pub display_name: String,
+    pub agent_version: String,
+    pub capabilities: RuntimeHostCapabilities,
+    pub status: RuntimeHostStatus,
+    pub last_seen_unix_ms: u64,
+    pub heartbeat_sequence: u64,
+    pub active_session_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHostList {
+    pub hosts: Vec<RuntimeHost>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub code: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
@@ -61,7 +113,10 @@ impl SessionState {
 
 #[cfg(test)]
 mod tests {
-    use super::{API_VERSION, ApiInfo, ServiceStatus, SessionState, StatusResponse};
+    use super::{
+        API_VERSION, ApiInfo, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus,
+        ServiceStatus, SessionState, StatusResponse,
+    };
 
     #[test]
     fn session_states_use_stable_snake_case_names() {
@@ -92,5 +147,31 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "status": "ready" })
         );
+    }
+
+    #[test]
+    fn runtime_host_payload_has_stable_field_names() {
+        let host = RuntimeHost {
+            id: "reference-linux".to_owned(),
+            display_name: "Reference Linux Host".to_owned(),
+            agent_version: "0.1.0".to_owned(),
+            capabilities: RuntimeHostCapabilities {
+                operating_system: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+                logical_cpu_count: 4,
+                memory_bytes: 16 * 1024 * 1024 * 1024,
+                encoder_names: vec!["libx264".to_owned()],
+                emulator_adapters: vec!["mame".to_owned()],
+            },
+            status: RuntimeHostStatus::Online,
+            last_seen_unix_ms: 1_000,
+            heartbeat_sequence: 7,
+            active_session_count: 2,
+        };
+
+        let value = serde_json::to_value(host).unwrap();
+        assert_eq!(value["status"], "online");
+        assert_eq!(value["heartbeat_sequence"], 7);
+        assert_eq!(value["capabilities"]["emulator_adapters"][0], "mame");
     }
 }

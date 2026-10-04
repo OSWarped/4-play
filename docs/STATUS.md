@@ -60,22 +60,26 @@ Last updated: 2026-10-04
 - a 39-assertion concurrent persistence test proved distinct save-state and
   NVRAM files, session-specific restore paths, and shutdown isolation
 - Phase 1B runtime isolation is complete on the reference host
+- Phase 1A is accepted for orchestration with objective timing and the
+  rendered-player resource soak explicitly deferred
+- a runnable Phase 1C control-plane service exposes health, readiness, and a
+  versioned `/api/v1` boundary
+- shared control-plane types define canonical lifecycle states and runtime-host
+  capability, registration, heartbeat, and status payloads
+- the control plane accepts idempotent host registration and heartbeats and
+  rejects stale or conflicting heartbeat sequences
 
 ## In progress
 
-- measure local and remote button-to-photon latency objectively
-- complete a rendered Windows-player resource soak; the decoder-only working
-  set rose from 27.67 MiB to 50.94 MiB during a 168-second sample
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
 - improve cleanup after the runtime process itself is killed without a chance
   to run its normal teardown
+- implement the runtime-host agent and recurring heartbeat
+- add durable control-plane storage
 
 ## Not started
 
-- objective button-to-photon latency measurement
-- control-plane service
-- runtime-host registration
 - catalog and game-package workflow
 - active-session discovery and previews
 - player-slot reservation
@@ -83,5 +87,5 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Record repeatable local and remote input-to-video distributions and objectively
-confirm the subjectively synchronized action-to-sound result.
+Run a runtime-host agent on the reference Linux server, register it with the
+control plane, and maintain heartbeat and capability state automatically.

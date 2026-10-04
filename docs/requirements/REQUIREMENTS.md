@@ -153,8 +153,9 @@ The demonstration shall:
 7. demonstrate disconnect behavior that does not leave controls stuck
 8. record whether the proposed direct seat-to-runtime data path should be accepted, revised, or rejected
 
-Progress: items 1 through 4, 7, and 8 are demonstrated. Objective latency and
-controller-delivery distribution measurements in items 5 and 6 remain open.
+Progress: items 1 through 4, 7, and 8 are demonstrated. On 2026-10-04, the
+project owner accepted the architecture and deferred the objective measurements
+in items 5 and 6; they are not prerequisites for Phase 1C.
 
 ### Phase 1B — Isolation
 
@@ -185,7 +186,9 @@ The demonstration shall:
 7. detect normal termination or runtime loss
 8. return the seat to browsing without rebooting
 
-Status: not started.
+Status: started. The runnable control-plane service, health/readiness endpoints,
+versioned API boundary, shared lifecycle types, and in-memory runtime-host
+registration and heartbeat API exist.
 
 ## Product MVP acceptance statement
 
