@@ -107,11 +107,14 @@ The next implementation milestone is to integrate that controller into `session-
 
 ### Phase 1A — Remote-play feasibility
 
-Current phase. Media transport and virtual-controller creation are validated. Remote seat input and objective latency measurement remain.
+Media transport, runtime-owned controllers, and direct remote seat input are
+validated. Objective latency measurement and the rendered-player resource soak
+remain.
 
 ### Phase 1B — Runtime isolation
 
-Media-side concurrent-session isolation has been demonstrated. Controller isolation, failure injection, and cleanup behavior still require testing.
+Media, controller, and abnormal child-failure isolation have been demonstrated.
+Concurrent save/NVRAM isolation remains.
 
 ### Phase 1C — Control-plane orchestration
 

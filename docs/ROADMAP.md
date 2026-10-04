@@ -73,14 +73,19 @@ Already demonstrated:
   receive different controller patterns without event-device cross-talk
 - orderly shutdown of one session removes its processes and virtual controller
   while the other session continues streaming and accepting input
+- manual TMNT and Killer Instinct play confirmed that each Windows input client
+  controls only its assigned MAME session
+- unexpected MAME and FFmpeg termination in one session produces a failed
+  runtime result and cleans its remaining process, controller, input port, and
+  transient media FIFOs
+- the unaffected session continues streaming and accepting controller input
+  through both child-failure cases
+- a failed session can restart repeatedly with the same session ID and ports
+  while preserving its configuration and NVRAM directories
 
 Still required:
 
-- manual proof that each MAME process consumes only its intended controller
 - concurrent save and NVRAM validation
-- abnormal process termination and recovery tests
-- cleanup of stale processes and resources
-- proof that one failed session does not interrupt another
 
 **Exit:** two complete playable sessions operate independently and one can stop without affecting the other.
 

@@ -150,7 +150,8 @@ The demonstration shall:
 7. demonstrate disconnect behavior that does not leave controls stuck
 8. record whether the proposed direct seat-to-runtime data path should be accepted, revised, or rejected
 
-Progress: items 1 and 3 are demonstrated. Items 2 and 4 through 8 remain open or incomplete.
+Progress: items 1 through 4, 7, and 8 are demonstrated. Objective latency and
+controller-delivery distribution measurements in items 5 and 6 remain open.
 
 ### Phase 1B — Isolation
 
@@ -163,7 +164,9 @@ The demonstration shall:
 5. show that the other session continues operating
 6. clean up the stopped session's processes, controllers, and temporary resources
 
-Progress: two independent MAME sessions and separate working/media resources are demonstrated. Controller and failure isolation remain open.
+Progress: items 1 through 6 are demonstrated for unexpected MAME and FFmpeg
+child termination. Concurrent save/NVRAM isolation remains an additional
+roadmap criterion before Phase 1B is closed.
 
 ### Phase 1C — Orchestration
 

@@ -48,17 +48,24 @@ Last updated: 2026-10-04
 - virtual controllers now have session-specific identities, and each MAME
   process explicitly loads a generated profile that maps only its assigned
   device to `JOYCODE_1`
+- manual TMNT and Killer Instinct play confirmed end-to-end controller
+  isolation between two simultaneous sessions
+- abnormal MAME and FFmpeg child failures terminate only the owning runtime,
+  return a failure status, and clean the remaining child, virtual controller,
+  input port, and transient media FIFOs
+- a second session continues streaming and accepting input while its peer
+  fails, and the failed session can restart on the same ID and ports
 
 ## In progress
 
 - measure local and remote button-to-photon latency objectively
 - complete a rendered Windows-player resource soak; the decoder-only working
   set rose from 27.67 MiB to 50.94 MiB during a 168-second sample
-- visually confirm that two concurrent MAME processes consume only their own
-  virtual controllers
+- validate concurrent save and NVRAM isolation
 - replace manual width, height, and refresh arguments with MAME metadata discovery
 - wire the session state machine into actual runtime transitions
-- improve cleanup of stale session FIFOs and directories
+- improve cleanup after the runtime process itself is killed without a chance
+  to run its normal teardown
 
 ## Not started
 
