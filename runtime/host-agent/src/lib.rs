@@ -298,7 +298,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            axum::serve(listener, control_plane_server::app())
+            axum::serve(listener, control_plane_server::app().await.unwrap())
                 .await
                 .unwrap();
         });

@@ -22,6 +22,7 @@ tmp/
 temp/
 
 # Runtime content
+data/
 roms/
 bios/
 saves/

@@ -1,29 +1,64 @@
+mod store;
+
 use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path as AxumPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use control_protocol::{
     ApiInfo, ErrorResponse, RegisterRuntimeHost, RuntimeHost, RuntimeHostHeartbeat,
-    RuntimeHostList, RuntimeHostStatus, ServiceStatus, StatusResponse,
+    RuntimeHostList, ServiceStatus, StatusResponse,
 };
-use tokio::sync::RwLock;
+use store::RuntimeHostStore;
+pub use store::StoreError;
 
-#[derive(Clone, Default)]
+pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
+
+#[derive(Clone)]
 pub struct AppState {
-    runtime_hosts: Arc<RwLock<HashMap<String, RuntimeHost>>>,
+    runtime_hosts: RuntimeHostStore,
+    offline_after_ms: u64,
 }
 
-pub fn app() -> Router {
-    app_with_state(AppState::default())
+impl AppState {
+    async fn in_memory(offline_after: Duration) -> Result<Self, StoreError> {
+        Ok(Self {
+            runtime_hosts: RuntimeHostStore::in_memory().await?,
+            offline_after_ms: duration_ms(offline_after),
+        })
+    }
+
+    async fn persistent(
+        path: impl AsRef<Path>,
+        offline_after: Duration,
+    ) -> Result<Self, StoreError> {
+        Ok(Self {
+            runtime_hosts: RuntimeHostStore::open(path).await?,
+            offline_after_ms: duration_ms(offline_after),
+        })
+    }
+}
+
+pub async fn app() -> Result<Router, StoreError> {
+    Ok(app_with_state(
+        AppState::in_memory(DEFAULT_OFFLINE_AFTER).await?,
+    ))
+}
+
+pub async fn app_with_database(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+) -> Result<Router, StoreError> {
+    Ok(app_with_state(
+        AppState::persistent(path, offline_after).await?,
+    ))
 }
 
 pub fn app_with_state(state: AppState) -> Router {
@@ -49,101 +84,72 @@ async fn health() -> Json<StatusResponse> {
     })
 }
 
-async fn readiness() -> Json<StatusResponse> {
-    Json(StatusResponse {
+async fn readiness(State(state): State<AppState>) -> Result<Json<StatusResponse>, ApiError> {
+    state.runtime_hosts.ping().await.map_err(ApiError::store)?;
+    Ok(Json(StatusResponse {
         status: ServiceStatus::Ready,
-    })
+    }))
 }
 
 async fn api_info() -> Json<ApiInfo> {
     Json(ApiInfo::control_plane())
 }
 
-async fn list_runtime_hosts(State(state): State<AppState>) -> Json<RuntimeHostList> {
-    let mut hosts = state
+async fn list_runtime_hosts(
+    State(state): State<AppState>,
+) -> Result<Json<RuntimeHostList>, ApiError> {
+    let hosts = state
         .runtime_hosts
-        .read()
+        .list(unix_time_ms(), state.offline_after_ms)
         .await
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    hosts.sort_by(|left, right| left.id.cmp(&right.id));
-    Json(RuntimeHostList { hosts })
+        .map_err(ApiError::store)?;
+    Ok(Json(RuntimeHostList { hosts }))
 }
 
 async fn get_runtime_host(
     State(state): State<AppState>,
-    Path(host_id): Path<String>,
+    AxumPath(host_id): AxumPath<String>,
 ) -> Result<Json<RuntimeHost>, ApiError> {
-    let hosts = state.runtime_hosts.read().await;
-    hosts
-        .get(&host_id)
-        .cloned()
+    state
+        .runtime_hosts
+        .get(host_id, unix_time_ms(), state.offline_after_ms)
+        .await
         .map(Json)
-        .ok_or_else(|| ApiError::not_found("runtime_host_not_found", "runtime host was not found"))
+        .map_err(ApiError::store)
 }
 
 async fn register_runtime_host(
     State(state): State<AppState>,
-    Path(host_id): Path<String>,
+    AxumPath(host_id): AxumPath<String>,
     Json(registration): Json<RegisterRuntimeHost>,
 ) -> Result<(StatusCode, Json<RuntimeHost>), ApiError> {
     validate_host_id(&host_id)?;
     validate_registration(&registration)?;
 
-    let mut hosts = state.runtime_hosts.write().await;
-    let status = if hosts.contains_key(&host_id) {
-        StatusCode::OK
-    } else {
+    let (created, host) = state
+        .runtime_hosts
+        .upsert_registration(host_id, registration, unix_time_ms())
+        .await
+        .map_err(ApiError::store)?;
+    let status = if created {
         StatusCode::CREATED
+    } else {
+        StatusCode::OK
     };
-    let previous = hosts.get(&host_id);
-    let host = RuntimeHost {
-        id: host_id.clone(),
-        display_name: registration.display_name,
-        agent_version: registration.agent_version,
-        capabilities: registration.capabilities,
-        status: RuntimeHostStatus::Online,
-        last_seen_unix_ms: unix_time_ms(),
-        heartbeat_sequence: previous.map_or(0, |host| host.heartbeat_sequence),
-        active_session_count: previous.map_or(0, |host| host.active_session_count),
-    };
-    hosts.insert(host_id, host.clone());
-
     Ok((status, Json(host)))
 }
 
 async fn record_runtime_host_heartbeat(
     State(state): State<AppState>,
-    Path(host_id): Path<String>,
+    AxumPath(host_id): AxumPath<String>,
     Json(heartbeat): Json<RuntimeHostHeartbeat>,
 ) -> Result<Json<RuntimeHost>, ApiError> {
-    let mut hosts = state.runtime_hosts.write().await;
-    let host = hosts.get_mut(&host_id).ok_or_else(|| {
-        ApiError::not_found("runtime_host_not_found", "runtime host was not found")
-    })?;
-
-    if heartbeat.sequence < host.heartbeat_sequence {
-        return Err(ApiError::conflict(
-            "stale_heartbeat",
-            "heartbeat sequence is older than the last accepted sequence",
-        ));
-    }
-    if heartbeat.sequence == host.heartbeat_sequence
-        && heartbeat.active_session_count != host.active_session_count
-    {
-        return Err(ApiError::conflict(
-            "heartbeat_sequence_conflict",
-            "a heartbeat with this sequence was already accepted with different data",
-        ));
-    }
-
-    host.heartbeat_sequence = heartbeat.sequence;
-    host.active_session_count = heartbeat.active_session_count;
-    host.last_seen_unix_ms = unix_time_ms();
-    host.status = RuntimeHostStatus::Online;
-
-    Ok(Json(host.clone()))
+    state
+        .runtime_hosts
+        .heartbeat(host_id, heartbeat, unix_time_ms())
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
 }
 
 fn validate_host_id(host_id: &str) -> Result<(), ApiError> {
@@ -193,6 +199,10 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
 struct ApiError {
     status: StatusCode,
     body: ErrorResponse,
@@ -203,12 +213,32 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, code, message)
     }
 
-    fn not_found(code: &str, message: &str) -> Self {
-        Self::new(StatusCode::NOT_FOUND, code, message)
-    }
-
-    fn conflict(code: &str, message: &str) -> Self {
-        Self::new(StatusCode::CONFLICT, code, message)
+    fn store(error: StoreError) -> Self {
+        match error {
+            StoreError::NotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "runtime_host_not_found",
+                "runtime host was not found",
+            ),
+            StoreError::StaleHeartbeat => Self::new(
+                StatusCode::CONFLICT,
+                "stale_heartbeat",
+                "heartbeat sequence is older than the last accepted sequence",
+            ),
+            StoreError::HeartbeatSequenceConflict => Self::new(
+                StatusCode::CONFLICT,
+                "heartbeat_sequence_conflict",
+                "a heartbeat with this sequence was already accepted with different data",
+            ),
+            other => {
+                eprintln!("Control-plane storage failure: {other}");
+                Self::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "control-plane storage operation failed",
+                )
+            }
+        }
     }
 
     fn new(status: StatusCode, code: &str, message: &str) -> Self {
@@ -230,7 +260,9 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::app;
+    use std::time::Duration;
+
+    use super::{app, app_with_database};
     use axum::{
         body::Body,
         http::{Method, Request},
@@ -274,7 +306,7 @@ mod tests {
     }
 
     async fn get_json(path: &str) -> (u16, Value) {
-        request_json(app(), Method::GET, path, None).await
+        request_json(app().await.unwrap(), Method::GET, path, None).await
     }
 
     #[tokio::test]
@@ -306,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_host_registration_is_idempotent_and_listed() {
-        let service = app();
+        let service = app().await.unwrap();
         let (created_status, created) = request_json(
             service.clone(),
             Method::PUT,
@@ -336,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn heartbeat_updates_registered_host_and_accepts_exact_retry() {
-        let service = app();
+        let service = app().await.unwrap();
         request_json(
             service.clone(),
             Method::PUT,
@@ -369,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_or_conflicting_heartbeats_are_rejected() {
-        let service = app();
+        let service = app().await.unwrap();
         request_json(
             service.clone(),
             Method::PUT,
@@ -409,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_requires_a_registered_host() {
         let (status, body) = request_json(
-            app(),
+            app().await.unwrap(),
             Method::POST,
             "/api/v1/runtime-hosts/missing/heartbeat",
             Some(json!({ "sequence": 1, "active_session_count": 0 })),
@@ -422,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn registration_validates_host_identity_and_capabilities() {
         let (invalid_id_status, invalid_id) = request_json(
-            app(),
+            app().await.unwrap(),
             Method::PUT,
             "/api/v1/runtime-hosts/not%20safe",
             Some(registration()),
@@ -434,7 +466,7 @@ mod tests {
         let mut invalid_registration = registration();
         invalid_registration["capabilities"]["logical_cpu_count"] = json!(0);
         let (invalid_capabilities_status, invalid_capabilities) = request_json(
-            app(),
+            app().await.unwrap(),
             Method::PUT,
             "/api/v1/runtime-hosts/reference-linux",
             Some(invalid_registration),
@@ -445,8 +477,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn registrations_survive_database_reopen() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("control-plane.sqlite3");
+        let service = app_with_database(&database, Duration::from_secs(15))
+            .await
+            .unwrap();
+        request_json(
+            service,
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux",
+            Some(registration()),
+        )
+        .await;
+
+        let reopened = app_with_database(&database, Duration::from_secs(15))
+            .await
+            .unwrap();
+        let (status, host) = request_json(
+            reopened,
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux",
+            None,
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(host["id"], "reference-linux");
+    }
+
+    #[tokio::test]
+    async fn expired_host_is_offline_until_the_next_heartbeat() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap();
+        request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux",
+            Some(registration()),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let (_, offline) = request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux",
+            None,
+        )
+        .await;
+        assert_eq!(offline["status"], "offline");
+
+        let (_, online) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/runtime-hosts/reference-linux/heartbeat",
+            Some(json!({ "sequence": 1, "active_session_count": 0 })),
+        )
+        .await;
+        assert_eq!(online["status"], "online");
+    }
+
+    #[tokio::test]
     async fn unknown_routes_return_not_found() {
         let response = app()
+            .await
+            .unwrap()
             .oneshot(Request::get("/api/v2").body(Body::empty()).unwrap())
             .await
             .unwrap();

@@ -113,6 +113,8 @@ host_json="$results_directory/host.json"
 hosts_json="$results_directory/hosts.json"
 
 FOURPLAY_CONTROL_PLANE_BIND="$bind_address" \
+FOURPLAY_CONTROL_PLANE_DATABASE="$results_directory/control-plane.sqlite3" \
+FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS=2 \
     "$control_plane_binary" >"$control_plane_log" 2>&1 &
 control_plane_pid=$!
 
@@ -191,6 +193,15 @@ else
     fail "agent exits cleanly after SIGTERM (status $agent_status)"
 fi
 
+offline_json="$results_directory/offline.json"
+sleep 3
+if curl -fsS "$base_url/api/v1/runtime-hosts/$host_id" >"$offline_json" \
+    && grep -Fq '"status":"offline"' "$offline_json"; then
+    pass "expired heartbeat marks the host offline"
+else
+    fail "expired heartbeat marks the host offline"
+fi
+
 terminate_process "$control_plane_pid"
 control_plane_status=$last_status
 control_plane_pid=""
@@ -198,6 +209,70 @@ if [[ "$control_plane_status" -eq 0 ]]; then
     pass "control plane exits cleanly after SIGTERM"
 else
     fail "control plane exits cleanly after SIGTERM (status $control_plane_status)"
+fi
+
+restart_control_plane_log="$results_directory/control-plane-restart.log"
+FOURPLAY_CONTROL_PLANE_BIND="$bind_address" \
+FOURPLAY_CONTROL_PLANE_DATABASE="$results_directory/control-plane.sqlite3" \
+FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS=2 \
+    "$control_plane_binary" >"$restart_control_plane_log" 2>&1 &
+control_plane_pid=$!
+
+if wait_for_url "$base_url/ready"; then
+    pass "control plane reopens its SQLite database"
+else
+    fail "control plane reopens its SQLite database"
+fi
+
+persisted_json="$results_directory/persisted.json"
+if curl -fsS "$base_url/api/v1/runtime-hosts/$host_id" >"$persisted_json" \
+    && grep -Fq '"status":"offline"' "$persisted_json" \
+    && grep -Fq '"heartbeat_sequence":2' "$persisted_json"; then
+    pass "host identity, offline status, and sequence survive restart"
+else
+    fail "host identity, offline status, and sequence survive restart"
+fi
+
+restart_agent_log="$results_directory/agent-restart.log"
+FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+FOURPLAY_RUNTIME_HOST_ID="$host_id" \
+FOURPLAY_RUNTIME_HOST_NAME="Reference Linux Smoke Host" \
+FOURPLAY_HEARTBEAT_SECONDS=1 \
+    "$agent_binary" >"$restart_agent_log" 2>&1 &
+agent_pid=$!
+
+if wait_for_log "$restart_agent_log" \
+    'Heartbeat accepted: host=reference-linux-smoke sequence=3'; then
+    pass "restarted agent resumes after the persisted heartbeat sequence"
+else
+    fail "restarted agent resumes after the persisted heartbeat sequence"
+fi
+
+recovered_json="$results_directory/recovered.json"
+if curl -fsS "$base_url/api/v1/runtime-hosts/$host_id" >"$recovered_json" \
+    && grep -Fq '"status":"online"' "$recovered_json" \
+    && grep -Fq '"heartbeat_sequence":3' "$recovered_json"; then
+    pass "restarted agent returns the persisted host online"
+else
+    fail "restarted agent returns the persisted host online"
+fi
+
+terminate_process "$agent_pid"
+restart_agent_status=$last_status
+agent_pid=""
+if [[ "$restart_agent_status" -eq 0 ]]; then
+    pass "restarted agent exits cleanly after SIGTERM"
+else
+    fail "restarted agent exits cleanly after SIGTERM (status $restart_agent_status)"
+fi
+
+terminate_process "$control_plane_pid"
+restart_control_plane_status=$last_status
+control_plane_pid=""
+if [[ "$restart_control_plane_status" -eq 0 ]]; then
+    pass "restarted control plane exits cleanly after SIGTERM"
+else
+    fail "restarted control plane exits cleanly after SIGTERM (status $restart_control_plane_status)"
 fi
 
 if ss -H -ltn "sport = :41800" | grep -q .; then

@@ -56,6 +56,7 @@ pub struct RuntimeHostHeartbeat {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeHostStatus {
     Online,
+    Offline,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
