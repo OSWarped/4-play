@@ -185,6 +185,7 @@ FOURPLAY_HEARTBEAT_SECONDS=1 \
 FOURPLAY_RECONCILE_MILLISECONDS=100 \
 FOURPLAY_SESSION_RUNTIME_PATH="$session_runtime_binary" \
 FOURPLAY_RUNTIME_STATE_DIRECTORY="$runtime_state_directory" \
+FOURPLAY_MAME_PATH="$HOME/src/mame-4play/mame" \
     "$agent_binary" >"$agent_log" 2>&1 &
 agent_pid=$!
 

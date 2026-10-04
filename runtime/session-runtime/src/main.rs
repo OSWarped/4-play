@@ -23,6 +23,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 use terminal_input::run_terminal_input;
 use virtual_controller::{VirtualController, mame_device_id_match};
 
@@ -344,6 +345,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     session.state = session::SessionState::LaunchingEmulator;
     let mut mame = MameProcess::spawn(&mame_config)?;
     session.state = session::SessionState::Running;
+    wait_for_runtime_ready(&bridge, &mut mame, &mut encoder)?;
     write_runtime_status(runtime_status_file.as_deref(), "active")?;
     let mut child_failure = None;
 
@@ -404,6 +406,37 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     encoder_result?;
     session.state = session::SessionState::Stopped;
 
+    Ok(())
+}
+
+fn wait_for_runtime_ready(
+    bridge: &MediaBridge,
+    mame: &mut MameProcess,
+    encoder: &mut EncoderProcess,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    while !bridge.is_ready() {
+        if let Some(status) = mame.try_wait()? {
+            return Err(io::Error::other(format!(
+                "MAME exited during startup with status {status}"
+            ))
+            .into());
+        }
+        if let Some(status) = encoder.try_wait()? {
+            return Err(io::Error::other(format!(
+                "FFmpeg exited during startup with status {status}"
+            ))
+            .into());
+        }
+        if started.elapsed() >= Duration::from_secs(10) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "session runtime did not receive video and audio within 10 seconds",
+            )
+            .into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
     Ok(())
 }
 

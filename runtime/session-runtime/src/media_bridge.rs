@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -76,6 +77,11 @@ impl MediaBridge {
         self.start_metrics_monitor(bridge_started);
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.metrics.video_frames.load(Ordering::Acquire) > 0
+            && self.metrics.audio_blocks.load(Ordering::Acquire) > 0
+    }
+
     fn start_video_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
         let video_path = self.config.video_path.clone();
 
@@ -87,15 +93,18 @@ impl MediaBridge {
         self.handles.push(thread::spawn(move || {
             println!("Video reader waiting on {}", video_path.display());
 
-            let mut source = OpenOptions::new().read(true).open(&video_path)?;
+            let mut source = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&video_path)?;
 
             println!("Video reader connected: {} bytes per frame", frame_bytes);
 
             while running.load(Ordering::Acquire) {
                 let mut frame = vec![0_u8; frame_bytes];
 
-                match source.read_exact(&mut frame) {
-                    Ok(()) => {
+                match read_exact_while_running(&mut source, &mut frame, &running)? {
+                    true => {
                         record_first_video(&metrics)?;
 
                         metrics.video_frames.fetch_add(1, Ordering::Relaxed);
@@ -115,13 +124,7 @@ impl MediaBridge {
                             .video_queue_depth
                             .store(sender.len() as u64, Ordering::Relaxed);
                     }
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                        continue;
-                    }
-                    Err(error) => return Err(error),
+                    false => break,
                 }
             }
 
@@ -144,7 +147,10 @@ impl MediaBridge {
         self.handles.push(thread::spawn(move || {
             println!("Audio reader waiting on {}", audio_path.display());
 
-            let mut source = OpenOptions::new().read(true).open(&audio_path)?;
+            let mut source = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&audio_path)?;
 
             println!(
                 "Audio reader connected: {} bytes per {} ms block",
@@ -154,8 +160,8 @@ impl MediaBridge {
             while running.load(Ordering::Acquire) {
                 let mut block = vec![0_u8; block_bytes];
 
-                match source.read_exact(&mut block) {
-                    Ok(()) => {
+                match read_exact_while_running(&mut source, &mut block, &running)? {
+                    true => {
                         record_first_audio(&metrics)?;
 
                         metrics.audio_blocks.fetch_add(1, Ordering::Relaxed);
@@ -179,13 +185,7 @@ impl MediaBridge {
                             .audio_queue_depth
                             .store(sender.len() as u64, Ordering::Relaxed);
                     }
-                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                        continue;
-                    }
-                    Err(error) => return Err(error),
+                    false => break,
                 }
             }
 
@@ -303,6 +303,35 @@ impl MediaBridge {
 
         Ok(())
     }
+}
+
+fn read_exact_while_running(
+    source: &mut File,
+    buffer: &mut [u8],
+    running: &AtomicBool,
+) -> io::Result<bool> {
+    let mut offset = 0;
+    while offset < buffer.len() {
+        if !running.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        match source.read(&mut buffer[offset..]) {
+            Ok(0) => thread::sleep(Duration::from_millis(2)),
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
 }
 
 fn send_latest(
