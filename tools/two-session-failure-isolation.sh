@@ -349,9 +349,9 @@ reap_failed_session_a() {
     fi
 
     if grep -Fq "$expected_pattern" "$runtime_a_log"; then
-        pass "session A logs the $label cause"
+        pass "session A logs an abnormal child exit after $label"
     else
-        fail "session A logs the $label cause"
+        fail "session A logs an abnormal child exit after $label"
     fi
 }
 
@@ -451,7 +451,7 @@ exercise_controller \
 
 frames_before="$(last_video_frames "$results_directory/runtime-b.log")"
 kill -KILL "$mame_a_pid"
-reap_failed_session_a "MAME SIGKILL" "MAME exited unexpectedly"
+reap_failed_session_a "MAME SIGKILL" "exited unexpectedly"
 assert_process_stopped "$mame_a_pid" "session A MAME is gone after MAME SIGKILL"
 assert_process_stopped "$encoder_a_pid" "session A FFmpeg is reaped after MAME SIGKILL"
 assert_transient_resources_removed "$session_a_id" "$input_a_port" "$event_a" \
