@@ -28,7 +28,7 @@ use virtual_controller::{VirtualController, mame_device_id_match};
 
 #[derive(Debug)]
 struct RuntimeArgs {
-    session_id: u32,
+    session_id: String,
     rom: String,
     width: u32,
     height: u32,
@@ -41,6 +41,9 @@ struct RuntimeArgs {
     audio_codec: AudioCodec,
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
+    mame_path: PathBuf,
+    mame_ini_path: PathBuf,
+    status_file: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -77,7 +80,10 @@ fn print_usage(program: &str) {
     [--autosave] \
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
-    [--audio-thread-queue-size <packets>]"
+    [--audio-thread-queue-size <packets>] \
+    [--mame-path <path>] \
+    [--mame-ini-path <path>] \
+    [--status-file <path>]"
     );
 }
 
@@ -128,6 +134,9 @@ fn parse_args() -> RuntimeArgs {
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
     let mut audio_thread_queue_size = 64;
+    let mut mame_path = PathBuf::from("/home/blake/src/mame-4play/mame");
+    let mut mame_ini_path = PathBuf::from("/opt/4play/config/mame");
+    let mut status_file = None;
 
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -189,6 +198,15 @@ fn parse_args() -> RuntimeArgs {
                     "--audio-thread-queue-size",
                 );
             }
+            "--mame-path" => {
+                mame_path = PathBuf::from(require_value(&mut args, "--mame-path"));
+            }
+            "--mame-ini-path" => {
+                mame_ini_path = PathBuf::from(require_value(&mut args, "--mame-ini-path"));
+            }
+            "--status-file" => {
+                status_file = Some(PathBuf::from(require_value(&mut args, "--status-file")));
+            }
             "--help" | "-h" => {
                 print_usage(&program);
                 process::exit(0);
@@ -215,6 +233,9 @@ fn parse_args() -> RuntimeArgs {
         audio_codec,
         audio_block_ms,
         audio_thread_queue_size,
+        mame_path,
+        mame_ini_path,
+        status_file,
     };
 
     if parsed.width == 0 || parsed.height == 0 {
@@ -247,12 +268,24 @@ fn parse_args() -> RuntimeArgs {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
+    write_runtime_status(args.status_file.as_deref(), "starting")?;
+    let status_file = args.status_file.clone();
+    let result = run(args);
+    if result.is_ok() {
+        write_runtime_status(status_file.as_deref(), "stopped")?;
+    }
+    result
+}
+
+fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime_status_file = args.status_file.clone();
     let shutdown_requested = install_shutdown_handlers()?;
     let controller_enabled = args.terminal_input || args.input_port.is_some();
-    let controller_device_id = controller_enabled.then(|| mame_device_id_match(args.session_id, 1));
+    let controller_id = controller_id(&args.session_id);
+    let controller_device_id = controller_enabled.then(|| mame_device_id_match(controller_id, 1));
 
     let config = SessionConfig {
-        id: args.session_id,
+        id: args.session_id.clone(),
         rom: args.rom,
         width: args.width,
         height: args.height,
@@ -293,12 +326,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Media bridge ready for session {}.", session.config.id);
 
     let mut controller = controller_enabled
-        .then(|| VirtualController::create(args.session_id, 1))
+        .then(|| VirtualController::create(controller_id, 1))
         .transpose()?;
 
     let mame_config = MameConfig {
-        binary: PathBuf::from("/home/blake/src/mame-4play/mame"),
-        ini_path: PathBuf::from("/opt/4play/config/mame"),
+        binary: args.mame_path,
+        ini_path: args.mame_ini_path,
         rom: session.config.rom.clone(),
         working_directory: session.working_directory.clone(),
         video_path: session.video_path(),
@@ -308,6 +341,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut mame = MameProcess::spawn(&mame_config)?;
+    write_runtime_status(runtime_status_file.as_deref(), "active")?;
     let mut child_failure = None;
 
     let input_result = if let Some(controller) = controller.as_mut() {
@@ -366,6 +400,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     encoder_result?;
 
     Ok(())
+}
+
+fn controller_id(session_id: &str) -> u32 {
+    session_id.bytes().fold(2_166_136_261_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+    })
+}
+
+fn write_runtime_status(path: Option<&std::path::Path>, status: &str) -> io::Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{status}\n"))
 }
 
 fn install_shutdown_handlers() -> io::Result<Arc<AtomicBool>> {

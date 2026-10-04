@@ -20,7 +20,7 @@ pub enum SessionState {
 
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
-    pub id: u32,
+    pub id: String,
     pub rom: String,
     pub width: u32,
     pub height: u32,

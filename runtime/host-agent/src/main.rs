@@ -2,7 +2,7 @@ use std::{env, error::Error};
 
 use runtime_host_agent::{
     AgentConfig, RuntimeHostAgent, catalog::discover_catalog, configured_mame_path,
-    discover_capabilities,
+    discover_capabilities, runtime::RuntimeAdapterConfig,
 };
 
 #[tokio::main]
@@ -18,7 +18,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .or_else(|| cfg!(unix).then(|| "/opt/4play/config/mame".to_owned()));
     let catalog = discover_catalog(&catalog_path, &mame_path, mame_ini_path.as_deref())
         .map_err(std::io::Error::other)?;
-    let agent = RuntimeHostAgent::new(config, capabilities).with_catalog(catalog);
+    let runtime_adapter = RuntimeAdapterConfig::from_environment(
+        &mame_path,
+        mame_ini_path.as_deref().unwrap_or("/opt/4play/config/mame"),
+    );
+    let agent = RuntimeHostAgent::new(config, capabilities)
+        .with_catalog(catalog)
+        .with_runtime_adapter(runtime_adapter);
 
     println!(
         "4-Play runtime host agent starting: id={} control_plane={}",

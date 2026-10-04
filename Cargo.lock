@@ -852,6 +852,7 @@ dependencies = [
  "axum",
  "control-plane-server",
  "control-protocol",
+ "libc",
  "quick-xml",
  "reqwest",
  "serde",

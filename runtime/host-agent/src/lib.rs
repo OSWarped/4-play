@@ -1,16 +1,22 @@
-use std::{env, fs, future::Future, path::Path, process::Command, time::Duration};
+use std::{
+    collections::HashSet, env, fs, future::Future, path::Path, process::Command, time::Duration,
+};
 
 use control_protocol::{
     RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
-    RuntimeHostHeartbeat,
+    RuntimeHostHeartbeat, RuntimeSessionAssignmentList, Session, SessionState, UpdateSessionState,
 };
 use reqwest::Client;
 use tokio::time::{MissedTickBehavior, interval};
 
 pub mod catalog;
+pub mod runtime;
+
+use runtime::{RuntimeAdapterConfig, RuntimeObservation, RuntimeSupervisor};
 
 pub const DEFAULT_CONTROL_PLANE_URL: &str = "http://127.0.0.1:8080";
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub const DEFAULT_RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -18,6 +24,7 @@ pub struct AgentConfig {
     pub host_id: String,
     pub display_name: String,
     pub heartbeat_interval: Duration,
+    pub reconcile_interval: Duration,
 }
 
 impl AgentConfig {
@@ -41,6 +48,20 @@ impl AgentConfig {
             }
             Err(_) => DEFAULT_HEARTBEAT_INTERVAL,
         };
+        let reconcile_interval = match env::var("FOURPLAY_RECONCILE_MILLISECONDS") {
+            Ok(value) => {
+                let milliseconds = value
+                    .parse::<u64>()
+                    .map_err(|_| "FOURPLAY_RECONCILE_MILLISECONDS must be an integer".to_owned())?;
+                if milliseconds == 0 {
+                    return Err(
+                        "FOURPLAY_RECONCILE_MILLISECONDS must be greater than zero".to_owned()
+                    );
+                }
+                Duration::from_millis(milliseconds)
+            }
+            Err(_) => DEFAULT_RECONCILE_INTERVAL,
+        };
 
         validate_host_id(&host_id)?;
         if display_name.trim().is_empty() {
@@ -52,6 +73,7 @@ impl AgentConfig {
             host_id,
             display_name,
             heartbeat_interval,
+            reconcile_interval,
         })
     }
 }
@@ -62,6 +84,7 @@ pub struct RuntimeHostAgent {
     config: AgentConfig,
     registration: RegisterRuntimeHost,
     catalog: Option<RuntimeHostCatalog>,
+    runtime_adapter: Option<RuntimeAdapterConfig>,
 }
 
 impl RuntimeHostAgent {
@@ -76,11 +99,17 @@ impl RuntimeHostAgent {
             config,
             registration,
             catalog: None,
+            runtime_adapter: None,
         }
     }
 
     pub fn with_catalog(mut self, catalog: RuntimeHostCatalog) -> Self {
         self.catalog = Some(catalog);
+        self
+    }
+
+    pub fn with_runtime_adapter(mut self, config: RuntimeAdapterConfig) -> Self {
+        self.runtime_adapter = Some(config);
         self
     }
 
@@ -136,6 +165,40 @@ impl RuntimeHostAgent {
             .map(Some)
     }
 
+    pub async fn runtime_assignments(
+        &self,
+    ) -> Result<RuntimeSessionAssignmentList, reqwest::Error> {
+        self.client
+            .get(format!("{}/sessions", self.runtime_host_url()))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+    }
+
+    pub async fn report_session_state(
+        &self,
+        session_id: &str,
+        state: SessionState,
+        failure_reason: Option<String>,
+    ) -> Result<Session, reqwest::Error> {
+        self.client
+            .put(format!(
+                "{}/sessions/{session_id}/state",
+                self.runtime_host_url()
+            ))
+            .json(&UpdateSessionState {
+                state,
+                failure_reason,
+            })
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+    }
+
     pub async fn run_until<F>(&self, shutdown: F)
     where
         F: Future<Output = ()>,
@@ -143,14 +206,26 @@ impl RuntimeHostAgent {
         tokio::pin!(shutdown);
         let mut timer = interval(self.config.heartbeat_interval);
         timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut reconcile_timer = interval(self.config.reconcile_interval);
+        reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut next_sequence = None;
+        let mut supervisor = self.runtime_adapter.clone().map(RuntimeSupervisor::new);
 
         loop {
             tokio::select! {
-                () = &mut shutdown => break,
+                () = &mut shutdown => {
+                    if let Some(supervisor) = supervisor.as_mut() {
+                        supervisor.stop_all();
+                    }
+                    break;
+                },
                 _ = timer.tick() => {
                     if let Some(sequence) = next_sequence {
-                        match self.heartbeat(sequence, 0).await {
+                        let active_session_count = supervisor
+                            .as_ref()
+                            .map(RuntimeSupervisor::active_count)
+                            .unwrap_or(0);
+                        match self.heartbeat(sequence, active_session_count).await {
                             Ok(host) => {
                                 println!(
                                     "Heartbeat accepted: host={} sequence={} active_sessions={}",
@@ -189,6 +264,13 @@ impl RuntimeHostAgent {
                             }
                         }
                     }
+                },
+                _ = reconcile_timer.tick(), if next_sequence.is_some() => {
+                    if let Some(supervisor) = supervisor.as_mut()
+                        && let Err(error) = self.reconcile_sessions(supervisor).await
+                    {
+                        eprintln!("Runtime reconciliation failed: {error}");
+                    }
                 }
             }
         }
@@ -199,6 +281,147 @@ impl RuntimeHostAgent {
             "{}/api/v1/runtime-hosts/{}",
             self.config.control_plane_url, self.config.host_id
         )
+    }
+
+    async fn reconcile_sessions(&self, supervisor: &mut RuntimeSupervisor) -> Result<(), String> {
+        let assignments = self
+            .runtime_assignments()
+            .await
+            .map_err(|error| format!("could not fetch assignments: {error}"))?;
+        let assigned = assignments
+            .sessions
+            .iter()
+            .map(|assignment| assignment.session_id.clone())
+            .collect::<HashSet<_>>();
+
+        for assignment in assignments.sessions {
+            match assignment.state {
+                SessionState::Allocating => {
+                    if let Err(error) = supervisor.ensure_started(&assignment) {
+                        let reason = format!("could not launch session runtime: {error}");
+                        self.report_session_state(
+                            &assignment.session_id,
+                            SessionState::AllocationFailed,
+                            Some(reason),
+                        )
+                        .await
+                        .map_err(|error| format!("could not report allocation failure: {error}"))?;
+                        supervisor.forget(&assignment.session_id);
+                    } else {
+                        self.report_session_state(
+                            &assignment.session_id,
+                            SessionState::Starting,
+                            None,
+                        )
+                        .await
+                        .map_err(|error| format!("could not report starting state: {error}"))?;
+                    }
+                }
+                SessionState::Starting
+                | SessionState::Ready
+                | SessionState::Active
+                | SessionState::Unhealthy => {
+                    match supervisor
+                        .observe(&assignment.session_id)
+                        .map_err(|error| format!("could not inspect runtime process: {error}"))?
+                    {
+                        RuntimeObservation::Active => {
+                            if assignment.state == SessionState::Starting {
+                                self.report_session_state(
+                                    &assignment.session_id,
+                                    SessionState::Ready,
+                                    None,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("could not report ready state: {error}")
+                                })?;
+                                self.report_session_state(
+                                    &assignment.session_id,
+                                    SessionState::Active,
+                                    None,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("could not report active state: {error}")
+                                })?;
+                            } else if matches!(
+                                assignment.state,
+                                SessionState::Ready | SessionState::Unhealthy
+                            ) {
+                                self.report_session_state(
+                                    &assignment.session_id,
+                                    SessionState::Active,
+                                    None,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("could not report active state: {error}")
+                                })?;
+                            }
+                        }
+                        RuntimeObservation::Exited(reason) => {
+                            let failed_state = if assignment.state == SessionState::Starting {
+                                SessionState::LaunchFailed
+                            } else {
+                                SessionState::RuntimeLost
+                            };
+                            self.report_session_state(
+                                &assignment.session_id,
+                                failed_state,
+                                Some(reason),
+                            )
+                            .await
+                            .map_err(|error| {
+                                format!("could not report runtime failure: {error}")
+                            })?;
+                            supervisor.forget(&assignment.session_id);
+                        }
+                        RuntimeObservation::Missing => {
+                            let failed_state = if assignment.state == SessionState::Starting {
+                                SessionState::LaunchFailed
+                            } else {
+                                SessionState::RuntimeLost
+                            };
+                            self.report_session_state(
+                                &assignment.session_id,
+                                failed_state,
+                                Some("session runtime process is missing".to_owned()),
+                            )
+                            .await
+                            .map_err(|error| {
+                                format!("could not report missing runtime: {error}")
+                            })?;
+                        }
+                        RuntimeObservation::Starting => {}
+                    }
+                }
+                SessionState::Stopping => {
+                    supervisor
+                        .request_stop(&assignment.session_id)
+                        .map_err(|error| format!("could not stop runtime process: {error}"))?;
+                    match supervisor
+                        .observe(&assignment.session_id)
+                        .map_err(|error| format!("could not inspect stopping runtime: {error}"))?
+                    {
+                        RuntimeObservation::Exited(_) | RuntimeObservation::Missing => {
+                            self.report_session_state(
+                                &assignment.session_id,
+                                SessionState::Stopped,
+                                None,
+                            )
+                            .await
+                            .map_err(|error| format!("could not report stopped state: {error}"))?;
+                            supervisor.forget(&assignment.session_id);
+                        }
+                        RuntimeObservation::Starting | RuntimeObservation::Active => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        supervisor.stop_unassigned(&assigned);
+        Ok(())
     }
 }
 
@@ -360,6 +583,7 @@ mod tests {
                 host_id: "test-linux".to_owned(),
                 display_name: "Test Linux".to_owned(),
                 heartbeat_interval: Duration::from_millis(10),
+                reconcile_interval: Duration::from_millis(5),
             },
             RuntimeHostCapabilities {
                 data_plane_address: "127.0.0.1".to_owned(),
