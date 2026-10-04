@@ -13,8 +13,8 @@ use axum::{
     routing::{get, post},
 };
 use control_protocol::{
-    ApiInfo, ErrorResponse, RegisterRuntimeHost, RuntimeHost, RuntimeHostHeartbeat,
-    RuntimeHostList, ServiceStatus, StatusResponse,
+    ApiInfo, CatalogGame, CatalogGameList, ErrorResponse, RegisterRuntimeHost, RuntimeHost,
+    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList, ServiceStatus, StatusResponse,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -67,6 +67,8 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/ready", get(readiness))
         .route("/api/v1", get(api_info))
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
+        .route("/api/v1/games", get(list_catalog_games))
+        .route("/api/v1/games/{game_id}", get(get_catalog_game))
         .route(
             "/api/v1/runtime-hosts/{host_id}",
             get(get_runtime_host).put(register_runtime_host),
@@ -74,6 +76,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runtime-hosts/{host_id}/heartbeat",
             post(record_runtime_host_heartbeat),
+        )
+        .route(
+            "/api/v1/runtime-hosts/{host_id}/catalog",
+            axum::routing::put(replace_runtime_host_catalog),
         )
         .with_state(state)
 }
@@ -152,6 +158,43 @@ async fn record_runtime_host_heartbeat(
         .map_err(ApiError::store)
 }
 
+async fn replace_runtime_host_catalog(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<String>,
+    Json(catalog): Json<RuntimeHostCatalog>,
+) -> Result<Json<RuntimeHostCatalog>, ApiError> {
+    validate_catalog(&catalog)?;
+    state
+        .runtime_hosts
+        .replace_host_catalog(host_id, catalog.clone())
+        .await
+        .map_err(ApiError::store)?;
+    Ok(Json(catalog))
+}
+
+async fn list_catalog_games(
+    State(state): State<AppState>,
+) -> Result<Json<CatalogGameList>, ApiError> {
+    let games = state
+        .runtime_hosts
+        .list_catalog(unix_time_ms(), state.offline_after_ms)
+        .await
+        .map_err(ApiError::store)?;
+    Ok(Json(CatalogGameList { games }))
+}
+
+async fn get_catalog_game(
+    State(state): State<AppState>,
+    AxumPath(game_id): AxumPath<String>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    state
+        .runtime_hosts
+        .get_catalog_game(game_id, unix_time_ms(), state.offline_after_ms)
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
 fn validate_host_id(host_id: &str) -> Result<(), ApiError> {
     let valid = !host_id.is_empty()
         && host_id.len() <= 64
@@ -190,6 +233,39 @@ fn validate_registration(registration: &RegisterRuntimeHost) -> Result<(), ApiEr
     Ok(())
 }
 
+fn validate_catalog(catalog: &RuntimeHostCatalog) -> Result<(), ApiError> {
+    for game in &catalog.games {
+        for (field, value) in [("game ID", &game.id), ("ROM name", &game.rom_name)] {
+            let valid = !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+            if !valid {
+                return Err(ApiError::bad_request(
+                    "invalid_catalog_identity",
+                    &format!(
+                        "{field} must contain 1-64 ASCII letters, digits, dots, dashes, or underscores"
+                    ),
+                ));
+            }
+        }
+        if game.display_name.trim().is_empty()
+            || game.profile.width == 0
+            || game.profile.height == 0
+            || !game.profile.refresh_hz.is_finite()
+            || game.profile.refresh_hz <= 0.0
+            || game.profile.max_players == 0
+        {
+            return Err(ApiError::bad_request(
+                "invalid_runtime_profile",
+                "catalog games require a name, dimensions, refresh rate, and player count",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -219,6 +295,11 @@ impl ApiError {
                 StatusCode::NOT_FOUND,
                 "runtime_host_not_found",
                 "runtime host was not found",
+            ),
+            StoreError::GameNotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "catalog_game_not_found",
+                "catalog game was not found",
             ),
             StoreError::StaleHeartbeat => Self::new(
                 StatusCode::CONFLICT,
@@ -283,6 +364,25 @@ mod tests {
                 "encoder_names": ["libx264", "h264_qsv"],
                 "emulator_adapters": ["mame"]
             }
+        })
+    }
+
+    fn catalog() -> Value {
+        json!({
+            "games": [{
+                "id": "tmnt",
+                "display_name": "Teenage Mutant Ninja Turtles",
+                "rom_name": "tmnt",
+                "profile": {
+                    "width": 320,
+                    "height": 224,
+                    "refresh_hz": 60.0,
+                    "rotation_degrees": 0,
+                    "max_players": 4,
+                    "buttons_per_player": 2,
+                    "supports_save_state": true
+                }
+            }]
         })
     }
 
@@ -540,6 +640,60 @@ mod tests {
         )
         .await;
         assert_eq!(online["status"], "online");
+    }
+
+    #[tokio::test]
+    async fn host_catalog_is_persisted_and_exposes_liveness() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("control-plane.sqlite3");
+        let service = app_with_database(&database, Duration::from_millis(200))
+            .await
+            .unwrap();
+        request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux",
+            Some(registration()),
+        )
+        .await;
+        let (publish_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux/catalog",
+            Some(catalog()),
+        )
+        .await;
+        assert_eq!(publish_status, 200);
+
+        let reopened = app_with_database(&database, Duration::from_millis(200))
+            .await
+            .unwrap();
+        let (game_status, game) =
+            request_json(reopened.clone(), Method::GET, "/api/v1/games/tmnt", None).await;
+        assert_eq!(game_status, 200);
+        assert_eq!(game["availability"][0]["runtime_host_status"], "online");
+        assert_eq!(game["availability"][0]["profile"]["width"], 320);
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let (_, expired_game) =
+            request_json(reopened, Method::GET, "/api/v1/games/tmnt", None).await;
+        assert_eq!(
+            expired_game["availability"][0]["runtime_host_status"],
+            "offline"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_publish_requires_registered_host() {
+        let (status, error) = request_json(
+            app().await.unwrap(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/missing/catalog",
+            Some(catalog()),
+        )
+        .await;
+        assert_eq!(status, 404);
+        assert_eq!(error["code"], "runtime_host_not_found");
     }
 
     #[tokio::test]

@@ -1,8 +1,8 @@
-use std::{error::Error, fmt, path::Path};
+use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 
 use control_protocol::{
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostHeartbeat,
-    RuntimeHostStatus,
+    CatalogGame, GameAvailability, GameRuntimeProfile, RegisterRuntimeHost, RuntimeHost,
+    RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -20,6 +20,19 @@ const SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS runtime_hosts_last_seen
         ON runtime_hosts(last_seen_unix_ms);
+    CREATE TABLE IF NOT EXISTS games (
+        id TEXT PRIMARY KEY NOT NULL,
+        display_name TEXT NOT NULL,
+        rom_name TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS runtime_profiles (
+        runtime_host_id TEXT NOT NULL,
+        game_id TEXT NOT NULL,
+        profile_json TEXT NOT NULL,
+        PRIMARY KEY (runtime_host_id, game_id),
+        FOREIGN KEY (runtime_host_id) REFERENCES runtime_hosts(id) ON DELETE CASCADE,
+        FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+    );
 ";
 
 #[derive(Clone)]
@@ -244,6 +257,138 @@ impl RuntimeHostStore {
             .map(StoredHost::into_runtime_host)
             .collect()
     }
+
+    pub async fn replace_host_catalog(
+        &self,
+        host_id: String,
+        catalog: RuntimeHostCatalog,
+    ) -> Result<(), StoreError> {
+        let games = catalog
+            .games
+            .into_iter()
+            .map(|game| {
+                serde_json::to_string(&game.profile)
+                    .map(|profile_json| (game.id, game.display_name, game.rom_name, profile_json))
+                    .map_err(StoreError::serialization)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Result<(), ()>> {
+                    let host_exists = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM runtime_hosts WHERE id = ?1)",
+                        [&host_id],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !host_exists {
+                        return Ok(Err(()));
+                    }
+                    let transaction = connection.transaction()?;
+                    transaction.execute(
+                        "DELETE FROM runtime_profiles WHERE runtime_host_id = ?1",
+                        [&host_id],
+                    )?;
+                    for (game_id, display_name, rom_name, profile_json) in games {
+                        transaction.execute(
+                            "INSERT INTO games (id, display_name, rom_name)
+                         VALUES (?1, ?2, ?3)
+                         ON CONFLICT(id) DO UPDATE SET
+                            display_name = excluded.display_name,
+                            rom_name = excluded.rom_name",
+                            params![game_id, display_name, rom_name],
+                        )?;
+                        transaction.execute(
+                            "INSERT INTO runtime_profiles
+                            (runtime_host_id, game_id, profile_json)
+                         VALUES (?1, ?2, ?3)",
+                            params![host_id, game_id, profile_json],
+                        )?;
+                    }
+                    transaction.commit()?;
+                    Ok(Ok(()))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .map_err(|()| StoreError::NotFound)
+    }
+
+    pub async fn list_catalog(
+        &self,
+        now_unix_ms: u64,
+        offline_after_ms: u64,
+    ) -> Result<Vec<CatalogGame>, StoreError> {
+        let cutoff = to_sql_integer(
+            now_unix_ms.saturating_sub(offline_after_ms),
+            "offline cutoff",
+        )?;
+        let rows = self
+            .connection
+            .call(move |connection| {
+                mark_expired_offline(connection, cutoff)?;
+                let mut statement = connection.prepare(
+                    "SELECT g.id, g.display_name, g.rom_name, rp.runtime_host_id,
+                            h.status, rp.profile_json
+                     FROM games g
+                     JOIN runtime_profiles rp ON rp.game_id = g.id
+                     JOIN runtime_hosts h ON h.id = rp.runtime_host_id
+                     ORDER BY g.id, rp.runtime_host_id",
+                )?;
+                statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(StoreError::database)?;
+
+        let mut games = BTreeMap::<String, CatalogGame>::new();
+        for (game_id, display_name, rom_name, host_id, status, profile_json) in rows {
+            let runtime_host_status = match status.as_str() {
+                "online" => RuntimeHostStatus::Online,
+                "offline" => RuntimeHostStatus::Offline,
+                _ => return Err(StoreError::data("runtime host has an unknown status")),
+            };
+            let profile = serde_json::from_str::<GameRuntimeProfile>(&profile_json)
+                .map_err(StoreError::serialization)?;
+            games
+                .entry(game_id.clone())
+                .or_insert_with(|| CatalogGame {
+                    id: game_id,
+                    display_name,
+                    rom_name,
+                    availability: Vec::new(),
+                })
+                .availability
+                .push(GameAvailability {
+                    runtime_host_id: host_id,
+                    runtime_host_status,
+                    profile,
+                });
+        }
+        Ok(games.into_values().collect())
+    }
+
+    pub async fn get_catalog_game(
+        &self,
+        game_id: String,
+        now_unix_ms: u64,
+        offline_after_ms: u64,
+    ) -> Result<CatalogGame, StoreError> {
+        self.list_catalog(now_unix_ms, offline_after_ms)
+            .await?
+            .into_iter()
+            .find(|game| game.id == game_id)
+            .ok_or(StoreError::GameNotFound)
+    }
 }
 
 fn mark_expired_offline(
@@ -323,6 +468,7 @@ enum HeartbeatRejection {
 #[derive(Debug)]
 pub enum StoreError {
     NotFound,
+    GameNotFound,
     StaleHeartbeat,
     HeartbeatSequenceConflict,
     Database(String),
@@ -356,6 +502,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => write!(formatter, "runtime host was not found"),
+            Self::GameNotFound => write!(formatter, "catalog game was not found"),
             Self::StaleHeartbeat => write!(formatter, "heartbeat sequence is stale"),
             Self::HeartbeatSequenceConflict => write!(formatter, "heartbeat sequence conflicts"),
             Self::Database(message) => write!(formatter, "database error: {message}"),

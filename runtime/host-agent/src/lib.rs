@@ -1,10 +1,13 @@
 use std::{env, fs, future::Future, path::Path, process::Command, time::Duration};
 
 use control_protocol::{
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostHeartbeat,
+    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    RuntimeHostHeartbeat,
 };
 use reqwest::Client;
 use tokio::time::{MissedTickBehavior, interval};
+
+pub mod catalog;
 
 pub const DEFAULT_CONTROL_PLANE_URL: &str = "http://127.0.0.1:8080";
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -58,6 +61,7 @@ pub struct RuntimeHostAgent {
     client: Client,
     config: AgentConfig,
     registration: RegisterRuntimeHost,
+    catalog: Option<RuntimeHostCatalog>,
 }
 
 impl RuntimeHostAgent {
@@ -71,7 +75,13 @@ impl RuntimeHostAgent {
             client: Client::new(),
             config,
             registration,
+            catalog: None,
         }
+    }
+
+    pub fn with_catalog(mut self, catalog: RuntimeHostCatalog) -> Self {
+        self.catalog = Some(catalog);
+        self
     }
 
     pub fn config(&self) -> &AgentConfig {
@@ -111,6 +121,21 @@ impl RuntimeHostAgent {
             .await
     }
 
+    pub async fn publish_catalog(&self) -> Result<Option<RuntimeHostCatalog>, reqwest::Error> {
+        let Some(catalog) = &self.catalog else {
+            return Ok(None);
+        };
+        self.client
+            .put(format!("{}/catalog", self.runtime_host_url()))
+            .json(catalog)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map(Some)
+    }
+
     pub async fn run_until<F>(&self, shutdown: F)
     where
         F: Future<Output = ()>,
@@ -145,6 +170,18 @@ impl RuntimeHostAgent {
                                     "Runtime host registered: id={} control_plane={}",
                                     host.id, self.config.control_plane_url
                                 );
+                                match self.publish_catalog().await {
+                                    Ok(Some(catalog)) => println!(
+                                        "Runtime catalog published: host={} games={}",
+                                        host.id,
+                                        catalog.games.len()
+                                    ),
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        eprintln!("Runtime catalog publication failed: {error}; retrying");
+                                        continue;
+                                    }
+                                }
                                 next_sequence = Some(host.heartbeat_sequence.saturating_add(1));
                             }
                             Err(error) => {
@@ -246,6 +283,14 @@ fn parse_available_encoders(listing: &str) -> Vec<String> {
 }
 
 fn discover_emulator_adapters() -> Vec<String> {
+    if configured_mame_path().is_some() {
+        vec!["mame".to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
+pub fn configured_mame_path() -> Option<String> {
     let configured_path = env::var("FOURPLAY_MAME_PATH").ok();
     let candidates = configured_path
         .as_deref()
@@ -260,17 +305,20 @@ fn discover_emulator_adapters() -> Vec<String> {
                 .output()
                 .is_ok_and(|output| output.status.success())
         {
-            return vec!["mame".to_owned()];
+            return Some(candidate.to_owned());
         }
     }
-    Vec::new()
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use control_protocol::{RuntimeHostCapabilities, RuntimeHostList};
+    use control_protocol::{
+        CatalogGameList, DiscoveredGame, GameRuntimeProfile, RuntimeHostCapabilities,
+        RuntimeHostCatalog, RuntimeHostList,
+    };
     use tokio::net::TcpListener;
 
     use super::{AgentConfig, RuntimeHostAgent, parse_available_encoders, parse_mem_total_bytes};
@@ -317,10 +365,30 @@ mod tests {
                 encoder_names: vec!["libx264".to_owned()],
                 emulator_adapters: vec!["mame".to_owned()],
             },
-        );
+        )
+        .with_catalog(RuntimeHostCatalog {
+            games: vec![DiscoveredGame {
+                id: "tmnt".to_owned(),
+                display_name: "Teenage Mutant Ninja Turtles".to_owned(),
+                rom_name: "tmnt".to_owned(),
+                profile: GameRuntimeProfile {
+                    width: 320,
+                    height: 224,
+                    refresh_hz: 60.0,
+                    rotation_degrees: 0,
+                    max_players: 4,
+                    buttons_per_player: 2,
+                    supports_save_state: true,
+                },
+            }],
+        });
 
         let registered = agent.register().await.unwrap();
         assert_eq!(registered.id, "test-linux");
+        assert_eq!(
+            agent.publish_catalog().await.unwrap().unwrap().games.len(),
+            1
+        );
         agent.heartbeat(5, 2).await.unwrap();
         let refreshed = agent.register().await.unwrap();
         assert_eq!(refreshed.heartbeat_sequence, 5);
@@ -338,6 +406,14 @@ mod tests {
             .unwrap();
         assert_eq!(hosts.hosts.len(), 1);
         assert_eq!(hosts.hosts[0].active_session_count, 1);
+        let games = reqwest::get(format!("http://{address}/api/v1/games"))
+            .await
+            .unwrap()
+            .json::<CatalogGameList>()
+            .await
+            .unwrap();
+        assert_eq!(games.games.len(), 1);
+        assert_eq!(games.games[0].availability[0].profile.width, 320);
 
         server.abort();
     }

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "games": [
+    {
+      "id": "aliens",
+      "rom_name": "aliens"
+    },
+    {
+      "id": "kinst",
+      "rom_name": "kinst"
+    },
+    {
+      "id": "tmnt",
+      "rom_name": "tmnt"
+    },
+    {
+      "id": "wwfmania",
+      "rom_name": "wwfmania"
+    }
+  ]
+}

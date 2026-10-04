@@ -141,6 +141,11 @@ if wait_for_log "$agent_log" 'Heartbeat accepted: host=reference-linux-smoke seq
 else
     fail "agent sends recurring sequenced heartbeats"
 fi
+if wait_for_log "$agent_log" 'Runtime catalog published: host=reference-linux-smoke games=4'; then
+    pass "agent verifies and publishes the four-title test catalog"
+else
+    fail "agent verifies and publishes the four-title test catalog"
+fi
 
 if curl -fsS "$base_url/api/v1/runtime-hosts/$host_id" >"$host_json"; then
     pass "registered host is available through lookup"
@@ -182,6 +187,33 @@ if grep -Fq '"id":"reference-linux-smoke"' "$hosts_json"; then
     pass "host listing contains the registered identity"
 else
     fail "host listing contains the registered identity"
+fi
+
+games_json="$results_directory/games.json"
+tmnt_json="$results_directory/tmnt.json"
+kinst_json="$results_directory/kinst.json"
+if curl -fsS "$base_url/api/v1/games" >"$games_json" \
+    && [[ "$(grep -o '"id":"' "$games_json" | wc -l)" -eq 4 ]]; then
+    pass "control plane exposes four catalog games"
+else
+    fail "control plane exposes four catalog games"
+fi
+if curl -fsS "$base_url/api/v1/games/tmnt" >"$tmnt_json" \
+    && grep -Fq '"width":320' "$tmnt_json" \
+    && grep -Fq '"height":224' "$tmnt_json" \
+    && grep -Fq '"refresh_hz":60.0' "$tmnt_json" \
+    && grep -Fq '"max_players":4' "$tmnt_json"; then
+    pass "TMNT profile is derived from native MAME metadata"
+else
+    fail "TMNT profile is derived from native MAME metadata"
+fi
+if curl -fsS "$base_url/api/v1/games/kinst" >"$kinst_json" \
+    && grep -Fq '"width":320' "$kinst_json" \
+    && grep -Fq '"height":240' "$kinst_json" \
+    && grep -Fq '"buttons_per_player":6' "$kinst_json"; then
+    pass "Killer Instinct profile includes native dimensions and six buttons"
+else
+    fail "Killer Instinct profile includes native dimensions and six buttons"
 fi
 
 terminate_process "$agent_pid"

@@ -76,6 +76,50 @@ pub struct RuntimeHostList {
     pub hosts: Vec<RuntimeHost>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GameRuntimeProfile {
+    pub width: u32,
+    pub height: u32,
+    pub refresh_hz: f64,
+    pub rotation_degrees: u16,
+    pub max_players: u32,
+    pub buttons_per_player: u32,
+    pub supports_save_state: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveredGame {
+    pub id: String,
+    pub display_name: String,
+    pub rom_name: String,
+    pub profile: GameRuntimeProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeHostCatalog {
+    pub games: Vec<DiscoveredGame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GameAvailability {
+    pub runtime_host_id: String,
+    pub runtime_host_status: RuntimeHostStatus,
+    pub profile: GameRuntimeProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogGame {
+    pub id: String,
+    pub display_name: String,
+    pub rom_name: String,
+    pub availability: Vec<GameAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogGameList {
+    pub games: Vec<CatalogGame>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub code: String,

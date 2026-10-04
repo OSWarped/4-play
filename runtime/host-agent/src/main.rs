@@ -1,12 +1,24 @@
-use std::error::Error;
+use std::{env, error::Error};
 
-use runtime_host_agent::{AgentConfig, RuntimeHostAgent, discover_capabilities};
+use runtime_host_agent::{
+    AgentConfig, RuntimeHostAgent, catalog::discover_catalog, configured_mame_path,
+    discover_capabilities,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let config = AgentConfig::from_environment().map_err(std::io::Error::other)?;
     let capabilities = discover_capabilities();
-    let agent = RuntimeHostAgent::new(config, capabilities);
+    let mame_path = configured_mame_path()
+        .ok_or_else(|| std::io::Error::other("MAME is required for catalog discovery"))?;
+    let catalog_path = env::var("FOURPLAY_CATALOG_PATH")
+        .unwrap_or_else(|_| "catalog/test-catalog.json".to_owned());
+    let mame_ini_path = env::var("FOURPLAY_MAME_INI_PATH")
+        .ok()
+        .or_else(|| cfg!(unix).then(|| "/opt/4play/config/mame".to_owned()));
+    let catalog = discover_catalog(&catalog_path, &mame_path, mame_ini_path.as_deref())
+        .map_err(std::io::Error::other)?;
+    let agent = RuntimeHostAgent::new(config, capabilities).with_catalog(catalog);
 
     println!(
         "4-Play runtime host agent starting: id={} control_plane={}",
