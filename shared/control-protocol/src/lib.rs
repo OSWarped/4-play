@@ -159,6 +159,29 @@ pub struct SessionList {
     pub sessions: Vec<Session>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeSessionAssignment {
+    pub session_id: String,
+    pub game_id: String,
+    pub rom_name: String,
+    pub destination_address: String,
+    pub media_udp_port: u16,
+    pub input_udp_port: u16,
+    pub runtime_profile: GameRuntimeProfile,
+    pub state: SessionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeSessionAssignmentList {
+    pub sessions: Vec<RuntimeSessionAssignment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateSessionState {
+    pub state: SessionState,
+    pub failure_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub code: String,

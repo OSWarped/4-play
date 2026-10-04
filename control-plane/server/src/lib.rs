@@ -16,7 +16,8 @@ use axum::{
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, ErrorResponse,
     RegisterRuntimeHost, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList,
-    ServiceStatus, Session, SessionList, StatusResponse,
+    RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList, StatusResponse,
+    UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -81,6 +82,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
+            "/api/v1/sessions/{session_id}/stop",
+            post(request_session_stop),
+        )
+        .route(
             "/api/v1/runtime-hosts/{host_id}",
             get(get_runtime_host).put(register_runtime_host),
         )
@@ -91,6 +96,14 @@ pub fn app_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/runtime-hosts/{host_id}/catalog",
             axum::routing::put(replace_runtime_host_catalog),
+        )
+        .route(
+            "/api/v1/runtime-hosts/{host_id}/sessions",
+            get(list_runtime_assignments),
+        )
+        .route(
+            "/api/v1/runtime-hosts/{host_id}/sessions/{session_id}/state",
+            axum::routing::put(update_runtime_session_state),
         )
         .with_state(state)
 }
@@ -246,6 +259,59 @@ async fn get_session(
     state
         .runtime_hosts
         .get_session(session_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn request_session_stop(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Session>, ApiError> {
+    state
+        .runtime_hosts
+        .request_session_stop(session_id, unix_time_ms())
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn list_runtime_assignments(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<String>,
+) -> Result<Json<RuntimeSessionAssignmentList>, ApiError> {
+    state
+        .runtime_hosts
+        .list_runtime_assignments(host_id)
+        .await
+        .map(|sessions| Json(RuntimeSessionAssignmentList { sessions }))
+        .map_err(ApiError::store)
+}
+
+async fn update_runtime_session_state(
+    State(state): State<AppState>,
+    AxumPath((host_id, session_id)): AxumPath<(String, String)>,
+    Json(update): Json<UpdateSessionState>,
+) -> Result<Json<Session>, ApiError> {
+    if update
+        .failure_reason
+        .as_ref()
+        .is_some_and(|reason| reason.len() > 1_024)
+    {
+        return Err(ApiError::bad_request(
+            "failure_reason_too_long",
+            "failure reason must not exceed 1024 bytes",
+        ));
+    }
+    state
+        .runtime_hosts
+        .update_session_state(
+            host_id,
+            session_id,
+            update.state,
+            update.failure_reason,
+            unix_time_ms(),
+        )
         .await
         .map(Json)
         .map_err(ApiError::store)
@@ -426,6 +492,26 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "runtime_host_address_unavailable",
                 "runtime host did not advertise a usable data-plane address",
+            ),
+            StoreError::WrongRuntimeHost => Self::new(
+                StatusCode::CONFLICT,
+                "session_runtime_host_conflict",
+                "session belongs to another runtime host",
+            ),
+            StoreError::InvalidSessionTransition => Self::new(
+                StatusCode::CONFLICT,
+                "invalid_session_transition",
+                "session state transition is invalid",
+            ),
+            StoreError::MissingFailureReason => Self::new(
+                StatusCode::BAD_REQUEST,
+                "missing_failure_reason",
+                "failure state requires a nonempty reason",
+            ),
+            StoreError::ConflictingStateRetry => Self::new(
+                StatusCode::CONFLICT,
+                "conflicting_state_retry",
+                "state retry conflicts with the stored failure reason",
             ),
             StoreError::StaleHeartbeat => Self::new(
                 StatusCode::CONFLICT,
@@ -965,12 +1051,12 @@ mod tests {
         let expiry_directory = tempfile::tempdir().unwrap();
         let expiring = app_with_database(
             expiry_directory.path().join("control-plane.sqlite3"),
-            Duration::from_millis(5),
+            Duration::from_millis(100),
         )
         .await
         .unwrap();
         register_host_and_catalog(&expiring).await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
         let (unavailable_status, unavailable) = request_json(
             expiring,
             Method::POST,
@@ -980,6 +1066,129 @@ mod tests {
         .await;
         assert_eq!(unavailable_status, 503);
         assert_eq!(unavailable["code"], "catalog_game_unavailable");
+    }
+
+    #[tokio::test]
+    async fn runtime_host_drives_versioned_session_lifecycle_and_stop_is_idempotent() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+
+        let (assignments_status, assignments) = request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux/sessions",
+            None,
+        )
+        .await;
+        assert_eq!(assignments_status, 200);
+        assert_eq!(assignments["sessions"][0]["session_id"], session_id);
+        assert_eq!(assignments["sessions"][0]["rom_name"], "tmnt");
+        assert_eq!(assignments["sessions"][0]["state"], "allocating");
+
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for expected in ["starting", "ready", "active"] {
+            let (status, session) = request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({ "state": expected, "failure_reason": null })),
+            )
+            .await;
+            assert_eq!(status, 200);
+            assert_eq!(session["state"], expected);
+        }
+        let (retry_status, retried) = request_json(
+            service.clone(),
+            Method::PUT,
+            &state_path,
+            Some(json!({ "state": "active", "failure_reason": null })),
+        )
+        .await;
+        assert_eq!(retry_status, 200);
+        assert_eq!(retried["state"], "active");
+
+        let (invalid_status, invalid) = request_json(
+            service.clone(),
+            Method::PUT,
+            &state_path,
+            Some(json!({ "state": "ready", "failure_reason": null })),
+        )
+        .await;
+        assert_eq!(invalid_status, 409);
+        assert_eq!(invalid["code"], "invalid_session_transition");
+
+        let stop_path = format!("/api/v1/sessions/{session_id}/stop");
+        let (stop_status, stopping) =
+            request_json(service.clone(), Method::POST, &stop_path, None).await;
+        assert_eq!(stop_status, 200);
+        assert_eq!(stopping["state"], "stopping");
+        let (_, stopping_retry) =
+            request_json(service.clone(), Method::POST, &stop_path, None).await;
+        assert_eq!(stopping_retry["state"], "stopping");
+
+        let (_, stopped) = request_json(
+            service.clone(),
+            Method::PUT,
+            &state_path,
+            Some(json!({ "state": "stopped", "failure_reason": null })),
+        )
+        .await;
+        assert_eq!(stopped["state"], "stopped");
+        let (_, assignments_after_stop) = request_json(
+            service,
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux/sessions",
+            None,
+        )
+        .await;
+        assert!(
+            assignments_after_stop["sessions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn host_expiry_marks_assigned_sessions_runtime_lost() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux",
+            None,
+        )
+        .await;
+        let session_path = format!("/api/v1/sessions/{session_id}");
+        let (_, lost) = request_json(service, Method::GET, &session_path, None).await;
+        assert_eq!(lost["state"], "runtime_lost");
+        assert_eq!(lost["failure_reason"], "runtime host heartbeat expired");
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
     RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
-    RuntimeHostHeartbeat, RuntimeHostStatus, Session, SessionState,
+    RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -66,6 +66,8 @@ const SCHEMA: &str = "
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 ";
+
+type AssignmentRow = (String, String, String, String, i64, i64, String, String);
 
 #[derive(Clone)]
 pub struct RuntimeHostStore {
@@ -238,10 +240,11 @@ impl RuntimeHostStore {
             now_unix_ms.saturating_sub(offline_after_ms),
             "offline cutoff",
         )?;
+        let now = to_sql_integer(now_unix_ms, "current timestamp")?;
         let stored = self
             .connection
             .call(move |connection| {
-                mark_expired_offline(connection, cutoff)?;
+                mark_expired_offline(connection, cutoff, now)?;
                 connection
                     .query_row(
                         "SELECT id, display_name, agent_version, capabilities_json,
@@ -268,10 +271,11 @@ impl RuntimeHostStore {
             now_unix_ms.saturating_sub(offline_after_ms),
             "offline cutoff",
         )?;
+        let now = to_sql_integer(now_unix_ms, "current timestamp")?;
         let stored = self
             .connection
             .call(move |connection| {
-                mark_expired_offline(connection, cutoff)?;
+                mark_expired_offline(connection, cutoff, now)?;
                 let mut statement = connection.prepare(
                     "SELECT id, display_name, agent_version, capabilities_json,
                             status, last_seen_unix_ms, heartbeat_sequence,
@@ -354,10 +358,11 @@ impl RuntimeHostStore {
             now_unix_ms.saturating_sub(offline_after_ms),
             "offline cutoff",
         )?;
+        let now = to_sql_integer(now_unix_ms, "current timestamp")?;
         let rows = self
             .connection
             .call(move |connection| {
-                mark_expired_offline(connection, cutoff)?;
+                mark_expired_offline(connection, cutoff, now)?;
                 let mut statement = connection.prepare(
                     "SELECT g.id, g.display_name, g.rom_name, rp.runtime_host_id,
                             h.status, rp.profile_json
@@ -445,7 +450,7 @@ impl RuntimeHostStore {
             .connection
             .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, AllocationRejection>> {
                 let transaction = connection.transaction()?;
-                mark_expired_offline(&transaction, cutoff)?;
+                mark_expired_offline(&transaction, cutoff, now)?;
 
                 let seat_busy = transaction.query_row(
                     "SELECT EXISTS(
@@ -595,6 +600,204 @@ impl RuntimeHostStore {
             .map(StoredSession::into_session)
             .collect()
     }
+
+    pub async fn list_runtime_assignments(
+        &self,
+        runtime_host_id: String,
+    ) -> Result<Vec<RuntimeSessionAssignment>, StoreError> {
+        let rows = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Option<Vec<AssignmentRow>>> {
+                let host_exists = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_hosts WHERE id = ?1)",
+                    [&runtime_host_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if !host_exists {
+                    return Ok(None);
+                }
+                let mut statement = connection.prepare(
+                    "SELECT s.id, s.game_id, g.rom_name, s.destination_address,
+                            s.media_udp_port, s.input_udp_port, s.runtime_profile_json, s.state
+                     FROM sessions s
+                     JOIN games g ON g.id = s.game_id
+                     WHERE s.runtime_host_id = ?1
+                       AND s.state NOT IN
+                           ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                     ORDER BY s.created_unix_ms, s.id",
+                )?;
+                let sessions = statement
+                    .query_map([runtime_host_id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, i64>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, String>(7)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                    Ok(Some(sessions))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::NotFound)?;
+        rows.into_iter()
+            .map(
+                |(
+                    session_id,
+                    game_id,
+                    rom_name,
+                    destination_address,
+                    media,
+                    input,
+                    profile,
+                    state,
+                )| {
+                    Ok(RuntimeSessionAssignment {
+                        session_id,
+                        game_id,
+                        rom_name,
+                        destination_address,
+                        media_udp_port: u16::try_from(media).map_err(|_| {
+                            StoreError::data("media UDP port is outside the supported range")
+                        })?,
+                        input_udp_port: u16::try_from(input).map_err(|_| {
+                            StoreError::data("input UDP port is outside the supported range")
+                        })?,
+                        runtime_profile: serde_json::from_str(&profile)
+                            .map_err(StoreError::serialization)?,
+                        state: parse_session_state(&state)?,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    pub async fn update_session_state(
+        &self,
+        runtime_host_id: String,
+        session_id: String,
+        next_state: SessionState,
+        failure_reason: Option<String>,
+        now_unix_ms: u64,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "session timestamp")?;
+        let next_state_name = session_state_name(next_state);
+        let stored = self
+            .connection
+            .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, StateUpdateRejection>> {
+                let transaction = connection.transaction()?;
+                let current = transaction
+                    .query_row(
+                        "SELECT runtime_host_id, state, failure_reason FROM sessions WHERE id = ?1",
+                        [&session_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
+                    )
+                    .optional()?;
+                let Some((assigned_host_id, current_state_name, current_failure)) = current else {
+                    return Ok(Err(StateUpdateRejection::SessionNotFound));
+                };
+                if assigned_host_id != runtime_host_id {
+                    return Ok(Err(StateUpdateRejection::WrongRuntimeHost));
+                }
+                let current_state = match parse_session_state(&current_state_name) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(StateUpdateRejection::InvalidStoredState)),
+                };
+                if current_state == next_state {
+                    if current_failure != failure_reason {
+                        return Ok(Err(StateUpdateRejection::ConflictingRetry));
+                    }
+                } else {
+                    if !valid_runtime_transition(current_state, next_state) {
+                        return Ok(Err(StateUpdateRejection::InvalidTransition));
+                    }
+                    if is_failure_state(next_state)
+                        && failure_reason.as_deref().is_none_or(|reason| reason.trim().is_empty())
+                    {
+                        return Ok(Err(StateUpdateRejection::MissingFailureReason));
+                    }
+                    transaction.execute(
+                        "UPDATE sessions SET state = ?2, updated_unix_ms = ?3, failure_reason = ?4
+                         WHERE id = ?1",
+                        params![session_id, next_state_name, now, failure_reason],
+                    )?;
+                    transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![session_id, next_state_name, now, failure_reason],
+                    )?;
+                }
+                let stored = transaction.query_row(
+                    &session_select_sql("WHERE id = ?1"),
+                    [&session_id],
+                    StoredSession::from_row,
+                )?;
+                transaction.commit()?;
+                Ok(Ok(stored))
+            })
+            .await
+            .map_err(StoreError::database)?
+            .map_err(StoreError::from_state_update_rejection)?;
+        stored.into_session()
+    }
+
+    pub async fn request_session_stop(
+        &self,
+        session_id: String,
+        now_unix_ms: u64,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "session timestamp")?;
+        let stored = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Option<StoredSession>> {
+                    let transaction = connection.transaction()?;
+                    let state = transaction
+                        .query_row(
+                            "SELECT state FROM sessions WHERE id = ?1",
+                            [&session_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?;
+                    let Some(state) = state else {
+                        return Ok(None);
+                    };
+                    let parsed = parse_session_state(&state).map_err(|error| {
+                        tokio_rusqlite::rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+                    })?;
+                    if !parsed.is_terminal() && parsed != SessionState::Stopping {
+                        transaction.execute(
+                            "UPDATE sessions SET state = 'stopping', updated_unix_ms = ?2,
+                         failure_reason = NULL WHERE id = ?1",
+                            params![session_id, now],
+                        )?;
+                        transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                         VALUES (?1, 'stopping', ?2, 'stop requested')",
+                        params![session_id, now],
+                    )?;
+                    }
+                    let stored = transaction.query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )?;
+                    transaction.commit()?;
+                    Ok(Some(stored))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::SessionNotFound)?;
+        stored.into_session()
+    }
 }
 
 fn session_select_sql(suffix: &str) -> String {
@@ -610,7 +813,29 @@ fn session_select_sql(suffix: &str) -> String {
 fn mark_expired_offline(
     connection: &tokio_rusqlite::rusqlite::Connection,
     cutoff: i64,
+    now: i64,
 ) -> tokio_rusqlite::rusqlite::Result<()> {
+    connection.execute(
+        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+         SELECT s.id, 'runtime_lost', ?2, 'runtime host heartbeat expired'
+         FROM sessions s
+         JOIN runtime_hosts h ON h.id = s.runtime_host_id
+         WHERE h.status = 'online' AND h.last_seen_unix_ms < ?1
+           AND s.state NOT IN
+               ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')",
+        params![cutoff, now],
+    )?;
+    connection.execute(
+        "UPDATE sessions
+         SET state = 'runtime_lost', updated_unix_ms = ?2,
+             failure_reason = 'runtime host heartbeat expired'
+         WHERE runtime_host_id IN (
+             SELECT id FROM runtime_hosts
+             WHERE status = 'online' AND last_seen_unix_ms < ?1
+         ) AND state NOT IN
+             ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')",
+        params![cutoff, now],
+    )?;
     connection.execute(
         "UPDATE runtime_hosts SET status = 'offline'
          WHERE status = 'online' AND last_seen_unix_ms < ?1",
@@ -758,6 +983,61 @@ fn parse_session_state(state: &str) -> Result<SessionState, StoreError> {
     }
 }
 
+fn session_state_name(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Requested => "requested",
+        SessionState::Allocating => "allocating",
+        SessionState::Starting => "starting",
+        SessionState::Ready => "ready",
+        SessionState::Active => "active",
+        SessionState::Stopping => "stopping",
+        SessionState::Stopped => "stopped",
+        SessionState::AllocationFailed => "allocation_failed",
+        SessionState::LaunchFailed => "launch_failed",
+        SessionState::RuntimeLost => "runtime_lost",
+        SessionState::Unhealthy => "unhealthy",
+        SessionState::Terminated => "terminated",
+    }
+}
+
+fn valid_runtime_transition(current: SessionState, next: SessionState) -> bool {
+    matches!(
+        (current, next),
+        (SessionState::Allocating, SessionState::Starting)
+            | (SessionState::Allocating, SessionState::Stopping)
+            | (SessionState::Allocating, SessionState::AllocationFailed)
+            | (SessionState::Starting, SessionState::Ready)
+            | (SessionState::Starting, SessionState::Active)
+            | (SessionState::Starting, SessionState::Stopping)
+            | (SessionState::Starting, SessionState::LaunchFailed)
+            | (SessionState::Starting, SessionState::RuntimeLost)
+            | (SessionState::Ready, SessionState::Active)
+            | (SessionState::Ready, SessionState::Stopping)
+            | (SessionState::Ready, SessionState::RuntimeLost)
+            | (SessionState::Active, SessionState::Stopping)
+            | (SessionState::Active, SessionState::RuntimeLost)
+            | (SessionState::Active, SessionState::Unhealthy)
+            | (SessionState::Unhealthy, SessionState::Active)
+            | (SessionState::Unhealthy, SessionState::Stopping)
+            | (SessionState::Unhealthy, SessionState::RuntimeLost)
+            | (SessionState::Unhealthy, SessionState::Terminated)
+            | (SessionState::Stopping, SessionState::Stopped)
+            | (SessionState::Stopping, SessionState::RuntimeLost)
+            | (SessionState::Stopping, SessionState::Terminated)
+    )
+}
+
+fn is_failure_state(state: SessionState) -> bool {
+    matches!(
+        state,
+        SessionState::AllocationFailed
+            | SessionState::LaunchFailed
+            | SessionState::RuntimeLost
+            | SessionState::Unhealthy
+            | SessionState::Terminated
+    )
+}
+
 fn to_sql_integer(value: u64, field: &str) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::data(format!("{field} is too large for SQLite")))
 }
@@ -781,6 +1061,15 @@ enum AllocationRejection {
     MissingDataPlaneAddress,
 }
 
+enum StateUpdateRejection {
+    SessionNotFound,
+    WrongRuntimeHost,
+    InvalidStoredState,
+    InvalidTransition,
+    MissingFailureReason,
+    ConflictingRetry,
+}
+
 #[derive(Debug)]
 pub enum StoreError {
     NotFound,
@@ -790,6 +1079,10 @@ pub enum StoreError {
     SeatBusy,
     PortsExhausted,
     MissingDataPlaneAddress,
+    WrongRuntimeHost,
+    InvalidSessionTransition,
+    MissingFailureReason,
+    ConflictingStateRetry,
     StaleHeartbeat,
     HeartbeatSequenceConflict,
     Database(String),
@@ -830,6 +1123,17 @@ impl StoreError {
             AllocationRejection::MissingDataPlaneAddress => Self::MissingDataPlaneAddress,
         }
     }
+
+    fn from_state_update_rejection(rejection: StateUpdateRejection) -> Self {
+        match rejection {
+            StateUpdateRejection::SessionNotFound => Self::SessionNotFound,
+            StateUpdateRejection::WrongRuntimeHost => Self::WrongRuntimeHost,
+            StateUpdateRejection::InvalidStoredState => Self::data("session has an unknown state"),
+            StateUpdateRejection::InvalidTransition => Self::InvalidSessionTransition,
+            StateUpdateRejection::MissingFailureReason => Self::MissingFailureReason,
+            StateUpdateRejection::ConflictingRetry => Self::ConflictingStateRetry,
+        }
+    }
 }
 
 impl fmt::Display for StoreError {
@@ -845,6 +1149,14 @@ impl fmt::Display for StoreError {
             }
             Self::MissingDataPlaneAddress => {
                 write!(formatter, "runtime host has no data-plane address")
+            }
+            Self::WrongRuntimeHost => write!(formatter, "session belongs to another runtime host"),
+            Self::InvalidSessionTransition => {
+                write!(formatter, "session state transition is invalid")
+            }
+            Self::MissingFailureReason => write!(formatter, "failure state requires a reason"),
+            Self::ConflictingStateRetry => {
+                write!(formatter, "state retry conflicts with stored details")
             }
             Self::StaleHeartbeat => write!(formatter, "heartbeat sequence is stale"),
             Self::HeartbeatSequenceConflict => write!(formatter, "heartbeat sequence conflicts"),
