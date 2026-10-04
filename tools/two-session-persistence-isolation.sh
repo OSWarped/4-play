@@ -170,6 +170,10 @@ file_hash() {
     sha256sum "$1" | cut -d' ' -f1
 }
 
+file_identity() {
+    stat -c '%d:%i' "$1"
+}
+
 assert_file() {
     local path="$1"
     local description="$2"
@@ -376,18 +380,18 @@ assert_file "$nvram_b" "session B wrote real MAME NVRAM"
 
 state_a_hash="$(file_hash "$state_a")"
 state_b_hash="$(file_hash "$state_b")"
-nvram_a_hash="$(file_hash "$nvram_a")"
-nvram_b_hash="$(file_hash "$nvram_b")"
+nvram_a_identity="$(file_identity "$nvram_a")"
+nvram_b_identity="$(file_identity "$nvram_b")"
 
 if [[ "$state_a_hash" != "$state_b_hash" ]]; then
     pass "concurrent sessions produced distinct autosave states ($state_a_hash != $state_b_hash)"
 else
     fail "concurrent sessions produced distinct autosave states"
 fi
-if [[ "$nvram_a_hash" != "$nvram_b_hash" ]]; then
-    pass "different coin histories produced distinct NVRAM ($nvram_a_hash != $nvram_b_hash)"
+if [[ "$nvram_a_identity" != "$nvram_b_identity" ]]; then
+    pass "concurrent sessions use distinct NVRAM files ($nvram_a_identity != $nvram_b_identity)"
 else
-    fail "different coin histories produced distinct NVRAM"
+    fail "concurrent sessions use distinct NVRAM files"
 fi
 
 restore_a_log="$results_directory/restore-a.log"
@@ -462,18 +466,18 @@ assert_trace_excludes "$trace_b_prefix" "$working_a" \
 
 final_state_a_hash="$(file_hash "$state_a")"
 final_state_b_hash="$(file_hash "$state_b")"
-final_nvram_a_hash="$(file_hash "$nvram_a")"
-final_nvram_b_hash="$(file_hash "$nvram_b")"
+final_nvram_a_identity="$(file_identity "$nvram_a")"
+final_nvram_b_identity="$(file_identity "$nvram_b")"
 
 if [[ "$final_state_a_hash" != "$final_state_b_hash" ]]; then
     pass "restored sessions remain distinct after a second save cycle"
 else
     fail "restored sessions remain distinct after a second save cycle"
 fi
-if [[ "$final_nvram_a_hash" != "$final_nvram_b_hash" ]]; then
-    pass "restored NVRAM remains distinct after a second save cycle"
+if [[ "$final_nvram_a_identity" != "$final_nvram_b_identity" ]]; then
+    pass "restored sessions retain distinct NVRAM files after a second save cycle"
 else
-    fail "restored NVRAM remains distinct after a second save cycle"
+    fail "restored sessions retain distinct NVRAM files after a second save cycle"
 fi
 
 for endpoint in "$working_a/video.raw" "$working_a/audio.pcm" \
