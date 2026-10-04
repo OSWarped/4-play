@@ -378,6 +378,19 @@ else
     fail "session B MAME explicitly loads its controller profile"
 fi
 
+for process_record in \
+    "session A:$mame_a_pid" \
+    "session B:$mame_b_pid"; do
+    label="${process_record%%:*}"
+    pid="${process_record#*:}"
+    if [[ -n "$pid" ]] && tr '\0' ' ' <"/proc/$pid/cmdline" | \
+        grep -Fq -- "-joystick -joystickprovider sdljoy"; then
+        pass "$label MAME enumerates generic virtual joysticks"
+    else
+        fail "$label MAME enumerates generic virtual joysticks"
+    fi
+done
+
 if wait_for_log "$results_directory/runtime-a.log" "video_frames=[1-9]" 20; then
     pass "session A is producing video"
 else

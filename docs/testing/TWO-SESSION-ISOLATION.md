@@ -112,6 +112,9 @@ The runtime now:
 - maps only that controller's stable device-ID substring to `JOYCODE_1`
 - supplies explicit direction, six-action, coin, and start mappings
 - launches MAME with the session's `-ctrlrpath` and `-ctrlr 4play-session`
+- enables joystick input with MAME's `sdljoy` provider so dynamically created
+  uinput devices are enumerated even though they are not present in SDL's
+  game-controller mapping database
 
 The strengthened automated harness passed on 2026-10-04. It verified that the
 two generated profiles contained different device IDs, both MAME commands
