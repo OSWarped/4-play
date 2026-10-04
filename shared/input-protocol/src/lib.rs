@@ -2,14 +2,25 @@ pub const PACKET_SIZE: usize = 17;
 pub const FLAG_STOP: u8 = 1;
 
 pub mod button {
-    pub const SOUTH: u16 = 1 << 0;
-    pub const EAST: u16 = 1 << 1;
-    pub const NORTH: u16 = 1 << 2;
-    pub const WEST: u16 = 1 << 3;
-    pub const LEFT_SHOULDER: u16 = 1 << 4;
-    pub const RIGHT_SHOULDER: u16 = 1 << 5;
+    // Six arcade action buttons
+    pub const ACTION_1: u16 = 1 << 0;
+    pub const ACTION_2: u16 = 1 << 1;
+    pub const ACTION_3: u16 = 1 << 2;
+    pub const ACTION_4: u16 = 1 << 3;
+    pub const ACTION_5: u16 = 1 << 4;
+    pub const ACTION_6: u16 = 1 << 5;
+
+    // Arcade system buttons
     pub const COIN: u16 = 1 << 6;
     pub const START: u16 = 1 << 7;
+
+    // Optional aliases for gamepad-style clients
+    pub const SOUTH: u16 = ACTION_1;
+    pub const EAST: u16 = ACTION_2;
+    pub const NORTH: u16 = ACTION_3;
+    pub const WEST: u16 = ACTION_4;
+    pub const LEFT_SHOULDER: u16 = ACTION_5;
+    pub const RIGHT_SHOULDER: u16 = ACTION_6;
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

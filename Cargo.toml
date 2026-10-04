@@ -3,7 +3,9 @@ resolver = "2"
 
 members = [
     "clients/seat-input",
+    "control-plane/server",
     "runtime/session-runtime",
+    "shared/control-protocol",
     "shared/input-protocol",
     "tools/input-inject",
     "tools/uinput-test",
