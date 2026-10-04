@@ -1,11 +1,15 @@
 use evdev::uinput::VirtualDevice;
 use evdev::{
-    AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup,
+    AbsInfo, AbsoluteAxisCode, AttributeSet, BusType, EventType, InputEvent, InputId, KeyCode,
+    UinputAbsSetup,
 };
 use input_protocol::{ControllerState, button};
+use std::ffi::CString;
 use std::io;
 use std::thread;
 use std::time::Duration;
+
+const CONTROLLER_VENDOR_BASE: u16 = 0x1200;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ControllerButton {
@@ -25,7 +29,7 @@ pub struct VirtualController {
 }
 
 impl VirtualController {
-    pub fn create(player_number: u8) -> io::Result<Self> {
+    pub fn create(session_id: u32, player_number: u8) -> io::Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
         for key in [
             KeyCode::BTN_SOUTH,
@@ -42,16 +46,24 @@ impl VirtualController {
 
         let abs_x = UinputAbsSetup::new(AbsoluteAxisCode::ABS_X, AbsInfo::new(0, -1, 1, 0, 0, 0));
         let abs_y = UinputAbsSetup::new(AbsoluteAxisCode::ABS_Y, AbsInfo::new(0, -1, 1, 0, 0, 0));
-        let name = format!("4-Play Player {player_number}");
+        let name = format!("4-Play Session {session_id} Player {player_number}");
+        let physical_path =
+            CString::new(format!("4play/session-{session_id}/player-{player_number}"))
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
         let device = VirtualDevice::builder()?
             .name(&name)
+            .input_id(controller_input_id(session_id, player_number))
+            .with_phys(&physical_path)?
             .with_keys(&keys)?
             .with_absolute_axis(&abs_x)?
             .with_absolute_axis(&abs_y)?
             .build()?;
 
-        println!("Created virtual controller: {name}");
+        println!(
+            "Created virtual controller: {name} device_id_match={}",
+            mame_device_id_match(session_id, player_number)
+        );
         Ok(Self {
             device,
             state: ControllerState::default(),
@@ -167,6 +179,28 @@ impl VirtualController {
     }
 }
 
+pub fn mame_device_id_match(session_id: u32, player_number: u8) -> String {
+    let input_id = controller_input_id(session_id, player_number);
+    format!(
+        "{}0000{}0000{}0000",
+        little_endian_hex(input_id.vendor()),
+        little_endian_hex(input_id.product()),
+        little_endian_hex(input_id.version())
+    )
+}
+
+fn controller_input_id(session_id: u32, player_number: u8) -> InputId {
+    let vendor = CONTROLLER_VENDOR_BASE | u16::from(player_number);
+    let product = session_id as u16;
+    let version = (session_id >> 16) as u16;
+    InputId::new(BusType::BUS_USB, vendor, product, version)
+}
+
+fn little_endian_hex(value: u16) -> String {
+    let [low, high] = value.to_le_bytes();
+    format!("{low:02x}{high:02x}")
+}
+
 fn axis_direction(value: i16) -> i32 {
     i32::from(value.signum())
 }
@@ -189,5 +223,26 @@ fn key_code(button: ControllerButton) -> KeyCode {
         ControllerButton::RightShoulder => KeyCode::BTN_TR,
         ControllerButton::Coin => KeyCode::BTN_SELECT,
         ControllerButton::Start => KeyCode::BTN_START,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mame_device_match_encodes_player_and_full_session_id() {
+        assert_eq!(
+            mame_device_id_match(0x1234_5678, 1),
+            "011200007856000034120000"
+        );
+        assert_ne!(
+            mame_device_id_match(0x1234_5678, 1),
+            mame_device_id_match(0x1234_5678, 2)
+        );
+        assert_ne!(
+            mame_device_id_match(0x1234_5678, 1),
+            mame_device_id_match(0x1234_5679, 1)
+        );
     }
 }

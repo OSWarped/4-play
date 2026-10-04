@@ -24,7 +24,7 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 use terminal_input::run_terminal_input;
-use virtual_controller::VirtualController;
+use virtual_controller::{VirtualController, mame_device_id_match};
 
 #[derive(Debug)]
 struct RuntimeArgs {
@@ -222,6 +222,8 @@ fn parse_args() -> RuntimeArgs {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
     let shutdown_requested = install_shutdown_handlers()?;
+    let controller_enabled = args.terminal_input || args.input_port.is_some();
+    let controller_device_id = controller_enabled.then(|| mame_device_id_match(args.session_id, 1));
 
     let config = SessionConfig {
         id: args.session_id,
@@ -264,8 +266,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge ready for session {}.", session.config.id);
 
-    let mut controller = (args.terminal_input || args.input_port.is_some())
-        .then(|| VirtualController::create(1))
+    let mut controller = controller_enabled
+        .then(|| VirtualController::create(args.session_id, 1))
         .transpose()?;
 
     let mame_config = MameConfig {
@@ -275,6 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         working_directory: session.working_directory.clone(),
         video_path: session.video_path(),
         audio_path: session.audio_path(),
+        controller_device_id,
     };
 
     let mut mame = MameProcess::spawn(&mame_config)?;

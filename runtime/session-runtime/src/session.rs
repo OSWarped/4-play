@@ -66,6 +66,7 @@ impl Session {
         fs::create_dir_all(self.working_directory.join("state"))?;
         fs::create_dir_all(self.working_directory.join("snap"))?;
         fs::create_dir_all(self.working_directory.join("diff"))?;
+        fs::create_dir_all(self.working_directory.join("ctrlr"))?;
 
         self.state = SessionState::Prepared;
 

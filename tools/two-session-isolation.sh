@@ -116,7 +116,7 @@ list_controller_events() {
     shopt -s nullglob
     for name_path in /sys/class/input/event*/device/name; do
         IFS= read -r name <"$name_path" || continue
-        if [[ "$name" == "4-Play Player 1" ]]; then
+        if [[ "$name" == "4-Play Session "*" Player 1" ]]; then
             event_name="$(basename "$(dirname "$(dirname "$name_path")")")"
             printf '/dev/input/%s\n' "$event_name"
         fi
@@ -314,6 +314,26 @@ else
     fail "sessions own distinct virtual input devices"
 fi
 
+profile_a="/tmp/4play/session-$session_a_id/ctrlr/4play-session.cfg"
+profile_b="/tmp/4play/session-$session_b_id/ctrlr/4play-session.cfg"
+if [[ -f "$profile_a" ]] && grep -Fq '<mapdevice device=' "$profile_a"; then
+    pass "session A generated a MAME controller profile"
+else
+    fail "session A generated a MAME controller profile"
+fi
+if [[ -f "$profile_b" ]] && grep -Fq '<mapdevice device=' "$profile_b"; then
+    pass "session B generated a MAME controller profile"
+else
+    fail "session B generated a MAME controller profile"
+fi
+device_match_a="$(grep -Eo 'device="[0-9a-f]+"' "$profile_a" 2>/dev/null | head -n 1 || true)"
+device_match_b="$(grep -Eo 'device="[0-9a-f]+"' "$profile_b" 2>/dev/null | head -n 1 || true)"
+if [[ -n "$device_match_a" && -n "$device_match_b" && "$device_match_a" != "$device_match_b" ]]; then
+    pass "sessions map different stable device IDs to JOYCODE_1"
+else
+    fail "sessions map different stable device IDs to JOYCODE_1"
+fi
+
 for fifo_path in \
     "/tmp/4play/session-$session_a_id/video.raw" \
     "/tmp/4play/session-$session_a_id/audio.pcm" \
@@ -344,6 +364,19 @@ for process_record in \
         fail "$label is independently owned"
     fi
 done
+
+if [[ -n "$mame_a_pid" ]] && tr '\0' ' ' <"/proc/$mame_a_pid/cmdline" | \
+    grep -Fq -- "-ctrlrpath /tmp/4play/session-$session_a_id/ctrlr -ctrlr 4play-session"; then
+    pass "session A MAME explicitly loads its controller profile"
+else
+    fail "session A MAME explicitly loads its controller profile"
+fi
+if [[ -n "$mame_b_pid" ]] && tr '\0' ' ' <"/proc/$mame_b_pid/cmdline" | \
+    grep -Fq -- "-ctrlrpath /tmp/4play/session-$session_b_id/ctrlr -ctrlr 4play-session"; then
+    pass "session B MAME explicitly loads its controller profile"
+else
+    fail "session B MAME explicitly loads its controller profile"
+fi
 
 if wait_for_log "$results_directory/runtime-a.log" "video_frames=[1-9]" 20; then
     pass "session A is producing video"
