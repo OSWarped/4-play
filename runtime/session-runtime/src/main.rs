@@ -311,6 +311,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         audio_thread_queue_size: args.audio_thread_queue_size,
     };
 
+    session.state = session::SessionState::LaunchingEncoder;
     let (mut encoder, inputs) = EncoderProcess::spawn(&encoder_config)?;
 
     let mut bridge = MediaBridge::new(MediaBridgeConfig {
@@ -340,7 +341,9 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         autosave: args.autosave,
     };
 
+    session.state = session::SessionState::LaunchingEmulator;
     let mut mame = MameProcess::spawn(&mame_config)?;
+    session.state = session::SessionState::Running;
     write_runtime_status(runtime_status_file.as_deref(), "active")?;
     let mut child_failure = None;
 
@@ -382,6 +385,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Always attempt every cleanup stage. Preserve the first operational error
     // only after MAME, bridge threads, and FFmpeg have all been stopped/reaped.
+    session.state = session::SessionState::Stopping;
     let mame_result = mame.terminate();
     let bridge_result = bridge.stop();
     let encoder_result = encoder.wait();
@@ -398,6 +402,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     bridge_result?;
     encoder_result?;
+    session.state = session::SessionState::Stopped;
 
     Ok(())
 }

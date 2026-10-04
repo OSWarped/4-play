@@ -15,7 +15,6 @@ pub enum SessionState {
     Running,
     Stopping,
     Stopped,
-    Failed,
 }
 
 #[derive(Debug, Clone)]

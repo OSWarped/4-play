@@ -45,14 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let wait = HEARTBEAT_INTERVAL.saturating_sub(last_send.elapsed());
         let mut changed = false;
 
-        if event::poll(wait)? {
-            if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press {
-                    send_state(&socket, &held, &mut sequence, FLAG_STOP)?;
-                    break;
-                }
-                changed = update_held_keys(&mut held, key);
+        if event::poll(wait)?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press {
+                send_state(&socket, &held, &mut sequence, FLAG_STOP)?;
+                break;
             }
+            changed = update_held_keys(&mut held, key);
         }
 
         if changed || last_send.elapsed() >= HEARTBEAT_INTERVAL {
@@ -103,12 +103,7 @@ fn normalize_key(key: KeyCode) -> KeyCode {
 fn is_control_key(key: KeyCode) -> bool {
     matches!(
         key,
-        KeyCode::Char(
-            'w' | 'a' | 's' | 'd'
-                | 'j' | 'k' | 'l'
-                | 'm' | ',' | '.'
-                | '1' | '2'
-        )
+        KeyCode::Char('w' | 'a' | 's' | 'd' | 'j' | 'k' | 'l' | 'm' | ',' | '.' | '1' | '2')
     )
 }
 
