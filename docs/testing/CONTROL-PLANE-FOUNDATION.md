@@ -3,9 +3,9 @@
 ## Scope
 
 This is the first Phase 1C implementation slice. It establishes a runnable HTTP
-service, a shared versioned Rust protocol crate, and an in-memory runtime-host
-registry. It does not yet run a host agent, persist data, allocate a session, or
-launch MAME.
+service, a shared versioned Rust protocol crate, an in-memory runtime-host
+registry, and a runtime-host agent. It does not yet persist data, allocate a
+session, or launch MAME through the control plane.
 
 ## Run
 
@@ -91,6 +91,5 @@ host, and received `ok` health before stopping the process.
 
 ## Next slice
 
-Create a runtime-host agent that gathers the reference server's capabilities,
-registers with this API, and sends recurring heartbeats. Then replace the
-in-memory registry with SQLite-backed durable state and offline detection.
+Replace the in-memory registry with SQLite-backed durable state, then add
+heartbeat expiry and offline-host detection.

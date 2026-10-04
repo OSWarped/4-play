@@ -75,8 +75,8 @@ Windows seat-input client
   → MAME
 ```
 
-The next implementation milestone is a runtime-host agent that registers the
-reference server with the control plane and maintains its heartbeat.
+The next implementation milestone is durable SQLite-backed host state and
+offline detection when heartbeats expire.
 
 ## Product principles
 
@@ -90,6 +90,7 @@ reference server with the control plane and maintains its heartbeat.
 ## Repository map
 
 - `runtime/session-runtime/` — Rust session runtime, MAME lifecycle, media bridge, and encoder integration
+- `runtime/host-agent/` — runtime capability discovery, registration, and heartbeat client
 - `control-plane/server/` — Phase 1C HTTP control-plane service
 - `clients/seat-input/` — Windows development client for state-based keyboard input
 - `shared/control-protocol/` — versioned control-plane messages and lifecycle states

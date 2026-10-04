@@ -47,7 +47,9 @@ Responsibilities:
 
 The first deployment may place the control plane and runtime host agent on one Linux machine. They remain separate logical components so additional Linux or Windows runtime hosts can be added later.
 
-A first Rust implementation now exists at `runtime/session-runtime`.
+Rust implementations now exist at `runtime/session-runtime` and
+`runtime/host-agent`. The agent reports reference-host capabilities and
+maintains sequenced heartbeats with the control plane.
 
 ### Validated session runtime path
 

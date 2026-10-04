@@ -68,6 +68,10 @@ Last updated: 2026-10-04
   capability, registration, heartbeat, and status payloads
 - the control plane accepts idempotent host registration and heartbeats and
   rejects stale or conflicting heartbeat sequences
+- the runtime-host agent discovers CPU, memory, supported H.264 encoders, and
+  the MAME adapter, then registers and sends recurring sequenced heartbeats
+- a 15-assertion live Debian test validated registration, capability reporting,
+  heartbeat progression, graceful shutdown, and listener cleanup
 
 ## In progress
 
@@ -75,8 +79,8 @@ Last updated: 2026-10-04
 - wire the session state machine into actual runtime transitions
 - improve cleanup after the runtime process itself is killed without a chance
   to run its normal teardown
-- implement the runtime-host agent and recurring heartbeat
 - add durable control-plane storage
+- mark runtime hosts offline after missed heartbeat deadlines
 
 ## Not started
 
@@ -87,5 +91,5 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Run a runtime-host agent on the reference Linux server, register it with the
-control plane, and maintain heartbeat and capability state automatically.
+Persist runtime-host registration and heartbeat state in SQLite, then mark a
+host offline when its heartbeat deadline expires.

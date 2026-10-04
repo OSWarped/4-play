@@ -106,11 +106,13 @@ Implemented foundation:
 - `/api/v1` service boundary
 - shared, serialized canonical session states
 - in-memory runtime-host registration, lookup, listing, and heartbeat API
+- runtime-host agent with capability discovery, sequenced heartbeats, retry,
+  and clean shutdown
 
 Still required:
 
-- runtime-host agent and recurring heartbeat
 - durable control-plane storage
+- heartbeat expiry and offline-host detection
 - minimal legal test catalog
 - versioned session lifecycle protocol
 - MAME runtime adapter configuration
