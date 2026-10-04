@@ -108,11 +108,11 @@ Implemented foundation:
 - in-memory runtime-host registration, lookup, listing, and heartbeat API
 - runtime-host agent with capability discovery, sequenced heartbeats, retry,
   and clean shutdown
+- SQLite-backed runtime-host state that survives control-plane restarts
+- heartbeat expiry, offline status, and agent recovery to online
 
 Still required:
 
-- durable control-plane storage
-- heartbeat expiry and offline-host detection
 - minimal legal test catalog
 - versioned session lifecycle protocol
 - MAME runtime adapter configuration

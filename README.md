@@ -75,8 +75,8 @@ Windows seat-input client
   → MAME
 ```
 
-The next implementation milestone is durable SQLite-backed host state and
-offline detection when heartbeats expire.
+The next implementation milestone is a minimal legal game catalog with MAME
+metadata discovery and validated runtime profiles.
 
 ## Product principles
 

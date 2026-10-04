@@ -3,9 +3,9 @@
 ## Scope
 
 This is the first Phase 1C implementation slice. It establishes a runnable HTTP
-service, a shared versioned Rust protocol crate, an in-memory runtime-host
-registry, and a runtime-host agent. It does not yet persist data, allocate a
-session, or launch MAME through the control plane.
+service, a shared versioned Rust protocol crate, a SQLite-backed runtime-host
+registry, and a runtime-host agent. It does not yet allocate a session or
+launch MAME through the control plane.
 
 ## Run
 
@@ -42,9 +42,9 @@ logical CPU count. A new registration returns HTTP 201; an update returns HTTP
 host state. An exact retry is accepted, while a reused sequence carrying
 different data returns HTTP 409.
 
-The current registry is deliberately in memory. Restarting the control plane
-forgets all hosts. SQLite persistence and offline detection belong in the next
-storage/liveness slice.
+The registry is persisted in SQLite. Host reads apply the configured heartbeat
+deadline, and expired hosts become `offline` until registration or a valid
+heartbeat returns them to `online`.
 
 ## Shared protocol
 
@@ -91,5 +91,5 @@ host, and received `ok` health before stopping the process.
 
 ## Next slice
 
-Replace the in-memory registry with SQLite-backed durable state, then add
-heartbeat expiry and offline-host detection.
+Implement the minimal legal catalog and derive validated runtime profiles from
+MAME metadata.

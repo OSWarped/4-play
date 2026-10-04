@@ -2,13 +2,13 @@
 
 ## Result
 
-**PASS — 15 assertions on 2026-10-04.**
+**PASS — 22 assertions on 2026-10-04.**
 
-The validated implementation is commit `8a5071f`. The result bundle on the
+The validated persistence implementation is commit `ecbc980`. The result bundle on the
 reference runtime host is:
 
 ```text
-/tmp/4play-runtime-host-smoke-20261004-172217
+/tmp/4play-runtime-host-smoke-20261004-173241
 ```
 
 The repeatable command is:
@@ -30,9 +30,13 @@ Debian reference host. It verifies:
 4. Host lookup and deterministic host listing both expose the registration.
 5. Linux, CPU count, memory, H.264 encoders, and MAME are discovered.
 6. SIGTERM shuts down the agent and control plane cleanly.
-7. The control-plane TCP listener is released.
+7. Heartbeat expiry marks the stopped host offline.
+8. SQLite retains the host, offline status, and heartbeat sequence across a
+   real control-plane restart.
+9. The restarted agent resumes at the next sequence and returns the host online.
+10. The control-plane TCP listener is released.
 
-All 15 assertions passed.
+All 22 assertions passed.
 
 ## Reference-host capabilities
 
@@ -67,12 +71,19 @@ heartbeat fails, it refreshes registration before resuming. Re-registration
 reads the last server-side sequence so an agent restart continues with a newer
 heartbeat rather than sending stale state.
 
-## Current limitation
+## Persistence and liveness
 
-The control plane stores registrations only in memory, so restarting it clears
-the host list. The agent recovers automatically by registering again, but
-durable history and offline-host detection require the next SQLite-backed
-storage slice.
+The control plane stores registrations in SQLite. The database path is selected
+with `FOURPLAY_CONTROL_PLANE_DATABASE` and defaults to
+`data/control-plane.sqlite3`. `FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS` controls
+the heartbeat deadline and defaults to 15 seconds.
+
+The live test used a two-second deadline. After the agent stopped, the host
+became `offline`; the server restarted against the same database; and the host
+remained present with heartbeat sequence 2. The agent then restarted, resumed
+with sequence 3, and returned the host to `online`.
+
+## Current limitation
 
 The agent currently reports zero active sessions. That count will be connected
 to runtime-manager state when session allocation and supervision move behind

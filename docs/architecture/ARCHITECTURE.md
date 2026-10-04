@@ -27,10 +27,10 @@ Responsibilities:
 
 The control plane does not process normal controller packets or transcode every gameplay frame.
 
-Status: the initial Rust service exposes health, readiness, a versioned API
-root, shared lifecycle-state types, and in-memory runtime-host registration and
-heartbeat. Durable storage, an active host agent, allocation, and orchestration
-remain to be implemented.
+Status: the Rust service exposes health, readiness, a versioned API root,
+shared lifecycle-state types, SQLite-backed runtime-host registration, and
+heartbeat liveness. The active host agent reports capabilities and recovers
+after control-plane restart. Catalog, allocation, and orchestration remain.
 
 ### Runtime host agent and session runtime
 

@@ -72,6 +72,10 @@ Last updated: 2026-10-04
   the MAME adapter, then registers and sends recurring sequenced heartbeats
 - a 15-assertion live Debian test validated registration, capability reporting,
   heartbeat progression, graceful shutdown, and listener cleanup
+- SQLite preserves runtime-host identity and heartbeat sequence across a real
+  control-plane restart
+- heartbeat expiry marks a host offline, and agent restart resumes its sequence
+  and returns the host online
 
 ## In progress
 
@@ -79,8 +83,7 @@ Last updated: 2026-10-04
 - wire the session state machine into actual runtime transitions
 - improve cleanup after the runtime process itself is killed without a chance
   to run its normal teardown
-- add durable control-plane storage
-- mark runtime hosts offline after missed heartbeat deadlines
+- implement the minimal legal catalog and automatic MAME metadata discovery
 
 ## Not started
 
@@ -91,5 +94,5 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Persist runtime-host registration and heartbeat state in SQLite, then mark a
-host offline when its heartbeat deadline expires.
+Browse a minimal legal catalog whose runtime profiles are derived from MAME
+metadata rather than manually supplied dimensions and refresh rates.
