@@ -37,12 +37,10 @@ state directory, and only the session PIDs it created. It verifies:
     input, stopping, and returning to browsing
 13. clean agent and control-plane shutdown
 
-The accepted authenticated run produced 32 passing assertions. The final
-results directory is recorded after the gate is rerun with control-plane
-authentication enabled.
+The accepted authenticated run produced 32 passing assertions:
 
 ```text
-Results: /tmp/4play-phase-1c-smoke-20261004-181831
+Results: /tmp/4play-phase-1c-smoke-20261004-221202
 OVERALL  PASS
 ```
 
