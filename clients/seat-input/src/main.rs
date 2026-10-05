@@ -757,6 +757,7 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
         axis_x,
         axis_y,
         flags,
+        player_slot: 1,
     }
 }
 

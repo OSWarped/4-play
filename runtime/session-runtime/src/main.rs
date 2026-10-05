@@ -40,6 +40,7 @@ struct RuntimeArgs {
     terminal_input: bool,
     input_port: Option<u16>,
     input_token: Option<SessionToken>,
+    players: u8,
     debug_input: bool,
     autosave: bool,
     audio_codec: AudioCodec,
@@ -82,6 +83,7 @@ fn print_usage(program: &str) {
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
     [--input-token <uuid>] \
+    [--players <count>] \
     [--debug-input] \
     [--autosave] \
     [--audio-codec <aac|opus>] \
@@ -137,6 +139,7 @@ fn parse_args() -> RuntimeArgs {
     let mut terminal_input = false;
     let mut input_port = None;
     let mut input_token = None;
+    let mut players = 1;
     let mut debug_input = false;
     let mut autosave = false;
     let mut audio_codec = AudioCodec::Aac;
@@ -193,6 +196,9 @@ fn parse_args() -> RuntimeArgs {
                     "--input-token",
                 ));
             }
+            "--players" => {
+                players = parse_value(require_value(&mut args, "--players"), "--players");
+            }
             "--debug-input" => {
                 debug_input = true;
             }
@@ -247,6 +253,7 @@ fn parse_args() -> RuntimeArgs {
         terminal_input,
         input_port,
         input_token,
+        players,
         debug_input,
         autosave,
         audio_codec,
@@ -273,6 +280,10 @@ fn parse_args() -> RuntimeArgs {
     }
     if parsed.input_token.is_some() && parsed.input_port.is_none() {
         eprintln!("--input-token requires --input-port.");
+        process::exit(2);
+    }
+    if !(1..=8).contains(&parsed.players) {
+        eprintln!("--players must be between 1 and 8.");
         process::exit(2);
     }
 
@@ -305,7 +316,18 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let shutdown_requested = install_shutdown_handlers()?;
     let controller_enabled = args.terminal_input || args.input_port.is_some();
     let controller_id = controller_id(&args.session_id);
-    let controller_device_id = controller_enabled.then(|| mame_device_id_match(controller_id, 1));
+    let controller_device_ids = if controller_enabled {
+        (1..=args.players)
+            .map(|player_number| {
+                (
+                    player_number,
+                    mame_device_id_match(controller_id, player_number),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let config = SessionConfig {
         id: args.session_id.clone(),
@@ -349,8 +371,12 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Media bridge ready for session {}.", session.config.id);
 
-    let mut controller = controller_enabled
-        .then(|| VirtualController::create(controller_id, 1))
+    let mut controllers = controller_enabled
+        .then(|| {
+            (1..=args.players)
+                .map(|player_number| VirtualController::create(controller_id, player_number))
+                .collect::<io::Result<Vec<_>>>()
+        })
         .transpose()?;
 
     let mame_config = MameConfig {
@@ -360,7 +386,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         working_directory: session.working_directory.clone(),
         video_path: session.video_path(),
         audio_path: session.audio_path(),
-        controller_device_id,
+        controller_device_ids,
         autosave: args.autosave,
     };
 
@@ -371,9 +397,9 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     write_runtime_status(runtime_status_file.as_deref(), "active")?;
     let mut child_failure = None;
 
-    let input_result = if let Some(controller) = controller.as_mut() {
+    let input_result = if let Some(controllers) = controllers.as_mut() {
         if args.terminal_input {
-            run_terminal_input(controller, || {
+            run_terminal_input(&mut controllers[0], || {
                 should_stop(
                     &shutdown_requested,
                     &mut mame,
@@ -383,7 +409,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
             })
         } else {
             run_network_input(
-                controller,
+                controllers,
                 args.input_port.unwrap(),
                 args.input_token,
                 args.debug_input,

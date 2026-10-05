@@ -19,7 +19,7 @@ pub struct MameConfig {
     pub working_directory: PathBuf,
     pub video_path: PathBuf,
     pub audio_path: PathBuf,
-    pub controller_device_id: Option<String>,
+    pub controller_device_ids: Vec<(u8, String)>,
     pub autosave: bool,
 }
 
@@ -82,11 +82,11 @@ impl MameProcess {
             command.arg("-autosave");
         }
 
-        if let Some(device_id) = config.controller_device_id.as_deref() {
+        if !config.controller_device_ids.is_empty() {
             fs::create_dir_all(&controller_directory)?;
             fs::write(
                 controller_directory.join(format!("{CONTROLLER_PROFILE_NAME}.cfg")),
-                controller_profile(device_id),
+                controller_profile(&config.controller_device_ids),
             )?;
             command
                 .arg("-ctrlrpath")
@@ -180,25 +180,34 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-fn controller_profile(device_id: &str) -> String {
+fn controller_profile(device_ids: &[(u8, String)]) -> String {
+    let mut input = String::new();
+    for (player_number, device_id) in device_ids {
+        let joycode = format!("JOYCODE_{player_number}");
+        input.push_str(&format!(
+            r#"            <mapdevice device="{device_id}" controller="{joycode}" />
+            <port type="P{player_number}_JOYSTICK_UP"><newseq type="standard">{joycode}_YAXIS_UP_SWITCH</newseq></port>
+            <port type="P{player_number}_JOYSTICK_DOWN"><newseq type="standard">{joycode}_YAXIS_DOWN_SWITCH</newseq></port>
+            <port type="P{player_number}_JOYSTICK_LEFT"><newseq type="standard">{joycode}_XAXIS_LEFT_SWITCH</newseq></port>
+            <port type="P{player_number}_JOYSTICK_RIGHT"><newseq type="standard">{joycode}_XAXIS_RIGHT_SWITCH</newseq></port>
+            <port type="P{player_number}_BUTTON1"><newseq type="standard">{joycode}_BUTTON1</newseq></port>
+            <port type="P{player_number}_BUTTON2"><newseq type="standard">{joycode}_BUTTON2</newseq></port>
+            <port type="P{player_number}_BUTTON3"><newseq type="standard">{joycode}_BUTTON3</newseq></port>
+            <port type="P{player_number}_BUTTON4"><newseq type="standard">{joycode}_BUTTON4</newseq></port>
+            <port type="P{player_number}_BUTTON5"><newseq type="standard">{joycode}_BUTTON5</newseq></port>
+            <port type="P{player_number}_BUTTON6"><newseq type="standard">{joycode}_BUTTON6</newseq></port>
+            <port type="COIN{player_number}"><newseq type="standard">{joycode}_BUTTON7</newseq></port>
+            <port type="START{player_number}"><newseq type="standard">{joycode}_BUTTON8</newseq></port>
+"#
+        ));
+    }
+
     format!(
         r#"<?xml version="1.0"?>
 <mameconfig version="10">
     <system name="default">
         <input>
-            <mapdevice device="{device_id}" controller="JOYCODE_1" />
-            <port type="P1_JOYSTICK_UP"><newseq type="standard">JOYCODE_1_YAXIS_UP_SWITCH</newseq></port>
-            <port type="P1_JOYSTICK_DOWN"><newseq type="standard">JOYCODE_1_YAXIS_DOWN_SWITCH</newseq></port>
-            <port type="P1_JOYSTICK_LEFT"><newseq type="standard">JOYCODE_1_XAXIS_LEFT_SWITCH</newseq></port>
-            <port type="P1_JOYSTICK_RIGHT"><newseq type="standard">JOYCODE_1_XAXIS_RIGHT_SWITCH</newseq></port>
-            <port type="P1_BUTTON1"><newseq type="standard">JOYCODE_1_BUTTON1</newseq></port>
-            <port type="P1_BUTTON2"><newseq type="standard">JOYCODE_1_BUTTON2</newseq></port>
-            <port type="P1_BUTTON3"><newseq type="standard">JOYCODE_1_BUTTON3</newseq></port>
-            <port type="P1_BUTTON4"><newseq type="standard">JOYCODE_1_BUTTON4</newseq></port>
-            <port type="P1_BUTTON5"><newseq type="standard">JOYCODE_1_BUTTON5</newseq></port>
-            <port type="P1_BUTTON6"><newseq type="standard">JOYCODE_1_BUTTON6</newseq></port>
-            <port type="COIN1"><newseq type="standard">JOYCODE_1_BUTTON7</newseq></port>
-            <port type="START1"><newseq type="standard">JOYCODE_1_BUTTON8</newseq></port>
+{input}
         </input>
     </system>
 </mameconfig>
@@ -237,15 +246,22 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn controller_profile_maps_only_the_assigned_device_to_player_one() {
-        let profile = controller_profile("011200007856000034120000");
+    fn controller_profile_maps_assigned_devices_to_players() {
+        let profile = controller_profile(&[
+            (1, "011200007856000034120000".to_owned()),
+            (2, "01120000abcd0000ef120000".to_owned()),
+        ]);
 
         assert!(profile.contains(
             "<mapdevice device=\"011200007856000034120000\" controller=\"JOYCODE_1\" />"
         ));
+        assert!(profile.contains(
+            "<mapdevice device=\"01120000abcd0000ef120000\" controller=\"JOYCODE_2\" />"
+        ));
         assert!(profile.contains("JOYCODE_1_BUTTON6"));
-        assert!(profile.contains("JOYCODE_1_BUTTON8"));
-        assert!(!profile.contains("JOYCODE_2"));
+        assert!(profile.contains("JOYCODE_2_BUTTON6"));
+        assert!(profile.contains("P2_JOYSTICK_UP"));
+        assert!(profile.contains("START2"));
     }
 
     #[test]

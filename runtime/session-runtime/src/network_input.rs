@@ -11,7 +11,7 @@ const RECEIVE_POLL: Duration = Duration::from_millis(10);
 const INPUT_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub fn run_network_input<F>(
-    controller: &mut VirtualController,
+    controllers: &mut [VirtualController],
     port: u16,
     required_token: Option<SessionToken>,
     debug_input: bool,
@@ -25,10 +25,9 @@ where
     eprintln!("Waiting for seat controller state on UDP port {port}.");
 
     let mut buffer = [0_u8; AUTHENTICATED_PACKET_SIZE];
-    let mut active_source: Option<SocketAddr> = None;
-    let mut last_sequence: Option<u32> = None;
-    let mut last_packet: Option<Instant> = None;
-    let mut timed_out = false;
+    let mut player_inputs = (0..controllers.len())
+        .map(|_| PlayerInputState::default())
+        .collect::<Vec<_>>();
 
     loop {
         if emulator_exited()? {
@@ -87,14 +86,36 @@ where
                     };
                     state
                 };
-                if active_source.is_some_and(|active| active != source) {
+                let Some(player_index) = state
+                    .player_slot
+                    .checked_sub(1)
+                    .map(usize::from)
+                    .filter(|index| *index < controllers.len())
+                else {
                     log_input_rejection(
                         debug_input,
                         port,
                         source,
                         format_args!(
-                            "wrong source; active={:?}; seq={} buttons=0x{:04x} axis=({}, {}) flags=0x{:02x}",
-                            active_source,
+                            "unknown player slot {}; seq={} buttons=0x{:04x}",
+                            state.player_slot, state.sequence, state.buttons
+                        ),
+                    );
+                    continue;
+                };
+                let player_input = &mut player_inputs[player_index];
+                if player_input
+                    .active_source
+                    .is_some_and(|active| active != source)
+                {
+                    log_input_rejection(
+                        debug_input,
+                        port,
+                        source,
+                        format_args!(
+                            "wrong source for player {}; active={:?}; seq={} buttons=0x{:04x} axis=({}, {}) flags=0x{:02x}",
+                            state.player_slot,
+                            player_input.active_source,
                             state.sequence,
                             state.buttons,
                             state.axis_x.signum(),
@@ -104,7 +125,7 @@ where
                     );
                     continue;
                 }
-                if let Some(last) = last_sequence
+                if let Some(last) = player_input.last_sequence
                     && !sequence_is_newer(state.sequence, last)
                 {
                     log_input_rejection(
@@ -123,15 +144,18 @@ where
                     continue;
                 }
 
-                if active_source.is_none() {
-                    eprintln!("Seat input connected from {source}.");
-                    active_source = Some(source);
+                if player_input.active_source.is_none() {
+                    eprintln!(
+                        "Seat input connected from {source} for player {}.",
+                        state.player_slot
+                    );
+                    player_input.active_source = Some(source);
                 }
                 log_input_acceptance(debug_input, port, source, state);
-                last_sequence = Some(state.sequence);
-                last_packet = Some(Instant::now());
-                timed_out = false;
-                controller.apply_state(state)?;
+                player_input.last_sequence = Some(state.sequence);
+                player_input.last_packet = Some(Instant::now());
+                player_input.timed_out = false;
+                controllers[player_index].apply_state(state)?;
 
                 if state.flags & FLAG_STOP != 0 {
                     eprintln!("Seat requested session stop.");
@@ -148,22 +172,42 @@ where
             Err(error) => return Err(error),
         }
 
-        if !timed_out && last_packet.is_some_and(|last| last.elapsed() >= INPUT_TIMEOUT) {
-            controller.neutralize()?;
-            timed_out = true;
-            eprintln!("Seat input timed out; controls neutralized.");
-            log_input_event(
-                debug_input,
-                port,
-                format_args!("source lock cleared after input timeout"),
-            );
-            active_source = None;
-            last_sequence = None;
-            last_packet = None;
+        for (index, player_input) in player_inputs.iter_mut().enumerate() {
+            if !player_input.timed_out
+                && player_input
+                    .last_packet
+                    .is_some_and(|last| last.elapsed() >= INPUT_TIMEOUT)
+            {
+                controllers[index].neutralize()?;
+                player_input.timed_out = true;
+                let player_number = index + 1;
+                eprintln!("Seat input timed out for player {player_number}; controls neutralized.");
+                log_input_event(
+                    debug_input,
+                    port,
+                    format_args!(
+                        "source lock cleared after input timeout for player {player_number}"
+                    ),
+                );
+                player_input.active_source = None;
+                player_input.last_sequence = None;
+                player_input.last_packet = None;
+            }
         }
     }
 
-    controller.neutralize()
+    for controller in controllers {
+        controller.neutralize()?;
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct PlayerInputState {
+    active_source: Option<SocketAddr>,
+    last_sequence: Option<u32>,
+    last_packet: Option<Instant>,
+    timed_out: bool,
 }
 
 fn log_input_acceptance(debug_input: bool, port: u16, source: SocketAddr, state: ControllerState) {

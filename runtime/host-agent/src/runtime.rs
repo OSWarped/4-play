@@ -114,6 +114,8 @@ impl RuntimeSupervisor {
             .arg(assignment.runtime_profile.height.to_string())
             .arg("--fps")
             .arg(assignment.runtime_profile.refresh_hz.to_string())
+            .arg("--players")
+            .arg(assignment.runtime_profile.max_players.to_string())
             .arg("--destination-ip")
             .arg(&assignment.destination_address)
             .arg("--udp-port")

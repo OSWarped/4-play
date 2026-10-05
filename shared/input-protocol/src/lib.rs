@@ -24,13 +24,27 @@ pub mod button {
     pub const RIGHT_SHOULDER: u16 = ACTION_6;
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControllerState {
     pub sequence: u32,
     pub buttons: u16,
     pub axis_x: i16,
     pub axis_y: i16,
     pub flags: u8,
+    pub player_slot: u8,
+}
+
+impl Default for ControllerState {
+    fn default() -> Self {
+        Self {
+            sequence: 0,
+            buttons: 0,
+            axis_x: 0,
+            axis_y: 0,
+            flags: 0,
+            player_slot: 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +119,7 @@ impl AuthenticatedControllerState {
         packet[27..29].copy_from_slice(&self.state.axis_x.to_le_bytes());
         packet[29..31].copy_from_slice(&self.state.axis_y.to_le_bytes());
         packet[31] = self.state.flags;
-        packet[32] = 1;
+        packet[32] = self.state.player_slot;
         packet
     }
 
@@ -119,7 +133,7 @@ impl AuthenticatedControllerState {
         if packet[4] != 2 {
             return Err(DecodeError::Version);
         }
-        if packet[32] != 1 {
+        if packet[32] == 0 {
             return Err(DecodeError::PlayerSlot);
         }
         Ok(Self {
@@ -130,6 +144,7 @@ impl AuthenticatedControllerState {
                 axis_x: i16::from_le_bytes(packet[27..29].try_into().unwrap()),
                 axis_y: i16::from_le_bytes(packet[29..31].try_into().unwrap()),
                 flags: packet[31],
+                player_slot: packet[32],
             },
         })
     }
@@ -145,7 +160,7 @@ impl ControllerState {
         packet[11..13].copy_from_slice(&self.axis_x.to_le_bytes());
         packet[13..15].copy_from_slice(&self.axis_y.to_le_bytes());
         packet[15] = self.flags;
-        packet[16] = 1; // Player slot; fixed to player one for this experiment.
+        packet[16] = self.player_slot;
         packet
     }
 
@@ -159,7 +174,7 @@ impl ControllerState {
         if packet[4] != 1 {
             return Err(DecodeError::Version);
         }
-        if packet[16] != 1 {
+        if packet[16] == 0 {
             return Err(DecodeError::PlayerSlot);
         }
 
@@ -169,6 +184,7 @@ impl ControllerState {
             axis_x: i16::from_le_bytes(packet[11..13].try_into().unwrap()),
             axis_y: i16::from_le_bytes(packet[13..15].try_into().unwrap()),
             flags: packet[15],
+            player_slot: packet[16],
         })
     }
 }
@@ -185,6 +201,7 @@ mod tests {
             axis_x: -32767,
             axis_y: 32767,
             flags: FLAG_STOP,
+            player_slot: 2,
         };
 
         assert_eq!(ControllerState::decode(&state.encode()), Ok(state));
@@ -211,6 +228,7 @@ mod tests {
                 axis_x: 12,
                 axis_y: -34,
                 flags: 0,
+                player_slot: 3,
             },
         };
         assert_eq!(

@@ -127,6 +127,7 @@ fn run(config: &Config) -> std::io::Result<()> {
         axis_x: config.axis_x,
         axis_y: config.axis_y,
         flags: 0,
+        player_slot: 1,
     };
     let started = Instant::now();
 
@@ -149,6 +150,7 @@ fn run(config: &Config) -> std::io::Result<()> {
         socket.send(
             &ControllerState {
                 sequence,
+                player_slot: 1,
                 ..ControllerState::default()
             }
             .encode(),
