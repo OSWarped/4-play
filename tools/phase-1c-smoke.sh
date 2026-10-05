@@ -13,6 +13,8 @@ bind_address="127.0.0.1:41810"
 base_url="http://$bind_address"
 host_id="phase-1c-smoke"
 runtime_state_directory="$results_directory/runtime"
+seat_api_token="phase-1c-seat-token-2026"
+runtime_host_api_token="phase-1c-host-token-2026"
 
 control_plane_pid=""
 agent_pid=""
@@ -30,6 +32,10 @@ pass() {
 fail() {
     printf 'FAIL\t%s\n' "$1" | tee -a "$summary_path" >&2
     failures=$((failures + 1))
+}
+
+curl() {
+    command curl -H "authorization: Bearer $seat_api_token" "$@"
 }
 
 process_running() {
@@ -169,6 +175,8 @@ agent_log="$results_directory/agent.log"
 FOURPLAY_CONTROL_PLANE_BIND="$bind_address" \
 FOURPLAY_CONTROL_PLANE_DATABASE="$results_directory/control-plane.sqlite3" \
 FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS=3 \
+FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
     "$control_plane_binary" >"$control_plane_log" 2>&1 &
 control_plane_pid=$!
 
@@ -177,6 +185,11 @@ if wait_for_url "$base_url/ready"; then
 else
     fail "isolated control plane becomes ready"
 fi
+if [[ "$(command curl -sS -o /dev/null -w '%{http_code}' "$base_url/api/v1/games")" == "401" ]]; then
+    pass "control plane rejects an unauthenticated device request"
+else
+    fail "control plane rejects an unauthenticated device request"
+fi
 
 FOURPLAY_CONTROL_PLANE_URL="$base_url" \
 FOURPLAY_RUNTIME_HOST_ID="$host_id" \
@@ -184,6 +197,7 @@ FOURPLAY_RUNTIME_HOST_NAME="Phase 1C Smoke Host" \
 FOURPLAY_RUNTIME_HOST_ADDRESS="127.0.0.1" \
 FOURPLAY_HEARTBEAT_SECONDS=1 \
 FOURPLAY_RECONCILE_MILLISECONDS=100 \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
 FOURPLAY_SESSION_RUNTIME_PATH="$session_runtime_binary" \
 FOURPLAY_RUNTIME_STATE_DIRECTORY="$runtime_state_directory" \
 FOURPLAY_MAME_PATH="$HOME/src/mame-4play/mame" \
@@ -287,6 +301,7 @@ seat_log="$results_directory/seat-client.log"
 if "$seat_input_binary" \
     --control-plane "$base_url" \
     --seat-id "phase-1c-seat-client" \
+    --api-token "$seat_api_token" \
     --destination-ip "127.0.0.1" \
     --game tmnt \
     --no-media \

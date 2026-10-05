@@ -7,6 +7,7 @@ use input_protocol::{
     AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
 };
 use reqwest::blocking::Client;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
@@ -36,6 +37,7 @@ struct SeatConfig {
     ffplay_path: String,
     no_media: bool,
     play_for: Option<Duration>,
+    api_token: String,
 }
 
 struct RawMode;
@@ -69,7 +71,15 @@ fn run_direct(destination: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::builder().timeout(Duration::from_secs(3)).build()?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", config.api_token))?,
+    );
+    let client = Client::builder()
+        .timeout(Duration::from_secs(3))
+        .default_headers(headers)
+        .build()?;
     let one_shot = config.game_id.is_some();
     let mut selected_game = config.game_id.clone();
 
@@ -442,6 +452,7 @@ fn parse_mode() -> Mode {
     let mut ffplay_path = env::var("FOURPLAY_FFPLAY_PATH").unwrap_or_else(|_| "ffplay".to_owned());
     let mut no_media = false;
     let mut play_for = None;
+    let mut api_token = env::var("FOURPLAY_SEAT_API_TOKEN").ok();
     let mut index = 0;
     while index < values.len() {
         let option = &values[index];
@@ -459,6 +470,7 @@ fn parse_mode() -> Mode {
             "--game" => game_id = Some(value(&mut index)),
             "--ffplay-path" => ffplay_path = value(&mut index),
             "--no-media" => no_media = true,
+            "--api-token" => api_token = Some(value(&mut index)),
             "--play-for-ms" => {
                 let milliseconds = value(&mut index).parse::<u64>().unwrap_or_else(|error| {
                     eprintln!("Invalid --play-for-ms value: {error}");
@@ -479,6 +491,11 @@ fn parse_mode() -> Mode {
             eprintln!("Invalid seat destination address: {error}");
             process::exit(2);
         });
+    let api_token = api_token.unwrap_or_else(|| usage(&program));
+    if api_token.len() < 16 {
+        eprintln!("Seat API token must contain at least 16 characters");
+        process::exit(2);
+    }
     Mode::Orchestrated(SeatConfig {
         control_plane_url: control_plane_url.trim_end_matches('/').to_owned(),
         seat_id,
@@ -487,12 +504,13 @@ fn parse_mode() -> Mode {
         ffplay_path,
         no_media,
         play_for,
+        api_token,
     })
 }
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--game <id>] [--ffplay-path <path>] [--no-media] [--play-for-ms <milliseconds>]"
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--play-for-ms <milliseconds>]"
     );
     process::exit(2)
 }

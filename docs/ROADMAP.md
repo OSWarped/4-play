@@ -97,7 +97,7 @@ can stop without affecting the other. See
 
 ## Phase 1C — Control-Plane Orchestration
 
-Status: **started**.
+Status: **complete on the reference host**.
 
 Implemented foundation:
 
@@ -114,17 +114,17 @@ Implemented foundation:
 - automatic MAME runtime profiles for dimensions, native refresh, rotation,
   players, buttons, and save-state support
 - SQLite-backed catalog with per-host availability and liveness
+- versioned, durable session lifecycle protocol and event history
+- explicit MAME runtime adapter configuration and process supervision
+- transactional session allocation with collision-free ports and expiring grants
+- grant-authenticated direct UDP controller input
+- minimal seat catalog, request, FFplay, control, stop, and recovery workflow
+- diagnosable normal-stop, launch-failure, runtime-loss, and host-loss states
 
-Still required:
-
-- versioned session lifecycle protocol
-- MAME runtime adapter configuration
-- automatic MAME metadata discovery
-- session allocation and connection grants
-- minimal seat launch workflow
-- diagnosable failure and recovery states
-
-**Exit:** a seat can browse the test catalog, request a session, connect to the assigned runtime, play, and return to browsing after normal termination or runtime loss.
+**Exit achieved:** a seat can browse the test catalog, request a session,
+connect to the assigned runtime, play, and return to browsing after normal
+termination or runtime loss. See
+[the Phase 1C validation record](testing/PHASE-1C-VALIDATION.md).
 
 ## Phase 2 — Product MVP: Shared Sessions
 

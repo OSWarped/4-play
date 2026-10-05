@@ -29,10 +29,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if offline_seconds == 0 {
         return Err("FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS must be greater than zero".into());
     }
+    let seat_api_token = required_secret("FOURPLAY_SEAT_API_TOKEN")?;
+    let runtime_host_api_token = required_secret("FOURPLAY_RUNTIME_HOST_API_TOKEN")?;
     let listener = TcpListener::bind(bind_address).await?;
-    let app = control_plane_server::app_with_database(
+    let app = control_plane_server::app_with_database_and_tokens(
         &database_path,
         Duration::from_secs(offline_seconds),
+        seat_api_token,
+        runtime_host_api_token,
     )
     .await?;
 
@@ -46,6 +50,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     Ok(())
+}
+
+fn required_secret(name: &str) -> Result<String, Box<dyn Error>> {
+    let value = env::var(name).map_err(|_| format!("{name} must be set"))?;
+    if value.len() < 16 {
+        return Err(format!("{name} must contain at least 16 characters").into());
+    }
+    Ok(value)
 }
 
 async fn shutdown_signal() {

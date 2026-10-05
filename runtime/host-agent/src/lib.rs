@@ -25,6 +25,7 @@ pub struct AgentConfig {
     pub display_name: String,
     pub heartbeat_interval: Duration,
     pub reconcile_interval: Duration,
+    pub api_token: String,
 }
 
 impl AgentConfig {
@@ -36,6 +37,13 @@ impl AgentConfig {
             .unwrap_or_else(|_| default_host_name.to_ascii_lowercase());
         let display_name =
             env::var("FOURPLAY_RUNTIME_HOST_NAME").unwrap_or_else(|_| default_host_name.clone());
+        let api_token = env::var("FOURPLAY_RUNTIME_HOST_API_TOKEN")
+            .map_err(|_| "FOURPLAY_RUNTIME_HOST_API_TOKEN must be set".to_owned())?;
+        if api_token.len() < 16 {
+            return Err(
+                "FOURPLAY_RUNTIME_HOST_API_TOKEN must contain at least 16 characters".to_owned(),
+            );
+        }
         let heartbeat_interval = match env::var("FOURPLAY_HEARTBEAT_SECONDS") {
             Ok(value) => {
                 let seconds = value
@@ -74,6 +82,7 @@ impl AgentConfig {
             display_name,
             heartbeat_interval,
             reconcile_interval,
+            api_token,
         })
     }
 }
@@ -124,6 +133,7 @@ impl RuntimeHostAgent {
     pub async fn register(&self) -> Result<RuntimeHost, reqwest::Error> {
         self.client
             .put(self.runtime_host_url())
+            .bearer_auth(&self.config.api_token)
             .json(&self.registration)
             .send()
             .await?
@@ -139,6 +149,7 @@ impl RuntimeHostAgent {
     ) -> Result<RuntimeHost, reqwest::Error> {
         self.client
             .post(format!("{}/heartbeat", self.runtime_host_url()))
+            .bearer_auth(&self.config.api_token)
             .json(&RuntimeHostHeartbeat {
                 sequence,
                 active_session_count,
@@ -156,6 +167,7 @@ impl RuntimeHostAgent {
         };
         self.client
             .put(format!("{}/catalog", self.runtime_host_url()))
+            .bearer_auth(&self.config.api_token)
             .json(catalog)
             .send()
             .await?
@@ -170,6 +182,7 @@ impl RuntimeHostAgent {
     ) -> Result<RuntimeSessionAssignmentList, reqwest::Error> {
         self.client
             .get(format!("{}/sessions", self.runtime_host_url()))
+            .bearer_auth(&self.config.api_token)
             .send()
             .await?
             .error_for_status()?
@@ -188,6 +201,7 @@ impl RuntimeHostAgent {
                 "{}/sessions/{session_id}/state",
                 self.runtime_host_url()
             ))
+            .bearer_auth(&self.config.api_token)
             .json(&UpdateSessionState {
                 state,
                 failure_reason,
@@ -584,6 +598,7 @@ mod tests {
                 display_name: "Test Linux".to_owned(),
                 heartbeat_interval: Duration::from_millis(10),
                 reconcile_interval: Duration::from_millis(5),
+                api_token: "test-runtime-host-token".to_owned(),
             },
             RuntimeHostCapabilities {
                 data_plane_address: "127.0.0.1".to_owned(),
@@ -627,7 +642,11 @@ mod tests {
             .unwrap();
         assert_eq!(heartbeat.heartbeat_sequence, 6);
 
-        let hosts = reqwest::get(format!("http://{address}/api/v1/runtime-hosts"))
+        let test_client = reqwest::Client::new();
+        let hosts = test_client
+            .get(format!("http://{address}/api/v1/runtime-hosts"))
+            .bearer_auth("test-seat-token")
+            .send()
             .await
             .unwrap()
             .json::<RuntimeHostList>()
@@ -635,7 +654,10 @@ mod tests {
             .unwrap();
         assert_eq!(hosts.hosts.len(), 1);
         assert_eq!(hosts.hosts[0].active_session_count, 1);
-        let games = reqwest::get(format!("http://{address}/api/v1/games"))
+        let games = test_client
+            .get(format!("http://{address}/api/v1/games"))
+            .bearer_auth("test-seat-token")
+            .send()
             .await
             .unwrap()
             .json::<CatalogGameList>()

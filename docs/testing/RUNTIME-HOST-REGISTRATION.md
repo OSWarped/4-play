@@ -61,10 +61,16 @@ The agent accepts these environment variables:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `FOURPLAY_CONTROL_PLANE_URL` | `http://127.0.0.1:8080` | Control-plane base URL |
+| `FOURPLAY_RUNTIME_HOST_API_TOKEN` | required | Provisioned runtime-host bearer credential |
 | `FOURPLAY_RUNTIME_HOST_ID` | lowercase system hostname | Stable host identity |
 | `FOURPLAY_RUNTIME_HOST_NAME` | system hostname | Operator-facing name |
 | `FOURPLAY_HEARTBEAT_SECONDS` | `5` | Heartbeat and retry interval |
+| `FOURPLAY_RECONCILE_MILLISECONDS` | `250` | Session assignment reconciliation interval |
+| `FOURPLAY_RUNTIME_HOST_ADDRESS` | system hostname | Address returned to seats for direct input |
 | `FOURPLAY_MAME_PATH` | automatic | Optional MAME executable override |
+| `FOURPLAY_MAME_INI_PATH` | `/opt/4play/config/mame` on Linux | MAME configuration directory |
+| `FOURPLAY_SESSION_RUNTIME_PATH` | sibling of the agent binary | Session runtime executable |
+| `FOURPLAY_RUNTIME_STATE_DIRECTORY` | `/tmp/4play/host-agent` | PID, readiness, and runtime log directory |
 
 The agent retries registration when the control plane is unavailable. If a
 heartbeat fails, it refreshes registration before resuming. Re-registration

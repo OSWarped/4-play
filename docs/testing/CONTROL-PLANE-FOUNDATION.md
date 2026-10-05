@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is the first Phase 1C implementation slice. It establishes a runnable HTTP
+This was the first Phase 1C implementation slice. It established a runnable HTTP
 service, a shared versioned Rust protocol crate, a SQLite-backed runtime-host
 registry, and a runtime-host agent. It does not yet allocate a session or
 launch MAME through the control plane.
@@ -10,6 +10,8 @@ launch MAME through the control plane.
 ## Run
 
 ```powershell
+$env:FOURPLAY_SEAT_API_TOKEN = "replace-with-a-provisioned-seat-token"
+$env:FOURPLAY_RUNTIME_HOST_API_TOKEN = "replace-with-a-provisioned-host-token"
 cargo run -p control-plane-server
 ```
 
@@ -21,8 +23,9 @@ $env:FOURPLAY_CONTROL_PLANE_BIND = "0.0.0.0:8080"
 cargo run -p control-plane-server
 ```
 
-The loopback default avoids unintentionally exposing an unauthenticated
-development API to the network.
+The loopback default limits accidental exposure. Health, readiness, and API
+metadata are public; catalog, host, and session routes require a configured
+seat or runtime-host bearer credential.
 
 ## Endpoints
 

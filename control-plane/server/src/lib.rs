@@ -9,7 +9,8 @@ use std::{
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, State},
-    http::StatusCode,
+    http::{HeaderMap, Request, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -33,6 +34,8 @@ pub struct AppState {
     runtime_hosts: RuntimeHostStore,
     offline_after_ms: u64,
     grant_ttl_ms: u64,
+    seat_api_token: String,
+    runtime_host_api_token: String,
 }
 
 impl AppState {
@@ -41,17 +44,23 @@ impl AppState {
             runtime_hosts: RuntimeHostStore::in_memory().await?,
             offline_after_ms: duration_ms(offline_after),
             grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
+            seat_api_token: "test-seat-token".to_owned(),
+            runtime_host_api_token: "test-runtime-host-token".to_owned(),
         })
     }
 
     async fn persistent(
         path: impl AsRef<Path>,
         offline_after: Duration,
+        seat_api_token: String,
+        runtime_host_api_token: String,
     ) -> Result<Self, StoreError> {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
             offline_after_ms: duration_ms(offline_after),
             grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
+            seat_api_token,
+            runtime_host_api_token,
         })
     }
 }
@@ -67,15 +76,29 @@ pub async fn app_with_database(
     offline_after: Duration,
 ) -> Result<Router, StoreError> {
     Ok(app_with_state(
-        AppState::persistent(path, offline_after).await?,
+        AppState::persistent(
+            path,
+            offline_after,
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+        )
+        .await?,
+    ))
+}
+
+pub async fn app_with_database_and_tokens(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+    seat_api_token: String,
+    runtime_host_api_token: String,
+) -> Result<Router, StoreError> {
+    Ok(app_with_state(
+        AppState::persistent(path, offline_after, seat_api_token, runtime_host_api_token).await?,
     ))
 }
 
 pub fn app_with_state(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
-        .route("/ready", get(readiness))
-        .route("/api/v1", get(api_info))
+    let protected = Router::new()
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
@@ -105,7 +128,54 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/runtime-hosts/{host_id}/sessions/{session_id}/state",
             axum::routing::put(update_runtime_session_state),
         )
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_api_auth,
+        ));
+
+    Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(readiness))
+        .route("/api/v1", get(api_info))
+        .merge(protected)
         .with_state(state)
+}
+
+async fn require_api_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let authenticated = token.is_some_and(|token| {
+        constant_time_equal(token, &state.seat_api_token)
+            || constant_time_equal(token, &state.runtime_host_api_token)
+    });
+    if !authenticated {
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "authentication_required",
+            "a valid seat or runtime-host bearer token is required",
+        ));
+    }
+    Ok(next.run(request).await)
+}
+
+fn constant_time_equal(candidate: &str, expected: &str) -> bool {
+    if candidate.len() != expected.len() {
+        return false;
+    }
+    candidate
+        .bytes()
+        .zip(expected.bytes())
+        .fold(0_u8, |difference, (candidate, expected)| {
+            difference | (candidate ^ expected)
+        })
+        == 0
 }
 
 async fn health() -> Json<StatusResponse> {
@@ -606,6 +676,9 @@ mod tests {
         body: Option<Value>,
     ) -> (u16, Value) {
         let mut request = Request::builder().method(method).uri(path);
+        if path.starts_with("/api/v1/") {
+            request = request.header("authorization", "Bearer test-seat-token");
+        }
         let body = if let Some(body) = body {
             request = request.header("content-type", "application/json");
             Body::from(serde_json::to_vec(&body).unwrap())
@@ -647,6 +720,20 @@ mod tests {
                 "api_version": "v1"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn protected_api_requires_a_bearer_token() {
+        let response = app()
+            .await
+            .unwrap()
+            .oneshot(Request::get("/api/v1/games").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 401);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let error: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["code"], "authentication_required");
     }
 
     #[tokio::test]

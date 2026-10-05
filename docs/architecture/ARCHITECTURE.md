@@ -165,7 +165,10 @@ Responsibilities:
 - direct real-time connection to the assigned runtime host
 - graceful handling of reconnect, host loss, and session termination
 
-Status: VLC currently acts only as a media receiver for experiments. A real seat client has not yet been implemented.
+Status: the Rust seat client browses the catalog, requests a session, launches
+FFplay, sends grant-authenticated controller state directly to its assigned
+runtime, requests an orderly stop, detects terminal state, and returns to
+browsing. Attract mode, previews, slots, join, and spectator UX remain Phase 2.
 
 ### Operator client
 
@@ -211,7 +214,10 @@ Canonical product states:
 
 Failure states include `allocation_failed`, `launch_failed`, `runtime_lost`, `unhealthy`, and `terminated`.
 
-The current Rust runtime contains an early local state enum and process abstractions, but not all transitions are wired into durable orchestration. State transitions will ultimately be owned by the control plane while runtime facts originate from the runtime host. Commands must become idempotent.
+The control plane owns durable canonical state and lifecycle events while the
+runtime host reports process facts. Allocation, state reports, and stop requests
+are idempotent; invalid transitions and conflicting retries are rejected.
+Heartbeat loss moves nonterminal sessions to `runtime_lost`.
 
 ## Player slots
 

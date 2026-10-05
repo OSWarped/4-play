@@ -10,6 +10,8 @@ agent_binary="$repository_root/target/debug/runtime-host-agent"
 bind_address="127.0.0.1:41800"
 base_url="http://$bind_address"
 host_id="reference-linux-smoke"
+seat_api_token="runtime-host-smoke-seat-token"
+runtime_host_api_token="runtime-host-smoke-agent-token"
 
 control_plane_pid=""
 agent_pid=""
@@ -22,6 +24,10 @@ summary_path="$results_directory/summary.txt"
 
 pass() {
     printf 'PASS\t%s\n' "$1" | tee -a "$summary_path"
+}
+
+curl() {
+    command curl -H "authorization: Bearer $seat_api_token" "$@"
 }
 
 fail() {
@@ -115,6 +121,8 @@ hosts_json="$results_directory/hosts.json"
 FOURPLAY_CONTROL_PLANE_BIND="$bind_address" \
 FOURPLAY_CONTROL_PLANE_DATABASE="$results_directory/control-plane.sqlite3" \
 FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS=2 \
+FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
     "$control_plane_binary" >"$control_plane_log" 2>&1 &
 control_plane_pid=$!
 
@@ -128,6 +136,7 @@ FOURPLAY_CONTROL_PLANE_URL="$base_url" \
 FOURPLAY_RUNTIME_HOST_ID="$host_id" \
 FOURPLAY_RUNTIME_HOST_NAME="Reference Linux Smoke Host" \
 FOURPLAY_HEARTBEAT_SECONDS=1 \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
     "$agent_binary" >"$agent_log" 2>&1 &
 agent_pid=$!
 
@@ -247,6 +256,8 @@ restart_control_plane_log="$results_directory/control-plane-restart.log"
 FOURPLAY_CONTROL_PLANE_BIND="$bind_address" \
 FOURPLAY_CONTROL_PLANE_DATABASE="$results_directory/control-plane.sqlite3" \
 FOURPLAY_RUNTIME_HOST_OFFLINE_SECONDS=2 \
+FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
     "$control_plane_binary" >"$restart_control_plane_log" 2>&1 &
 control_plane_pid=$!
 
@@ -270,6 +281,7 @@ FOURPLAY_CONTROL_PLANE_URL="$base_url" \
 FOURPLAY_RUNTIME_HOST_ID="$host_id" \
 FOURPLAY_RUNTIME_HOST_NAME="Reference Linux Smoke Host" \
 FOURPLAY_HEARTBEAT_SECONDS=1 \
+FOURPLAY_RUNTIME_HOST_API_TOKEN="$runtime_host_api_token" \
     "$agent_binary" >"$restart_agent_log" 2>&1 &
 agent_pid=$!
 

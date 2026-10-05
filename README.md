@@ -8,8 +8,8 @@ The table is the reference implementation. The reusable product is the platform 
 
 ## Current status
 
-4-Play has completed its reference-host remote-play and runtime-isolation proof
-and has begun Phase 1C control-plane orchestration.
+4-Play has completed its reference-host remote-play, runtime-isolation, and
+Phase 1C control-plane orchestration milestones.
 
 Validated capabilities include:
 
@@ -28,13 +28,11 @@ Validated capabilities include:
 - clean Ctrl+C termination without orphaned MAME or FFmpeg processes
 - creation of a Linux virtual game controller through `/dev/uinput`
 - verified virtual axes and buttons through the Linux joystick subsystem
-
-Not yet complete:
-
-- automatic MAME metadata discovery
-- durable session state transitions and production-grade cleanup
-- runtime-host agent registration and recurring heartbeat
-- catalog, allocation, connection grants, and the complete seat launch workflow
+- automatic discovery of verified MAME metadata and runtime profiles
+- durable session allocation, lifecycle events, and expiring connection grants
+- runtime-host registration, liveness, process supervision, and failure reporting
+- a seat workflow that browses, requests, launches media, authenticates input,
+  stops, and returns to browsing
 
 The technical-feasibility milestone remains distinct from the product MVP:
 
@@ -69,14 +67,14 @@ The validated input path is:
 
 ```text
 Windows seat-input client
-  → state-oriented UDP input
+  → grant-authenticated state-oriented UDP input
   → Rust session runtime
   → session-owned /dev/uinput controller
   → MAME
 ```
 
-The next implementation milestone is durable session allocation, connection
-grants, and lifecycle transitions.
+The next implementation milestone is Phase 2 shared-session discovery, player
+slots, join/reconnect leases, previews, and spectator mode.
 
 ## Product principles
 
@@ -122,6 +120,8 @@ two concurrent sessions.
 
 ### Phase 1C — Control-plane orchestration
 
-A minimal catalog, runtime registration, session allocation, connection grants, lifecycle state, and recovery to browsing.
+A minimal catalog, runtime registration, session allocation, connection grants,
+lifecycle state, automatic runtime supervision, authenticated seat launch, and
+recovery to browsing are complete on the reference host.
 
 See [the roadmap](docs/ROADMAP.md), [requirements](docs/requirements/REQUIREMENTS.md), [architecture](docs/architecture/ARCHITECTURE.md), and [runtime validation record](docs/experiments/SESSION_RUNTIME_VALIDATION.md).

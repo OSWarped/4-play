@@ -2,13 +2,15 @@
 
 ## Implementation status
 
-As of the current Phase 1A implementation:
+As of the completed Phase 1C implementation:
 
 - synchronized remote video and audio have been demonstrated over the wired LAN
 - the Rust runtime launches and owns headless MAME and FFmpeg from one command
 - media-side concurrent-session isolation has been demonstrated
-- a Linux virtual controller has been created and validated independently
-- remote controller delivery, disconnect neutralization, and objective button-to-photon latency measurements are not yet complete
+- Linux virtual controllers are session-owned and validated through MAME
+- remote controller delivery, disconnect neutralization, allocation, and
+  lifecycle recovery are complete; objective button-to-photon measurement was
+  explicitly waived as a Phase 1C prerequisite by the project owner
 
 Requirement language below remains normative unless a section explicitly identifies a later phase. Demonstrated behavior is evidence toward a requirement, not a waiver of remaining acceptance criteria.
 
@@ -42,9 +44,9 @@ These are Product MVP requirements and are not required for the Phase 1A remote-
 - The runtime host shall report launch success or a diagnosable failure.
 - The seat shall receive connection information only for its assigned session.
 
-These become required in Phase 1C. Phase 1A may use manually configured addresses and one hardcoded legal test title.
-
-Current evidence: the runtime creates session-specific directories and launches MAME and FFmpeg from one command, but the seat does not yet request the session through a control plane.
+These requirements are delivered in Phase 1C. The seat requests a catalog ID,
+the control plane selects an online compatible host, and the agent supplies all
+validated runtime arguments.
 
 ### Joining and player slots
 
@@ -65,7 +67,9 @@ These are Product MVP requirements targeted for Phase 2.
 - Operator escape actions shall be distinct from game input.
 - Input timeout shall release pressed buttons and center analog axes.
 
-Current evidence: a Rust development tool creates a virtual Linux controller with two analog axes and eight digital buttons. MAME integration, seat transport, isolation, and timeout behavior remain unvalidated.
+Current evidence: session-owned virtual controllers expose two axes and eight
+buttons; grant-authenticated seat transport, simultaneous input, isolation,
+sequence rejection, reconnect, and timeout neutralization are validated.
 
 ### Media
 
@@ -83,7 +87,9 @@ Current evidence: synchronized live video and audio have been demonstrated for s
 - The system shall identify unhealthy and orphaned sessions.
 - Runtime processes shall be cleaned up after normal or abnormal termination.
 
-Current evidence: the validated Ctrl+C path left no MAME or FFmpeg process running. Operator workflows and broader abnormal termination tests remain.
+Current evidence: normal stops and injected MAME/FFmpeg failures are supervised,
+reported durably, and leave no owning runtime children. The broader operator UI
+remains a later-phase workflow.
 
 ## Non-functional requirements
 
@@ -136,7 +142,10 @@ operating.
 - Public protocol messages shall be versioned.
 - Secrets, ROMs, BIOS files, CHDs, saves, and copyrighted media shall not be committed.
 
-The current development runtime contains host-specific paths and manually supplied media metadata. Those are acceptable for the feasibility harness but must move to validated configuration before orchestration.
+Phase 1C uses separate seat and runtime-host bearer credentials, scoped
+short-lived session grants, allowlisted catalog IDs, discovered MAME metadata,
+and an explicitly configured emulator adapter. TLS and credential provisioning
+remain deployment-hardening work before use outside the trusted LAN.
 
 ## Technical feasibility acceptance tests
 
@@ -186,9 +195,11 @@ The demonstration shall:
 7. detect normal termination or runtime loss
 8. return the seat to browsing without rebooting
 
-Status: started. The runnable control-plane service, health/readiness endpoints,
-versioned API boundary, shared lifecycle types, and in-memory runtime-host
-registration and heartbeat API exist.
+Status: complete on the reference host. The durable control plane, verified
+catalog, runtime-host agent, transactional allocator, connection grants,
+supervised MAME adapter, authenticated input path, minimal seat workflow, and
+normal/failure recovery are validated by
+[the Phase 1C record](../testing/PHASE-1C-VALIDATION.md).
 
 ## Product MVP acceptance statement
 

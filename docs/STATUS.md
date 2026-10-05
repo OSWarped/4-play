@@ -80,14 +80,25 @@ Last updated: 2026-10-04
   publishes automatically discovered native runtime profiles
 - the SQLite catalog exposes Aliens, Killer Instinct, TMNT, and WWF
   WrestleMania with per-host online/offline availability
+- SQLite transactionally allocates sessions to online compatible hosts and
+  reserves non-overlapping media/input ports
+- time-limited connection grants carry the assigned host and ports; their
+  128-bit token is enforced by the session-specific UDP input endpoint
+- runtime hosts poll versioned assignments, launch the configured
+  `session-runtime`, and report requested through active lifecycle transitions
+- the agent supervises normal stops and unexpected MAME exits without stale
+  PIDs or orphaned runtime children
+- host heartbeat expiry moves its nonterminal sessions to `runtime_lost`
+- the seat client browses the catalog, requests a game, launches FFplay,
+  sends authenticated controls, stops the session, and returns to browsing
+- a 32-assertion isolated real-MAME smoke test proves authenticated control,
+  normal termination,
+  injected runtime loss, recovery to browsing, and the complete seat workflow
+- Phase 1C control-plane orchestration is complete on the reference host
 
 ## In progress
 
-- replace manual width, height, and refresh arguments with MAME metadata discovery
-- wire the session state machine into actual runtime transitions
-- improve cleanup after the runtime process itself is killed without a chance
-  to run its normal teardown
-- implement durable session allocation, connection grants, and lifecycle state
+- Phase 2 shared-session discovery and player-slot modeling
 
 ## Not started
 
@@ -98,5 +109,5 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Allocate a catalog game to an online compatible runtime and issue the first
-time-limited media/input connection grant.
+Expose active sessions and meaningful player slots, then add atomic join,
+reconnect, preview, and spectator workflows for Phase 2.
