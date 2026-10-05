@@ -40,6 +40,7 @@ struct RuntimeArgs {
     terminal_input: bool,
     input_port: Option<u16>,
     input_token: Option<SessionToken>,
+    debug_input: bool,
     autosave: bool,
     audio_codec: AudioCodec,
     audio_block_ms: usize,
@@ -81,6 +82,7 @@ fn print_usage(program: &str) {
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
     [--input-token <uuid>] \
+    [--debug-input] \
     [--autosave] \
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
@@ -135,6 +137,7 @@ fn parse_args() -> RuntimeArgs {
     let mut terminal_input = false;
     let mut input_port = None;
     let mut input_token = None;
+    let mut debug_input = false;
     let mut autosave = false;
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
@@ -190,6 +193,9 @@ fn parse_args() -> RuntimeArgs {
                     "--input-token",
                 ));
             }
+            "--debug-input" => {
+                debug_input = true;
+            }
             "--autosave" => {
                 autosave = true;
             }
@@ -241,6 +247,7 @@ fn parse_args() -> RuntimeArgs {
         terminal_input,
         input_port,
         input_token,
+        debug_input,
         autosave,
         audio_codec,
         audio_block_ms,
@@ -379,6 +386,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
                 controller,
                 args.input_port.unwrap(),
                 args.input_token,
+                args.debug_input,
                 || {
                     should_stop(
                         &shutdown_requested,

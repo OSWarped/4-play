@@ -1,5 +1,6 @@
 use control_protocol::{
-    CatalogGame, CatalogGameList, CreateSessionRequest, RuntimeHostStatus, Session, SessionState,
+    CatalogGame, CatalogGameList, CreateSessionRequest, PlayerSlot, PlayerSlotState,
+    ReservePlayerSlotRequest, RuntimeHostStatus, Session, SessionList, SessionState,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -38,6 +39,16 @@ struct SeatConfig {
     no_media: bool,
     play_for: Option<Duration>,
     api_token: String,
+    debug_input: bool,
+}
+
+enum BrowseSelection {
+    StartGame(String),
+    ReserveSlot {
+        session_id: String,
+        player_number: u32,
+    },
+    Quit,
 }
 
 struct RawMode;
@@ -67,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_direct(destination: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     println!("4-Play direct seat input -> {destination}");
     println!("Press Esc to disconnect and stop the development session.");
-    run_controller(destination, None, true, || false)
+    run_controller(destination, None, true, false, || false)
 }
 
 fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,9 +96,34 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
 
     loop {
         let games = fetch_available_games(&client, &config.control_plane_url)?;
-        let Some(game_id) = select_game(&games, selected_game.take())? else {
-            println!("Seat client stopped.");
-            return Ok(());
+        let sessions = fetch_active_sessions(&client, &config.control_plane_url)?;
+        let game_id = if let Some(game_id) = selected_game.take() {
+            validate_requested_game(&games, game_id)?
+        } else {
+            match select_browse_action(&sessions, &games)? {
+                BrowseSelection::StartGame(game_id) => game_id,
+                BrowseSelection::ReserveSlot {
+                    session_id,
+                    player_number,
+                } => {
+                    let session = reserve_player_slot(
+                        &client,
+                        &config.control_plane_url,
+                        &session_id,
+                        player_number,
+                        &config.seat_id,
+                    )?;
+                    println!(
+                        "Reserved player {player_number} in session {}. Gameplay join is not wired yet; returning to browsing.",
+                        session.id
+                    );
+                    continue;
+                }
+                BrowseSelection::Quit => {
+                    println!("Seat client stopped.");
+                    return Ok(());
+                }
+            }
         };
         let session = create_session(&client, &config, &game_id)?;
         println!("Session requested: {}", session.id);
@@ -146,7 +182,13 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
         let input_result = if let Some(duration) = config.play_for {
             run_automated_controller(input_destination, input_token, duration, &mut stopped)
         } else {
-            run_controller(input_destination, Some(input_token), false, &mut stopped)
+            run_controller(
+                input_destination,
+                Some(input_token),
+                false,
+                config.debug_input,
+                &mut stopped,
+            )
         };
 
         if !runtime_ended.load(Ordering::Acquire) {
@@ -188,39 +230,142 @@ fn fetch_available_games(
         .collect())
 }
 
-fn select_game(
+fn fetch_active_sessions(
+    client: &Client,
+    control_plane_url: &str,
+) -> Result<Vec<Session>, Box<dyn std::error::Error>> {
+    let sessions = client
+        .get(format!("{control_plane_url}/api/v1/sessions"))
+        .send()?
+        .error_for_status()?
+        .json::<SessionList>()?;
+    Ok(sessions
+        .sessions
+        .into_iter()
+        .filter(|session| !session.state.is_terminal())
+        .collect())
+}
+
+fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
+    if sessions.is_empty() {
+        return;
+    }
+
+    println!("\nActive sessions:");
+    for (index, session) in sessions.iter().enumerate() {
+        let game_name = games
+            .iter()
+            .find(|game| game.id == session.game_id)
+            .map(|game| game.display_name.as_str())
+            .unwrap_or(&session.game_id);
+        println!(
+            "  {}. {} ({}) on {} [{:?}]",
+            index + 1,
+            game_name,
+            session.game_id,
+            session.runtime_host_id,
+            session.state
+        );
+        println!("     {}", describe_player_slots(&session.player_slots));
+    }
+    println!("  Reserve an open slot with j<session-number>.<player-number>, for example j1.2.");
+}
+
+fn describe_player_slots(slots: &[PlayerSlot]) -> String {
+    if slots.is_empty() {
+        return "player slots unavailable".to_owned();
+    }
+    slots
+        .iter()
+        .map(|slot| {
+            let label = format!("P{}", slot.player_number);
+            match slot.state {
+                PlayerSlotState::Open => format!("{label} open"),
+                PlayerSlotState::Reserved => describe_claimed_slot(&label, "reserved", slot),
+                PlayerSlotState::Occupied => describe_claimed_slot(&label, "occupied", slot),
+                PlayerSlotState::Disconnected => {
+                    describe_claimed_slot(&label, "disconnected", slot)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn describe_claimed_slot(label: &str, state: &str, slot: &PlayerSlot) -> String {
+    match slot.seat_id.as_deref() {
+        Some(seat_id) => format!("{label} {state} by {seat_id}"),
+        None => format!("{label} {state}"),
+    }
+}
+
+fn select_browse_action(
+    sessions: &[Session],
     games: &[CatalogGame],
-    requested: Option<String>,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
+) -> Result<BrowseSelection, Box<dyn std::error::Error>> {
     if games.is_empty() {
         return Err("no games are currently available on an online runtime host".into());
     }
-    if let Some(game_id) = requested {
-        if games.iter().any(|game| game.id == game_id) {
-            return Ok(Some(game_id));
-        }
-        return Err(format!("game '{game_id}' is not currently available").into());
-    }
 
+    print_active_sessions(sessions, games);
     println!("\nAvailable games:");
     for (index, game) in games.iter().enumerate() {
         println!("  {}. {} ({})", index + 1, game.display_name, game.id);
     }
-    print!("Choose a game number, or q to quit: ");
+    print!("Choose a game number, j<session>.<player> to reserve, or q to quit: ");
     io::stdout().flush()?;
     let mut selection = String::new();
     io::stdin().read_line(&mut selection)?;
     let selection = selection.trim();
     if selection.eq_ignore_ascii_case("q") {
-        return Ok(None);
+        return Ok(BrowseSelection::Quit);
+    }
+    if let Some((session_index, player_number)) = parse_reservation_selection(selection) {
+        let Some(session) = sessions.get(session_index.saturating_sub(1)) else {
+            return Err("session selection is outside the displayed range".into());
+        };
+        if !session.player_slots.iter().any(|slot| {
+            slot.player_number == player_number && matches!(slot.state, PlayerSlotState::Open)
+        }) {
+            return Err("selected player slot is not open".into());
+        }
+        return Ok(BrowseSelection::ReserveSlot {
+            session_id: session.id.clone(),
+            player_number,
+        });
     }
     let index = selection
         .parse::<usize>()
-        .map_err(|_| "selection must be a game number or q")?;
+        .map_err(|_| "selection must be a game number, reservation, or q")?;
     games
         .get(index.saturating_sub(1))
-        .map(|game| Some(game.id.clone()))
+        .map(|game| BrowseSelection::StartGame(game.id.clone()))
         .ok_or_else(|| "game selection is outside the displayed range".into())
+}
+
+fn validate_requested_game(
+    games: &[CatalogGame],
+    game_id: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if games.iter().any(|game| game.id == game_id) {
+        Ok(game_id)
+    } else {
+        Err(format!("game '{game_id}' is not currently available").into())
+    }
+}
+
+fn parse_reservation_selection(selection: &str) -> Option<(usize, u32)> {
+    let selection = selection.trim();
+    let rest = selection
+        .strip_prefix('j')
+        .or_else(|| selection.strip_prefix('J'))?;
+    let (session, player) = rest.split_once('.')?;
+    let session_index = session.parse::<usize>().ok()?;
+    let player_number = player.parse::<u32>().ok()?;
+    if session_index == 0 || player_number == 0 {
+        return None;
+    }
+    Some((session_index, player_number))
 }
 
 fn create_session(
@@ -234,6 +379,25 @@ fn create_session(
             game_id: game_id.to_owned(),
             seat_id: config.seat_id.clone(),
             destination_address: config.destination_address.to_string(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
+fn reserve_player_slot(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+    player_number: u32,
+    seat_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    Ok(client
+        .post(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/player-slots/{player_number}/reserve"
+        ))
+        .json(&ReservePlayerSlotRequest {
+            seat_id: seat_id.to_owned(),
         })
         .send()?
         .error_for_status()?
@@ -370,6 +534,7 @@ fn run_controller<F>(
     destination: SocketAddr,
     input_token: Option<SessionToken>,
     send_stop_flag: bool,
+    debug_input: bool,
     mut externally_stopped: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -384,6 +549,7 @@ where
     let mut held = HashSet::new();
     let mut sequence = 0_u32;
     let mut last_send = Instant::now() - HEARTBEAT_INTERVAL;
+    let mut last_debug_state = None;
 
     loop {
         let wait = HEARTBEAT_INTERVAL.saturating_sub(last_send.elapsed());
@@ -407,7 +573,12 @@ where
             break;
         }
         if changed || last_send.elapsed() >= HEARTBEAT_INTERVAL {
-            send_state(&socket, &held, &mut sequence, 0, input_token)?;
+            let state = send_state(&socket, &held, &mut sequence, 0, input_token)?;
+            let debug_snapshot = DebugInputState::from(state);
+            if debug_input && Some(debug_snapshot) != last_debug_state {
+                println!("{}", debug_state(&held, state));
+                last_debug_state = Some(debug_snapshot);
+            }
             last_send = Instant::now();
         }
     }
@@ -453,6 +624,7 @@ fn parse_mode() -> Mode {
     let mut no_media = false;
     let mut play_for = None;
     let mut api_token = env::var("FOURPLAY_SEAT_API_TOKEN").ok();
+    let mut debug_input = false;
     let mut index = 0;
     while index < values.len() {
         let option = &values[index];
@@ -470,6 +642,7 @@ fn parse_mode() -> Mode {
             "--game" => game_id = Some(value(&mut index)),
             "--ffplay-path" => ffplay_path = value(&mut index),
             "--no-media" => no_media = true,
+            "--debug-input" => debug_input = true,
             "--api-token" => api_token = Some(value(&mut index)),
             "--play-for-ms" => {
                 let milliseconds = value(&mut index).parse::<u64>().unwrap_or_else(|error| {
@@ -505,12 +678,13 @@ fn parse_mode() -> Mode {
         no_media,
         play_for,
         api_token,
+        debug_input,
     })
 }
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--play-for-ms <milliseconds>]"
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--debug-input] [--play-for-ms <milliseconds>]"
     );
     process::exit(2)
 }
@@ -547,7 +721,7 @@ fn send_state(
     sequence: &mut u32,
     flags: u8,
     input_token: Option<SessionToken>,
-) -> io::Result<()> {
+) -> io::Result<ControllerState> {
     *sequence = sequence.wrapping_add(1);
     let state = state_from_keys(held, *sequence, flags);
     if let Some(token) = input_token {
@@ -555,7 +729,7 @@ fn send_state(
     } else {
         socket.send(&state.encode())?;
     }
-    Ok(())
+    Ok(state)
 }
 
 fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> ControllerState {
@@ -586,6 +760,48 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
     }
 }
 
+fn debug_state(held: &HashSet<KeyCode>, state: ControllerState) -> String {
+    format!(
+        "input seq={} axis=({}, {}) buttons=0x{:04x} keys={}",
+        state.sequence,
+        state.axis_x.signum(),
+        state.axis_y.signum(),
+        state.buttons,
+        debug_keys(held)
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DebugInputState {
+    buttons: u16,
+    axis_x: i16,
+    axis_y: i16,
+    flags: u8,
+}
+
+impl From<ControllerState> for DebugInputState {
+    fn from(state: ControllerState) -> Self {
+        Self {
+            buttons: state.buttons,
+            axis_x: state.axis_x,
+            axis_y: state.axis_y,
+            flags: state.flags,
+        }
+    }
+}
+
+fn debug_keys(held: &HashSet<KeyCode>) -> String {
+    let keys = ['w', 'a', 's', 'd', 'j', 'k', 'l', 'm', ',', '.', '1', '2']
+        .into_iter()
+        .filter(|character| held.contains(&KeyCode::Char(*character)))
+        .collect::<String>();
+    if keys.is_empty() {
+        "none".to_owned()
+    } else {
+        keys
+    }
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -611,5 +827,70 @@ mod tests {
         assert_eq!(state.axis_x, i16::MAX);
         assert_eq!(state.axis_y, -i16::MAX);
         assert_eq!(state.buttons, button::ACTION_1 | button::ACTION_2);
+    }
+
+    #[test]
+    fn debug_state_lists_axis_buttons_and_keys() {
+        let held = HashSet::from([KeyCode::Char('d'), KeyCode::Char('j')]);
+        let state = state_from_keys(&held, 42, 0);
+
+        assert_eq!(
+            debug_state(&held, state),
+            "input seq=42 axis=(1, 0) buttons=0x0001 keys=dj"
+        );
+    }
+
+    #[test]
+    fn debug_state_names_neutral_keys_as_none() {
+        let held = HashSet::new();
+        let state = state_from_keys(&held, 43, 0);
+
+        assert_eq!(
+            debug_state(&held, state),
+            "input seq=43 axis=(0, 0) buttons=0x0000 keys=none"
+        );
+    }
+
+    #[test]
+    fn active_session_slots_are_described_for_browsing() {
+        let slots = vec![
+            PlayerSlot {
+                player_number: 1,
+                state: PlayerSlotState::Occupied,
+                seat_id: Some("windows-seat-1".to_owned()),
+                lease_expires_unix_ms: Some(123),
+            },
+            PlayerSlot {
+                player_number: 2,
+                state: PlayerSlotState::Open,
+                seat_id: None,
+                lease_expires_unix_ms: None,
+            },
+        ];
+
+        assert_eq!(
+            describe_player_slots(&slots),
+            "P1 occupied by windows-seat-1; P2 open"
+        );
+    }
+
+    #[test]
+    fn missing_player_slots_are_reported_as_unavailable() {
+        assert_eq!(describe_player_slots(&[]), "player slots unavailable");
+    }
+
+    #[test]
+    fn reservation_selection_uses_session_and_player_numbers() {
+        assert_eq!(parse_reservation_selection("j1.2"), Some((1, 2)));
+        assert_eq!(parse_reservation_selection("J12.4"), Some((12, 4)));
+    }
+
+    #[test]
+    fn reservation_selection_rejects_invalid_values() {
+        assert_eq!(parse_reservation_selection("1"), None);
+        assert_eq!(parse_reservation_selection("j0.1"), None);
+        assert_eq!(parse_reservation_selection("j1.0"), None);
+        assert_eq!(parse_reservation_selection("j1"), None);
+        assert_eq!(parse_reservation_selection("jone.two"), None);
     }
 }

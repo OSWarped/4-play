@@ -2,8 +2,9 @@ use std::{collections::BTreeMap, error::Error, fmt, path::Path};
 
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
-    RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState,
+    PlayerSlot, PlayerSlotState, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities,
+    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session,
+    SessionState,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -47,6 +48,7 @@ const SCHEMA: &str = "
         grant_expires_unix_ms INTEGER NOT NULL,
         media_udp_port INTEGER NOT NULL,
         input_udp_port INTEGER NOT NULL,
+        player_slots_json TEXT NOT NULL DEFAULT '[]',
         created_unix_ms INTEGER NOT NULL,
         updated_unix_ms INTEGER NOT NULL,
         failure_reason TEXT,
@@ -100,6 +102,25 @@ impl RuntimeHostStore {
     async fn initialize(connection: Connection) -> Result<Self, StoreError> {
         connection
             .call(|connection| connection.execute_batch(SCHEMA))
+            .await
+            .map_err(StoreError::database)?;
+        connection
+            .call(|connection| -> tokio_rusqlite::rusqlite::Result<()> {
+                let has_player_slots = connection
+                    .prepare("PRAGMA table_info(sessions)")?
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .any(|name| name == "player_slots_json");
+                if !has_player_slots {
+                    connection.execute(
+                        "ALTER TABLE sessions
+                         ADD COLUMN player_slots_json TEXT NOT NULL DEFAULT '[]'",
+                        [],
+                    )?;
+                }
+                Ok(())
+            })
             .await
             .map_err(StoreError::database)?;
         Ok(Self { connection })
@@ -510,6 +531,18 @@ impl RuntimeHostStore {
                 if capabilities.data_plane_address.trim().is_empty() {
                     return Ok(Err(AllocationRejection::MissingDataPlaneAddress));
                 }
+                let runtime_profile: GameRuntimeProfile = match serde_json::from_str(&runtime_profile_json) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
+                };
+                let player_slots_json = match serde_json::to_string(&initial_player_slots(
+                    runtime_profile.max_players,
+                    &request.seat_id,
+                    grant_expires_unix_ms,
+                )) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
+                };
 
                 let mut selected_ports = None;
                 for offset in 0..port_count {
@@ -538,9 +571,9 @@ impl RuntimeHostStore {
                     "INSERT INTO sessions (
                         id, game_id, seat_id, destination_address, runtime_host_id,
                         runtime_host_address, runtime_profile_json, state, grant_token,
-                        grant_expires_unix_ms, media_udp_port, input_udp_port,
+                        grant_expires_unix_ms, media_udp_port, input_udp_port, player_slots_json,
                         created_unix_ms, updated_unix_ms, failure_reason
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, ?12, NULL)",
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, ?13, ?13, NULL)",
                     params![
                         session_id,
                         request.game_id,
@@ -553,6 +586,7 @@ impl RuntimeHostStore {
                         grant_expires,
                         i64::from(media_udp_port),
                         i64::from(input_udp_port),
+                        player_slots_json,
                         now,
                     ],
                 )?;
@@ -812,6 +846,135 @@ impl RuntimeHostStore {
             .ok_or(StoreError::SessionNotFound)?;
         stored.into_session()
     }
+
+    pub async fn reserve_player_slot(
+        &self,
+        session_id: String,
+        player_number: u32,
+        seat_id: String,
+        now_unix_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "slot reservation timestamp")?;
+        let lease_expires = to_sql_integer(
+            now_unix_ms.saturating_add(lease_duration_ms),
+            "slot reservation expiry",
+        )?;
+        let stored = self
+            .connection
+            .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, SlotReservationRejection>> {
+                let transaction = connection.transaction()?;
+                let current = transaction
+                    .query_row(
+                        "SELECT state, player_slots_json FROM sessions WHERE id = ?1",
+                        [&session_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .optional()?;
+                let Some((state_name, player_slots_json)) = current else {
+                    return Ok(Err(SlotReservationRejection::SessionNotFound));
+                };
+                let state = match parse_session_state(&state_name) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredState)),
+                };
+                if !matches!(state, SessionState::Ready | SessionState::Active) {
+                    return Ok(Err(SlotReservationRejection::Unavailable));
+                }
+
+                let mut slots: Vec<PlayerSlot> = match serde_json::from_str(&player_slots_json) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                };
+                expire_slot_leases(&mut slots, now_unix_ms);
+
+                let already_claims_another_slot = slots.iter().any(|slot| {
+                    slot.player_number != player_number
+                        && slot.seat_id.as_deref() == Some(seat_id.as_str())
+                        && !matches!(slot.state, PlayerSlotState::Open)
+                });
+                if already_claims_another_slot {
+                    return Ok(Err(SlotReservationRejection::SeatBusy));
+                }
+
+                let seat_busy_elsewhere = transaction
+                    .prepare(
+                        "SELECT id, player_slots_json FROM sessions
+                         WHERE id != ?1
+                           AND state NOT IN
+                            ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')",
+                    )?
+                    .query_map([&session_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .any(|(_, slots_json)| {
+                        serde_json::from_str::<Vec<PlayerSlot>>(&slots_json)
+                            .map(|slots| {
+                                slots.iter().any(|slot| {
+                                    slot.seat_id.as_deref() == Some(seat_id.as_str())
+                                        && !matches!(slot.state, PlayerSlotState::Open)
+                                })
+                            })
+                            .unwrap_or(false)
+                    });
+                if seat_busy_elsewhere {
+                    return Ok(Err(SlotReservationRejection::SeatBusy));
+                }
+
+                let Some(slot) = slots
+                    .iter_mut()
+                    .find(|slot| slot.player_number == player_number)
+                else {
+                    return Ok(Err(SlotReservationRejection::SlotNotFound));
+                };
+                match slot.state {
+                    PlayerSlotState::Open => {
+                        slot.state = PlayerSlotState::Reserved;
+                        slot.seat_id = Some(seat_id.clone());
+                        slot.lease_expires_unix_ms = Some(now_unix_ms.saturating_add(lease_duration_ms));
+                    }
+                    PlayerSlotState::Reserved if slot.seat_id.as_deref() == Some(seat_id.as_str()) => {
+                        slot.lease_expires_unix_ms = Some(now_unix_ms.saturating_add(lease_duration_ms));
+                    }
+                    PlayerSlotState::Occupied | PlayerSlotState::Disconnected
+                        if slot.seat_id.as_deref() == Some(seat_id.as_str()) => {}
+                    _ => return Ok(Err(SlotReservationRejection::Unavailable)),
+                }
+                let updated_slots = match serde_json::to_string(&slots) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                };
+                transaction.execute(
+                    "UPDATE sessions
+                     SET player_slots_json = ?2, updated_unix_ms = ?3
+                     WHERE id = ?1",
+                    params![session_id, updated_slots, now],
+                )?;
+                transaction.execute(
+                    "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        session_id,
+                        state_name,
+                        now,
+                        format!("player {player_number} reserved by {seat_id} until {lease_expires}")
+                    ],
+                )?;
+                let stored = transaction.query_row(
+                    &session_select_sql("WHERE id = ?1"),
+                    [&session_id],
+                    StoredSession::from_row,
+                )?;
+                transaction.commit()?;
+                Ok(Ok(stored))
+            })
+            .await
+            .map_err(StoreError::database)?
+            .map_err(StoreError::from_slot_reservation_rejection)?;
+        stored.into_session()
+    }
 }
 
 fn session_select_sql(suffix: &str) -> String {
@@ -819,9 +982,52 @@ fn session_select_sql(suffix: &str) -> String {
         "SELECT id, game_id, seat_id, destination_address, runtime_host_id,
                 runtime_host_address, runtime_profile_json, state, grant_token,
                 grant_expires_unix_ms, media_udp_port, input_udp_port,
-                created_unix_ms, updated_unix_ms, failure_reason
+                player_slots_json, created_unix_ms, updated_unix_ms, failure_reason
          FROM sessions {suffix}"
     )
+}
+
+fn initial_player_slots(
+    max_players: u32,
+    seat_id: &str,
+    lease_expires_unix_ms: u64,
+) -> Vec<PlayerSlot> {
+    let slot_count = max_players.max(1);
+    (1..=slot_count)
+        .map(|player_number| {
+            if player_number == 1 {
+                PlayerSlot {
+                    player_number,
+                    state: PlayerSlotState::Occupied,
+                    seat_id: Some(seat_id.to_owned()),
+                    lease_expires_unix_ms: Some(lease_expires_unix_ms),
+                }
+            } else {
+                PlayerSlot {
+                    player_number,
+                    state: PlayerSlotState::Open,
+                    seat_id: None,
+                    lease_expires_unix_ms: None,
+                }
+            }
+        })
+        .collect()
+}
+
+fn expire_slot_leases(slots: &mut [PlayerSlot], now_unix_ms: u64) {
+    for slot in slots {
+        if matches!(
+            slot.state,
+            PlayerSlotState::Reserved | PlayerSlotState::Disconnected
+        ) && slot
+            .lease_expires_unix_ms
+            .is_some_and(|expires| expires <= now_unix_ms)
+        {
+            slot.state = PlayerSlotState::Open;
+            slot.seat_id = None;
+            slot.lease_expires_unix_ms = None;
+        }
+    }
 }
 
 fn mark_expired_offline(
@@ -919,6 +1125,7 @@ struct StoredSession {
     grant_expires_unix_ms: i64,
     media_udp_port: i64,
     input_udp_port: i64,
+    player_slots_json: String,
     created_unix_ms: i64,
     updated_unix_ms: i64,
     failure_reason: Option<String>,
@@ -939,9 +1146,10 @@ impl StoredSession {
             grant_expires_unix_ms: row.get(9)?,
             media_udp_port: row.get(10)?,
             input_udp_port: row.get(11)?,
-            created_unix_ms: row.get(12)?,
-            updated_unix_ms: row.get(13)?,
-            failure_reason: row.get(14)?,
+            player_slots_json: row.get(12)?,
+            created_unix_ms: row.get(13)?,
+            updated_unix_ms: row.get(14)?,
+            failure_reason: row.get(15)?,
         })
     }
 
@@ -949,6 +1157,8 @@ impl StoredSession {
         let runtime_profile =
             serde_json::from_str::<GameRuntimeProfile>(&self.runtime_profile_json)
                 .map_err(StoreError::serialization)?;
+        let player_slots = serde_json::from_str::<Vec<PlayerSlot>>(&self.player_slots_json)
+            .map_err(StoreError::serialization)?;
         Ok(Session {
             id: self.id,
             game_id: self.game_id,
@@ -972,6 +1182,7 @@ impl StoredSession {
                     StoreError::data("input UDP port is outside the supported range")
                 })?,
             },
+            player_slots,
             created_unix_ms: from_sql_integer(self.created_unix_ms, "created_unix_ms")?,
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
             failure_reason: self.failure_reason,
@@ -1072,6 +1283,7 @@ enum AllocationRejection {
     SeatBusy,
     PortsExhausted,
     InvalidHostCapabilities,
+    InvalidRuntimeProfile,
     MissingDataPlaneAddress,
 }
 
@@ -1084,6 +1296,15 @@ enum StateUpdateRejection {
     ConflictingRetry,
 }
 
+enum SlotReservationRejection {
+    SessionNotFound,
+    SlotNotFound,
+    SeatBusy,
+    Unavailable,
+    InvalidStoredState,
+    InvalidStoredSlots,
+}
+
 #[derive(Debug)]
 pub enum StoreError {
     NotFound,
@@ -1092,6 +1313,8 @@ pub enum StoreError {
     SessionNotFound,
     SeatBusy,
     PortsExhausted,
+    PlayerSlotNotFound,
+    PlayerSlotUnavailable,
     MissingDataPlaneAddress,
     WrongRuntimeHost,
     InvalidSessionTransition,
@@ -1134,6 +1357,9 @@ impl StoreError {
             AllocationRejection::InvalidHostCapabilities => {
                 Self::data("runtime host capabilities could not be decoded")
             }
+            AllocationRejection::InvalidRuntimeProfile => {
+                Self::data("runtime profile could not be decoded")
+            }
             AllocationRejection::MissingDataPlaneAddress => Self::MissingDataPlaneAddress,
         }
     }
@@ -1146,6 +1372,21 @@ impl StoreError {
             StateUpdateRejection::InvalidTransition => Self::InvalidSessionTransition,
             StateUpdateRejection::MissingFailureReason => Self::MissingFailureReason,
             StateUpdateRejection::ConflictingRetry => Self::ConflictingStateRetry,
+        }
+    }
+
+    fn from_slot_reservation_rejection(rejection: SlotReservationRejection) -> Self {
+        match rejection {
+            SlotReservationRejection::SessionNotFound => Self::SessionNotFound,
+            SlotReservationRejection::SlotNotFound => Self::PlayerSlotNotFound,
+            SlotReservationRejection::SeatBusy => Self::SeatBusy,
+            SlotReservationRejection::Unavailable => Self::PlayerSlotUnavailable,
+            SlotReservationRejection::InvalidStoredState => {
+                Self::data("session has an unknown state")
+            }
+            SlotReservationRejection::InvalidStoredSlots => {
+                Self::data("session player slots could not be decoded")
+            }
         }
     }
 }
@@ -1161,6 +1402,8 @@ impl fmt::Display for StoreError {
             Self::PortsExhausted => {
                 write!(formatter, "runtime host has no available session ports")
             }
+            Self::PlayerSlotNotFound => write!(formatter, "player slot was not found"),
+            Self::PlayerSlotUnavailable => write!(formatter, "player slot is not currently open"),
             Self::MissingDataPlaneAddress => {
                 write!(formatter, "runtime host has no data-plane address")
             }

@@ -56,7 +56,11 @@ validated runtime arguments.
 - The game package shall define whether slot position has gameplay meaning.
 - A disconnected seat shall receive a configurable reconnect grace period.
 
-These are Product MVP requirements targeted for Phase 2.
+Current evidence: session responses expose explicit player slots, the seat
+client can inspect active-session slots while browsing, and the control plane
+can atomically reserve open slots with a lease. Runtime multi-controller join,
+slot reconnect recovery, and gameplay input routing for joined seats remain
+Product MVP work.
 
 ### Input
 

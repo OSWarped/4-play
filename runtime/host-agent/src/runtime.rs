@@ -134,6 +134,9 @@ impl RuntimeSupervisor {
         if assignment.runtime_profile.supports_save_state {
             command.arg("--autosave");
         }
+        if input_debug_enabled() {
+            command.arg("--debug-input");
+        }
         let child = command.spawn()?;
         let pid = child.id();
         fs::write(&pid_file, format!("{pid}\n"))?;
@@ -227,6 +230,16 @@ impl RuntimeSupervisor {
     }
 }
 
+fn input_debug_enabled() -> bool {
+    input_debug_value_enabled(std::env::var("FOURPLAY_INPUT_DEBUG").ok().as_deref())
+}
+
+fn input_debug_value_enabled(value: Option<&str>) -> bool {
+    value
+        .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+        .unwrap_or(false)
+}
+
 fn read_live_pid(path: &Path, session_id: &str) -> io::Result<Option<u32>> {
     let Some(contents) = fs::read_to_string(path).ok() else {
         return Ok(None);
@@ -313,5 +326,32 @@ fn format_exit_status(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => format!("session runtime exited with code {code}"),
         None => format!("session runtime exited: {status}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::input_debug_value_enabled;
+
+    #[test]
+    fn input_debug_accepts_common_truthy_values() {
+        for value in [
+            Some("1"),
+            Some("true"),
+            Some("TRUE"),
+            Some("yes"),
+            Some("YES"),
+            Some("on"),
+            Some("ON"),
+        ] {
+            assert!(input_debug_value_enabled(value));
+        }
+    }
+
+    #[test]
+    fn input_debug_rejects_missing_or_false_values() {
+        for value in [None, Some("0"), Some("false"), Some("off"), Some("")] {
+            assert!(!input_debug_value_enabled(value));
+        }
     }
 }

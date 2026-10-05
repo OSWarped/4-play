@@ -134,6 +134,7 @@ termination or runtime loss. See
 - atomic slot reservation and reconnect leases
 - join an active compatible session
 - spectator mode
+- configurable runtime-host media/input port pools for n-seat allocation
 - fixed-character and positioned cabinet profiles
 - preview degradation that never blocks gameplay
 
@@ -145,6 +146,7 @@ termination or runtime loss. See
 - independent and shared play
 - kiosk startup and recovery
 - physical controls and audio isolation
+- installer/runtime-host firewall guidance derived from configured port pools
 - table ergonomics and service access
 - soak and abuse testing
 

@@ -99,15 +99,22 @@ Last updated: 2026-10-04
 ## In progress
 
 - Phase 2 shared-session discovery and player-slot modeling
+- session responses expose explicit player slots derived from each game's
+  maximum player count
+- the seat client lists active sessions and occupied/open slots while browsing
+- the control plane supports atomic, lease-based reservation of open player
+  slots in ready/active sessions
 
 ## Not started
 
 - catalog and game-package workflow
-- active-session discovery and previews
-- player-slot reservation
-- spectator and join workflows
+- low-cost active-session previews
+- runtime multi-controller join wiring for reserved player slots
+- spectator workflows
+- reconnect lease recovery
 
 ## Next milestone
 
-Expose active sessions and meaningful player slots, then add atomic join,
-reconnect, preview, and spectator workflows for Phase 2.
+Connect reserved player slots to runtime-owned virtual controllers and media
+delivery so a second seat can actually join and play an active compatible
+session. Preview, reconnect, and spectator workflows follow that join path.

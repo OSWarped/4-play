@@ -130,6 +130,11 @@ pub struct CreateSessionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReservePlayerSlotRequest {
+    pub seat_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionGrant {
     pub token: String,
     pub expires_unix_ms: u64,
@@ -137,6 +142,23 @@ pub struct ConnectionGrant {
     pub runtime_host_address: String,
     pub media_udp_port: u16,
     pub input_udp_port: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerSlotState {
+    Open,
+    Reserved,
+    Occupied,
+    Disconnected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerSlot {
+    pub player_number: u32,
+    pub state: PlayerSlotState,
+    pub seat_id: Option<String>,
+    pub lease_expires_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -149,6 +171,8 @@ pub struct Session {
     pub runtime_profile: GameRuntimeProfile,
     pub state: SessionState,
     pub connection_grant: ConnectionGrant,
+    #[serde(default)]
+    pub player_slots: Vec<PlayerSlot>,
     pub created_unix_ms: u64,
     pub updated_unix_ms: u64,
     pub failure_reason: Option<String>,

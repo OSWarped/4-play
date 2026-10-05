@@ -91,6 +91,23 @@ FOURPLAY_SESSION_RUNTIME_PATH="$PWD/target/release/session-runtime" \
   ./target/release/runtime-host-agent
 ```
 
+Before launching seats from another machine, confirm the runtime host firewall
+allows the orchestrated ranges from the seat IP. For the reference Windows seat
+at `192.168.20.10`:
+
+```bash
+sudo ufw allow from 192.168.20.10 to any port 8080 proto tcp \
+  comment '4-play control plane'
+sudo ufw allow from 192.168.20.10 to any port 41000:41099 proto udp \
+  comment '4-play media range'
+sudo ufw allow from 192.168.20.10 to any port 42000:42099 proto udp \
+  comment '4-play seat input range'
+```
+
+Seat input ports start at `42000` and increment per active seat. Allowing only
+`42000/udp` lets seat 1 work but blocks seat 2 on `42001/udp` and seat 3 on
+`42002/udp`.
+
 On the Windows seat, set the installed FFplay path when it is not on `PATH`:
 
 ```powershell

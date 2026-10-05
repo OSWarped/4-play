@@ -16,9 +16,9 @@ use axum::{
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, ErrorResponse,
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList,
-    RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList, StatusResponse,
-    UpdateSessionState,
+    RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
+    RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session,
+    SessionList, StatusResponse, UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -104,6 +104,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route("/api/v1/sessions/{session_id}", get(get_session))
+        .route(
+            "/api/v1/sessions/{session_id}/player-slots/{player_number}/reserve",
+            post(reserve_player_slot),
+        )
         .route(
             "/api/v1/sessions/{session_id}/stop",
             post(request_session_stop),
@@ -346,6 +350,26 @@ async fn request_session_stop(
         .map_err(ApiError::store)
 }
 
+async fn reserve_player_slot(
+    State(state): State<AppState>,
+    AxumPath((session_id, player_number)): AxumPath<(String, u32)>,
+    Json(request): Json<ReservePlayerSlotRequest>,
+) -> Result<Json<Session>, ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    state
+        .runtime_hosts
+        .reserve_player_slot(
+            session_id,
+            player_number,
+            request.seat_id,
+            unix_time_ms(),
+            state.grant_ttl_ms,
+        )
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
 async fn list_runtime_assignments(
     State(state): State<AppState>,
     AxumPath(host_id): AxumPath<String>,
@@ -443,24 +467,8 @@ fn validate_registration(registration: &RegisterRuntimeHost) -> Result<(), ApiEr
 }
 
 fn validate_session_request(request: &CreateSessionRequest) -> Result<(), ApiError> {
-    for (code, label, value) in [
-        ("invalid_game_id", "game ID", &request.game_id),
-        ("invalid_seat_id", "seat ID", &request.seat_id),
-    ] {
-        let valid = !value.is_empty()
-            && value.len() <= 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-        if !valid {
-            return Err(ApiError::bad_request(
-                code,
-                &format!(
-                    "{label} must contain 1-64 ASCII letters, digits, dots, dashes, or underscores"
-                ),
-            ));
-        }
-    }
+    validate_identity("invalid_game_id", "game ID", &request.game_id)?;
+    validate_seat_id(&request.seat_id)?;
     request.destination_address.parse::<IpAddr>().map_err(|_| {
         ApiError::bad_request(
             "invalid_destination_address",
@@ -468,6 +476,28 @@ fn validate_session_request(request: &CreateSessionRequest) -> Result<(), ApiErr
         )
     })?;
     Ok(())
+}
+
+fn validate_seat_id(seat_id: &str) -> Result<(), ApiError> {
+    validate_identity("invalid_seat_id", "seat ID", seat_id)
+}
+
+fn validate_identity(code: &str, label: &str, value: &str) -> Result<(), ApiError> {
+    let valid = !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            code,
+            &format!(
+                "{label} must contain 1-64 ASCII letters, digits, dots, dashes, or underscores"
+            ),
+        ))
+    }
 }
 
 fn validate_catalog(catalog: &RuntimeHostCatalog) -> Result<(), ApiError> {
@@ -557,6 +587,16 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "session_ports_exhausted",
                 "runtime host has no available session ports",
+            ),
+            StoreError::PlayerSlotNotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "player_slot_not_found",
+                "player slot was not found",
+            ),
+            StoreError::PlayerSlotUnavailable => Self::new(
+                StatusCode::CONFLICT,
+                "player_slot_unavailable",
+                "player slot is not currently open",
             ),
             StoreError::MissingDataPlaneAddress => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1049,6 +1089,17 @@ mod tests {
         assert_eq!(first["connection_grant"]["media_udp_port"], 41_000);
         assert_eq!(first["connection_grant"]["input_udp_port"], 42_000);
         assert!(first["connection_grant"]["token"].as_str().unwrap().len() >= 32);
+        assert_eq!(first["player_slots"].as_array().unwrap().len(), 4);
+        assert_eq!(first["player_slots"][0]["player_number"], 1);
+        assert_eq!(first["player_slots"][0]["state"], "occupied");
+        assert_eq!(first["player_slots"][0]["seat_id"], "seat-one");
+        assert_eq!(
+            first["player_slots"][0]["lease_expires_unix_ms"],
+            first["connection_grant"]["expires_unix_ms"]
+        );
+        assert_eq!(first["player_slots"][1]["player_number"], 2);
+        assert_eq!(first["player_slots"][1]["state"], "open");
+        assert!(first["player_slots"][1]["seat_id"].is_null());
 
         let (busy_status, busy) = request_json(
             service.clone(),
@@ -1079,11 +1130,13 @@ mod tests {
             request_json(reopened.clone(), Method::GET, &path, None).await;
         assert_eq!(get_status, 200);
         assert_eq!(persisted["connection_grant"], first["connection_grant"]);
+        assert_eq!(persisted["player_slots"], first["player_slots"]);
 
         let (list_status, list) =
             request_json(reopened, Method::GET, "/api/v1/sessions", None).await;
         assert_eq!(list_status, 200);
         assert_eq!(list["sessions"].as_array().unwrap().len(), 2);
+        assert_eq!(list["sessions"][0]["player_slots"], first["player_slots"]);
     }
 
     #[tokio::test]
@@ -1247,6 +1300,133 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn player_slot_reservation_is_atomic_and_lease_based() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for state in ["starting", "ready", "active"] {
+            request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({ "state": state, "failure_reason": null })),
+            )
+            .await;
+        }
+
+        let reserve_p2 = format!("/api/v1/sessions/{session_id}/player-slots/2/reserve");
+        let (reserve_status, reserved) = request_json(
+            service.clone(),
+            Method::POST,
+            &reserve_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(reserve_status, 200);
+        assert_eq!(reserved["player_slots"][1]["player_number"], 2);
+        assert_eq!(reserved["player_slots"][1]["state"], "reserved");
+        assert_eq!(reserved["player_slots"][1]["seat_id"], "seat-two");
+        assert!(reserved["player_slots"][1]["lease_expires_unix_ms"].is_number());
+
+        let (retry_status, retry) = request_json(
+            service.clone(),
+            Method::POST,
+            &reserve_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(retry_status, 200);
+        assert_eq!(retry["player_slots"][1]["seat_id"], "seat-two");
+
+        let (conflict_status, conflict) = request_json(
+            service.clone(),
+            Method::POST,
+            &reserve_p2,
+            Some(json!({ "seat_id": "seat-three" })),
+        )
+        .await;
+        assert_eq!(conflict_status, 409);
+        assert_eq!(conflict["code"], "player_slot_unavailable");
+
+        let reserve_p3 = format!("/api/v1/sessions/{session_id}/player-slots/3/reserve");
+        let (busy_status, busy) = request_json(
+            service,
+            Method::POST,
+            &reserve_p3,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(busy_status, 409);
+        assert_eq!(busy["code"], "seat_session_conflict");
+    }
+
+    #[tokio::test]
+    async fn player_slot_reservation_rejects_missing_unstarted_and_unknown_slots() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+
+        let allocating_path = format!("/api/v1/sessions/{session_id}/player-slots/2/reserve");
+        let (allocating_status, allocating) = request_json(
+            service.clone(),
+            Method::POST,
+            &allocating_path,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(allocating_status, 409);
+        assert_eq!(allocating["code"], "player_slot_unavailable");
+
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for state in ["starting", "ready"] {
+            request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({ "state": state, "failure_reason": null })),
+            )
+            .await;
+        }
+        let missing_slot_path = format!("/api/v1/sessions/{session_id}/player-slots/9/reserve");
+        let (slot_status, slot_error) = request_json(
+            service.clone(),
+            Method::POST,
+            &missing_slot_path,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(slot_status, 404);
+        assert_eq!(slot_error["code"], "player_slot_not_found");
+
+        let (session_status, session_error) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions/missing/player-slots/1/reserve",
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(session_status, 404);
+        assert_eq!(session_error["code"], "session_not_found");
     }
 
     #[tokio::test]

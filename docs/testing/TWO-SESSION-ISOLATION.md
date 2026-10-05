@@ -127,16 +127,29 @@ session B advanced from 268 to 623 frames after session A stopped.
 The automated result must be followed by this visual test. Use two SSH windows
 on the Linux host and four PowerShell windows on the Windows seat.
 
-The runtime host firewall must allow input UDP from the seat. The reference
-environment uses this narrowly scoped UFW rule:
+The runtime host firewall must allow the orchestrated input UDP ports from the
+seat. The reference environment allocates input ports from `42000` upward:
+seat 1 uses `42000`, seat 2 uses `42001`, seat 3 uses `42002`, and so on.
+Use a range rule during installation rather than opening only the first seat:
 
 ```bash
-sudo ufw allow from 192.168.20.10 to any port 42011:42012 proto udp \
-  comment '4-play two-session input'
+sudo ufw allow from 192.168.20.10 to any port 42000:42099 proto udp \
+  comment '4-play seat input range'
 ```
 
-Without this rule, the input clients continue running and sending heartbeats,
-but neither runtime logs `Seat input connected` and no controls register.
+The media ports are also allocated from `41000` upward. If host firewall rules
+are enabled, allow the media range as well:
+
+```bash
+sudo ufw allow from 192.168.20.10 to any port 41000:41099 proto udp \
+  comment '4-play media range'
+```
+
+Without the correct input range, affected seat clients continue running and
+sending heartbeats, and `tcpdump` can still show UDP packets arriving at the
+host NIC, but `session-runtime` never logs `Seat input connected` and no
+controls register. This was observed when UFW allowed `42000/udp` but blocked
+seat 2 on `42001/udp`.
 
 ### 1. Start both Windows receivers
 

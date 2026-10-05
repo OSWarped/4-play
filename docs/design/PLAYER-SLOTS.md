@@ -35,13 +35,17 @@ slots:
 
 Slot states:
 
-- `available`
+- `open`
 - `reserved`
-- `connected`
-- `reconnecting`
-- `released`
+- `occupied`
+- `disconnected`
 
-A reservation includes a lease expiration and seat identity. Reservation and release operations must be atomic and idempotent.
+A reservation includes a lease expiration and seat identity. Reservation and
+release operations must be atomic and idempotent. The initial Phase 2
+implementation stores player slots with each session, exposes them in session
+responses, and allows seats to reserve open slots in ready or active sessions.
+The runtime still needs multi-controller join wiring before a reserved slot can
+become a fully playable joined seat.
 
 ## Fixed and interchangeable slots
 
