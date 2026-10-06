@@ -1339,6 +1339,14 @@ mod tests {
         assert_eq!(reserved["player_slots"][1]["state"], "reserved");
         assert_eq!(reserved["player_slots"][1]["seat_id"], "seat-two");
         assert!(reserved["player_slots"][1]["lease_expires_unix_ms"].is_number());
+        assert!(
+            reserved["connection_grant"]["expires_unix_ms"]
+                .as_u64()
+                .unwrap()
+                >= reserved["player_slots"][1]["lease_expires_unix_ms"]
+                    .as_u64()
+                    .unwrap()
+        );
 
         let (retry_status, retry) = request_json(
             service.clone(),

@@ -44,11 +44,14 @@ struct SeatConfig {
 
 enum BrowseSelection {
     StartGame(String),
-    ReserveSlot {
-        session_id: String,
-        player_number: u32,
-    },
+    JoinSlot(PlayTarget),
     Quit,
+}
+
+struct PlayTarget {
+    session_id: String,
+    player_number: u8,
+    stop_session_on_exit: bool,
 }
 
 struct RawMode;
@@ -78,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_direct(destination: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     println!("4-Play direct seat input -> {destination}");
     println!("Press Esc to disconnect and stop the development session.");
-    run_controller(destination, None, true, false, || false)
+    run_controller(destination, None, 1, true, false, || false)
 }
 
 fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -97,27 +100,39 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
     loop {
         let games = fetch_available_games(&client, &config.control_plane_url)?;
         let sessions = fetch_active_sessions(&client, &config.control_plane_url)?;
-        let game_id = if let Some(game_id) = selected_game.take() {
-            validate_requested_game(&games, game_id)?
+        let target = if let Some(game_id) = selected_game.take() {
+            let game_id = validate_requested_game(&games, game_id)?;
+            let session = create_session(&client, &config, &game_id)?;
+            println!("Session requested: {}", session.id);
+            PlayTarget {
+                session_id: session.id,
+                player_number: 1,
+                stop_session_on_exit: true,
+            }
         } else {
             match select_browse_action(&sessions, &games)? {
-                BrowseSelection::StartGame(game_id) => game_id,
-                BrowseSelection::ReserveSlot {
-                    session_id,
-                    player_number,
-                } => {
+                BrowseSelection::StartGame(game_id) => {
+                    let session = create_session(&client, &config, &game_id)?;
+                    println!("Session requested: {}", session.id);
+                    PlayTarget {
+                        session_id: session.id,
+                        player_number: 1,
+                        stop_session_on_exit: true,
+                    }
+                }
+                BrowseSelection::JoinSlot(target) => {
                     let session = reserve_player_slot(
                         &client,
                         &config.control_plane_url,
-                        &session_id,
-                        player_number,
+                        &target.session_id,
+                        target.player_number,
                         &config.seat_id,
                     )?;
                     println!(
-                        "Reserved player {player_number} in session {}. Gameplay join is not wired yet; returning to browsing.",
-                        session.id
+                        "Reserved player {} in session {}.",
+                        target.player_number, session.id
                     );
-                    continue;
+                    target
                 }
                 BrowseSelection::Quit => {
                     println!("Seat client stopped.");
@@ -125,10 +140,8 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                 }
             }
         };
-        let session = create_session(&client, &config, &game_id)?;
-        println!("Session requested: {}", session.id);
 
-        let active = match wait_for_active(&client, &config.control_plane_url, &session.id) {
+        let active = match wait_for_active(&client, &config.control_plane_url, &target.session_id) {
             Ok(session) => session,
             Err(error) => {
                 eprintln!("Session did not start: {error}");
@@ -162,8 +175,8 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
         };
 
         println!(
-            "Playing {} through host {}. Press Esc to stop and return to browsing.",
-            active.game_id, active.runtime_host_id
+            "Playing {} as player {} through host {}. Press Esc to return to browsing.",
+            active.game_id, target.player_number, active.runtime_host_id
         );
         let runtime_ended = Arc::new(AtomicBool::new(false));
         let monitor = spawn_session_monitor(
@@ -180,18 +193,25 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                     .is_some()
         };
         let input_result = if let Some(duration) = config.play_for {
-            run_automated_controller(input_destination, input_token, duration, &mut stopped)
+            run_automated_controller(
+                input_destination,
+                input_token,
+                target.player_number,
+                duration,
+                &mut stopped,
+            )
         } else {
             run_controller(
                 input_destination,
                 Some(input_token),
-                false,
+                target.player_number,
+                target.stop_session_on_exit,
                 config.debug_input,
                 &mut stopped,
             )
         };
 
-        if !runtime_ended.load(Ordering::Acquire) {
+        if target.stop_session_on_exit && !runtime_ended.load(Ordering::Acquire) {
             request_stop(&client, &config.control_plane_url, &active.id)?;
         }
         runtime_ended.store(true, Ordering::Release);
@@ -199,11 +219,18 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
         stop_media(&mut media);
         input_result?;
 
-        let final_session = wait_for_terminal(&client, &config.control_plane_url, &active.id)?;
-        println!(
-            "Session {} ended in state {:?}; returning to browsing.",
-            final_session.id, final_session.state
-        );
+        if target.stop_session_on_exit {
+            let final_session = wait_for_terminal(&client, &config.control_plane_url, &active.id)?;
+            println!(
+                "Session {} ended in state {:?}; returning to browsing.",
+                final_session.id, final_session.state
+            );
+        } else {
+            println!(
+                "Left session {} as player {}; returning to browsing.",
+                active.id, target.player_number
+            );
+        }
         if one_shot {
             return Ok(());
         }
@@ -329,10 +356,13 @@ fn select_browse_action(
         }) {
             return Err("selected player slot is not open".into());
         }
-        return Ok(BrowseSelection::ReserveSlot {
+        let player_number = u8::try_from(player_number)
+            .map_err(|_| "selected player number is outside the supported range")?;
+        return Ok(BrowseSelection::JoinSlot(PlayTarget {
             session_id: session.id.clone(),
             player_number,
-        });
+            stop_session_on_exit: false,
+        }));
     }
     let index = selection
         .parse::<usize>()
@@ -389,7 +419,7 @@ fn reserve_player_slot(
     client: &Client,
     control_plane_url: &str,
     session_id: &str,
-    player_number: u32,
+    player_number: u8,
     seat_id: &str,
 ) -> Result<Session, Box<dyn std::error::Error>> {
     Ok(client
@@ -533,6 +563,7 @@ fn stop_media(media: &mut Option<Child>) {
 fn run_controller<F>(
     destination: SocketAddr,
     input_token: Option<SessionToken>,
+    player_slot: u8,
     send_stop_flag: bool,
     debug_input: bool,
     mut externally_stopped: F,
@@ -563,6 +594,7 @@ where
                     &held,
                     &mut sequence,
                     if send_stop_flag { FLAG_STOP } else { 0 },
+                    player_slot,
                     input_token,
                 )?;
                 break;
@@ -573,7 +605,7 @@ where
             break;
         }
         if changed || last_send.elapsed() >= HEARTBEAT_INTERVAL {
-            let state = send_state(&socket, &held, &mut sequence, 0, input_token)?;
+            let state = send_state(&socket, &held, &mut sequence, 0, player_slot, input_token)?;
             let debug_snapshot = DebugInputState::from(state);
             if debug_input && Some(debug_snapshot) != last_debug_state {
                 println!("{}", debug_state(&held, state));
@@ -588,6 +620,7 @@ where
 fn run_automated_controller<F>(
     destination: SocketAddr,
     input_token: SessionToken,
+    player_slot: u8,
     duration: Duration,
     mut externally_stopped: F,
 ) -> Result<(), Box<dyn std::error::Error>>
@@ -600,7 +633,14 @@ where
     let mut sequence = 0_u32;
     let started = Instant::now();
     while started.elapsed() < duration && !externally_stopped() {
-        send_state(&socket, &held, &mut sequence, 0, Some(input_token))?;
+        send_state(
+            &socket,
+            &held,
+            &mut sequence,
+            0,
+            player_slot,
+            Some(input_token),
+        )?;
         thread::sleep(HEARTBEAT_INTERVAL);
     }
     Ok(())
@@ -720,10 +760,11 @@ fn send_state(
     held: &HashSet<KeyCode>,
     sequence: &mut u32,
     flags: u8,
+    player_slot: u8,
     input_token: Option<SessionToken>,
 ) -> io::Result<ControllerState> {
     *sequence = sequence.wrapping_add(1);
-    let state = state_from_keys(held, *sequence, flags);
+    let state = state_from_keys(held, *sequence, flags, player_slot);
     if let Some(token) = input_token {
         socket.send(&AuthenticatedControllerState { token, state }.encode())?;
     } else {
@@ -732,7 +773,12 @@ fn send_state(
     Ok(state)
 }
 
-fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> ControllerState {
+fn state_from_keys(
+    held: &HashSet<KeyCode>,
+    sequence: u32,
+    flags: u8,
+    player_slot: u8,
+) -> ControllerState {
     let is_held = |character| held.contains(&KeyCode::Char(character));
     let axis_x = (i16::from(is_held('d')) - i16::from(is_held('a'))) * i16::MAX;
     let axis_y = (i16::from(is_held('s')) - i16::from(is_held('w'))) * i16::MAX;
@@ -757,7 +803,7 @@ fn state_from_keys(held: &HashSet<KeyCode>, sequence: u32, flags: u8) -> Control
         axis_x,
         axis_y,
         flags,
-        player_slot: 1,
+        player_slot,
     }
 }
 
@@ -824,7 +870,7 @@ mod tests {
             KeyCode::Char('j'),
             KeyCode::Char('k'),
         ]);
-        let state = state_from_keys(&held, 7, 0);
+        let state = state_from_keys(&held, 7, 0, 1);
         assert_eq!(state.axis_x, i16::MAX);
         assert_eq!(state.axis_y, -i16::MAX);
         assert_eq!(state.buttons, button::ACTION_1 | button::ACTION_2);
@@ -833,7 +879,7 @@ mod tests {
     #[test]
     fn debug_state_lists_axis_buttons_and_keys() {
         let held = HashSet::from([KeyCode::Char('d'), KeyCode::Char('j')]);
-        let state = state_from_keys(&held, 42, 0);
+        let state = state_from_keys(&held, 42, 0, 1);
 
         assert_eq!(
             debug_state(&held, state),
@@ -844,7 +890,7 @@ mod tests {
     #[test]
     fn debug_state_names_neutral_keys_as_none() {
         let held = HashSet::new();
-        let state = state_from_keys(&held, 43, 0);
+        let state = state_from_keys(&held, 43, 0, 1);
 
         assert_eq!(
             debug_state(&held, state),
@@ -878,6 +924,13 @@ mod tests {
     #[test]
     fn missing_player_slots_are_reported_as_unavailable() {
         assert_eq!(describe_player_slots(&[]), "player slots unavailable");
+    }
+
+    #[test]
+    fn state_from_keys_preserves_player_slot() {
+        let state = state_from_keys(&HashSet::new(), 44, 0, 2);
+
+        assert_eq!(state.player_slot, 2);
     }
 
     #[test]

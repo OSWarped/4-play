@@ -948,9 +948,11 @@ impl RuntimeHostStore {
                 };
                 transaction.execute(
                     "UPDATE sessions
-                     SET player_slots_json = ?2, updated_unix_ms = ?3
+                     SET player_slots_json = ?2,
+                         grant_expires_unix_ms = max(grant_expires_unix_ms, ?3),
+                         updated_unix_ms = ?4
                      WHERE id = ?1",
-                    params![session_id, updated_slots, now],
+                    params![session_id, updated_slots, lease_expires, now],
                 )?;
                 transaction.execute(
                     "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
