@@ -109,6 +109,10 @@ pub fn app_with_state(state: AppState) -> Router {
             post(reserve_player_slot),
         )
         .route(
+            "/api/v1/sessions/{session_id}/player-slots/{player_number}/release",
+            post(release_player_slot),
+        )
+        .route(
             "/api/v1/sessions/{session_id}/stop",
             post(request_session_stop),
         )
@@ -365,6 +369,20 @@ async fn reserve_player_slot(
             unix_time_ms(),
             state.grant_ttl_ms,
         )
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn release_player_slot(
+    State(state): State<AppState>,
+    AxumPath((session_id, player_number)): AxumPath<(String, u32)>,
+    Json(request): Json<ReservePlayerSlotRequest>,
+) -> Result<Json<Session>, ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    state
+        .runtime_hosts
+        .release_player_slot(session_id, player_number, request.seat_id, unix_time_ms())
         .await
         .map(Json)
         .map_err(ApiError::store)
@@ -1357,6 +1375,48 @@ mod tests {
         .await;
         assert_eq!(retry_status, 200);
         assert_eq!(retry["player_slots"][1]["seat_id"], "seat-two");
+
+        let release_p2 = format!("/api/v1/sessions/{session_id}/player-slots/2/release");
+        let (wrong_release_status, wrong_release) = request_json(
+            service.clone(),
+            Method::POST,
+            &release_p2,
+            Some(json!({ "seat_id": "seat-three" })),
+        )
+        .await;
+        assert_eq!(wrong_release_status, 409);
+        assert_eq!(wrong_release["code"], "player_slot_unavailable");
+
+        let (release_status, released) = request_json(
+            service.clone(),
+            Method::POST,
+            &release_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(release_status, 200);
+        assert_eq!(released["player_slots"][1]["state"], "open");
+        assert!(released["player_slots"][1]["seat_id"].is_null());
+
+        let (release_retry_status, release_retry) = request_json(
+            service.clone(),
+            Method::POST,
+            &release_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(release_retry_status, 200);
+        assert_eq!(release_retry["player_slots"][1]["state"], "open");
+
+        let (reserve_again_status, reserved_again) = request_json(
+            service.clone(),
+            Method::POST,
+            &reserve_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(reserve_again_status, 200);
+        assert_eq!(reserved_again["player_slots"][1]["seat_id"], "seat-two");
 
         let (conflict_status, conflict) = request_json(
             service.clone(),
