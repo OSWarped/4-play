@@ -111,12 +111,14 @@ Last updated: 2026-10-04
   experiments
 - the development client exposes media-only spectator selection for active
   sessions without claiming a player slot
+- the control plane can allocate distinct spectator media-port grants for
+  active sessions; runtime fan-out to those ports is not wired yet
 
 ## Not started
 
 - catalog and game-package workflow
 - low-cost active-session previews
-- production spectator/media fan-out workflows
+- runtime spectator/media fan-out workflows
 
 ## Next milestone
 

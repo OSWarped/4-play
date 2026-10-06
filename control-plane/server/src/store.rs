@@ -4,7 +4,7 @@ use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
     PlayerSlot, PlayerSlotState, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities,
     RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session,
-    SessionState,
+    SessionState, SpectatorGrant,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -59,6 +59,22 @@ const SCHEMA: &str = "
         ON sessions(runtime_host_id, state);
     CREATE INDEX IF NOT EXISTS sessions_seat_state
         ON sessions(seat_id, state);
+    CREATE TABLE IF NOT EXISTS spectator_grants (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        seat_id TEXT NOT NULL,
+        destination_address TEXT NOT NULL,
+        runtime_host_id TEXT NOT NULL,
+        runtime_host_address TEXT NOT NULL,
+        media_udp_port INTEGER NOT NULL,
+        expires_unix_ms INTEGER NOT NULL,
+        created_unix_ms INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS spectator_grants_session
+        ON spectator_grants(session_id);
+    CREATE INDEX IF NOT EXISTS spectator_grants_runtime_port
+        ON spectator_grants(runtime_host_id, media_udp_port);
     CREATE TABLE IF NOT EXISTS session_events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -625,6 +641,132 @@ impl RuntimeHostStore {
             .map_err(StoreError::database)?
             .ok_or(StoreError::SessionNotFound)?;
         stored.into_session()
+    }
+
+    pub async fn create_spectator_grant(
+        &self,
+        grant_id: String,
+        session_id: String,
+        seat_id: String,
+        destination_address: String,
+        now_unix_ms: u64,
+        expires_unix_ms: u64,
+        media_port_start: u16,
+        port_count: u16,
+    ) -> Result<SpectatorGrant, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "spectator grant timestamp")?;
+        let expires = to_sql_integer(expires_unix_ms, "spectator grant expiry")?;
+        self.connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<
+                    Result<SpectatorGrant, StoreError>,
+                > {
+                    let transaction = connection.transaction()?;
+                    let current = transaction
+                        .query_row(
+                            "SELECT runtime_host_id, runtime_host_address, state
+                             FROM sessions
+                             WHERE id = ?1",
+                            [&session_id],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, String>(2)?,
+                                ))
+                            },
+                        )
+                        .optional()?;
+                    let Some((runtime_host_id, runtime_host_address, state_name)) = current else {
+                        return Ok(Err(StoreError::SessionNotFound));
+                    };
+                    let state = match parse_session_state(&state_name) {
+                        Ok(value) => value,
+                        Err(error) => return Ok(Err(error)),
+                    };
+                    if state.is_terminal() {
+                        return Ok(Err(StoreError::SessionNotFound));
+                    }
+
+                    transaction.execute(
+                        "DELETE FROM spectator_grants WHERE expires_unix_ms <= ?1",
+                        [now],
+                    )?;
+
+                    let mut selected_port = None;
+                    for offset in 0..port_count {
+                        let Some(media_port) = media_port_start.checked_add(offset) else {
+                            break;
+                        };
+                        let in_use = transaction.query_row(
+                            "SELECT EXISTS(
+                                SELECT 1 FROM sessions
+                                WHERE runtime_host_id = ?1
+                                  AND state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                                  AND (media_udp_port = ?2 OR input_udp_port = ?2)
+                                UNION
+                                SELECT 1 FROM spectator_grants
+                                WHERE runtime_host_id = ?1
+                                  AND media_udp_port = ?2
+                                  AND expires_unix_ms > ?3
+                            )",
+                            params![runtime_host_id, i64::from(media_port), now],
+                            |row| row.get::<_, bool>(0),
+                        )?;
+                        if !in_use {
+                            selected_port = Some(media_port);
+                            break;
+                        }
+                    }
+                    let Some(media_udp_port) = selected_port else {
+                        return Ok(Err(StoreError::PortsExhausted));
+                    };
+
+                    transaction.execute(
+                        "INSERT INTO spectator_grants (
+                            id, session_id, seat_id, destination_address,
+                            runtime_host_id, runtime_host_address, media_udp_port,
+                            expires_unix_ms, created_unix_ms
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![
+                            grant_id,
+                            session_id,
+                            seat_id,
+                            destination_address,
+                            runtime_host_id,
+                            runtime_host_address,
+                            i64::from(media_udp_port),
+                            expires,
+                            now,
+                        ],
+                    )?;
+                    transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            session_id,
+                            state_name,
+                            now,
+                            format!(
+                                "spectator {grant_id} granted to {seat_id} on media port {media_udp_port}"
+                            )
+                        ],
+                    )?;
+                    transaction.commit()?;
+                    Ok(Ok(SpectatorGrant {
+                        id: grant_id,
+                        session_id,
+                        seat_id,
+                        destination_address,
+                        runtime_host_id,
+                        runtime_host_address,
+                        media_udp_port,
+                        expires_unix_ms,
+                    }))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<Session>, StoreError> {

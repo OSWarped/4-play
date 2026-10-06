@@ -135,6 +135,12 @@ pub struct ReservePlayerSlotRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateSpectatorGrantRequest {
+    pub seat_id: String,
+    pub destination_address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionGrant {
     pub token: String,
     pub expires_unix_ms: u64,
@@ -159,6 +165,18 @@ pub struct PlayerSlot {
     pub state: PlayerSlotState,
     pub seat_id: Option<String>,
     pub lease_expires_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpectatorGrant {
+    pub id: String,
+    pub session_id: String,
+    pub seat_id: String,
+    pub destination_address: String,
+    pub runtime_host_id: String,
+    pub runtime_host_address: String,
+    pub media_udp_port: u16,
+    pub expires_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -247,7 +265,7 @@ impl SessionState {
 mod tests {
     use super::{
         API_VERSION, ApiInfo, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus,
-        ServiceStatus, SessionState, StatusResponse,
+        ServiceStatus, SessionState, SpectatorGrant, StatusResponse,
     };
 
     #[test]
@@ -279,6 +297,25 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "status": "ready" })
         );
+    }
+
+    #[test]
+    fn spectator_grant_payload_has_stable_field_names() {
+        let grant = SpectatorGrant {
+            id: "grant-one".to_owned(),
+            session_id: "session-one".to_owned(),
+            seat_id: "seat-two".to_owned(),
+            destination_address: "192.0.2.25".to_owned(),
+            runtime_host_id: "reference-linux".to_owned(),
+            runtime_host_address: "192.0.2.10".to_owned(),
+            media_udp_port: 41_001,
+            expires_unix_ms: 123_456,
+        };
+
+        let value = serde_json::to_value(grant).unwrap();
+        assert_eq!(value["session_id"], "session-one");
+        assert_eq!(value["media_udp_port"], 41_001);
+        assert_eq!(value["expires_unix_ms"], 123_456);
     }
 
     #[test]

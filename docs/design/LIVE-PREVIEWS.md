@@ -29,6 +29,11 @@ reserving a player slot or sending input. Both modes still use the full-quality
 gameplay stream and assigned gameplay media port; they are not the final
 preview/spectator design.
 
+The control plane now has a spectator-grant API that allocates a distinct
+viewer media UDP port for an active session. The grant model is intentionally
+separate from player-slot ownership. Runtime media duplication to those viewer
+ports is still the next implementation step.
+
 This keeps player-slot and input work testable while preserving the Product MVP
 requirement that preview or spectator media must not block joining or degrade
 gameplay.

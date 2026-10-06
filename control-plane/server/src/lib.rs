@@ -15,10 +15,10 @@ use axum::{
     routing::{get, post},
 };
 use control_protocol::{
-    ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, ErrorResponse,
-    RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
+    ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
+    ErrorResponse, RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
     RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session,
-    SessionList, StatusResponse, UpdateSessionState,
+    SessionList, SpectatorGrant, StatusResponse, UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -104,6 +104,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route("/api/v1/sessions/{session_id}", get(get_session))
+        .route(
+            "/api/v1/sessions/{session_id}/spectators",
+            post(create_spectator_grant),
+        )
         .route(
             "/api/v1/sessions/{session_id}/player-slots/{player_number}/reserve",
             post(reserve_player_slot),
@@ -360,6 +364,36 @@ async fn request_session_stop(
         .await
         .map(Json)
         .map_err(ApiError::store)
+}
+
+async fn create_spectator_grant(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(request): Json<CreateSpectatorGrantRequest>,
+) -> Result<(StatusCode, Json<SpectatorGrant>), ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    request.destination_address.parse::<IpAddr>().map_err(|_| {
+        ApiError::bad_request(
+            "invalid_destination_address",
+            "destination address must be an IP address",
+        )
+    })?;
+    let now = unix_time_ms();
+    let grant = state
+        .runtime_hosts
+        .create_spectator_grant(
+            uuid::Uuid::new_v4().to_string(),
+            session_id,
+            request.seat_id,
+            request.destination_address,
+            now,
+            now.saturating_add(state.grant_ttl_ms),
+            MEDIA_PORT_START,
+            SESSION_PORT_COUNT,
+        )
+        .await
+        .map_err(ApiError::store)?;
+    Ok((StatusCode::CREATED, Json(grant)))
 }
 
 async fn reserve_player_slot(
@@ -1266,6 +1300,67 @@ mod tests {
         .await;
         assert_eq!(unavailable_status, 503);
         assert_eq!(unavailable["code"], "catalog_game_unavailable");
+    }
+
+    #[tokio::test]
+    async fn spectator_grants_allocate_distinct_media_ports_without_claiming_slots() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for state in ["starting", "ready", "active"] {
+            request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({ "state": state, "failure_reason": null })),
+            )
+            .await;
+        }
+
+        let spectator_path = format!("/api/v1/sessions/{session_id}/spectators");
+        let (first_status, first) = request_json(
+            service.clone(),
+            Method::POST,
+            &spectator_path,
+            Some(json!({
+                "seat_id": "seat-two",
+                "destination_address": "192.0.2.26"
+            })),
+        )
+        .await;
+        assert_eq!(first_status, 201);
+        assert_eq!(first["session_id"], session_id);
+        assert_eq!(first["seat_id"], "seat-two");
+        assert_eq!(first["runtime_host_id"], "reference-linux");
+        assert_eq!(first["runtime_host_address"], "127.0.0.1");
+        assert_eq!(first["media_udp_port"], 41_001);
+
+        let (second_status, second) = request_json(
+            service.clone(),
+            Method::POST,
+            &spectator_path,
+            Some(json!({
+                "seat_id": "seat-three",
+                "destination_address": "192.0.2.27"
+            })),
+        )
+        .await;
+        assert_eq!(second_status, 201);
+        assert_eq!(second["media_udp_port"], 41_002);
+
+        let session_path = format!("/api/v1/sessions/{session_id}");
+        let (_, session) = request_json(service, Method::GET, &session_path, None).await;
+        assert_eq!(session["player_slots"][0]["state"], "occupied");
+        assert_eq!(session["player_slots"][1]["state"], "open");
     }
 
     #[tokio::test]
