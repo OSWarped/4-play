@@ -117,7 +117,7 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                 stop_session_on_exit: true,
             }
         } else {
-            match select_browse_action(&sessions, &games)? {
+            match select_browse_action(&sessions, &games, &config.seat_id)? {
                 BrowseSelection::StartGame(game_id) => {
                     let session = create_session(&client, &config, &game_id)?;
                     println!("Session requested: {}", session.id);
@@ -367,6 +367,7 @@ fn describe_claimed_slot(label: &str, state: &str, slot: &PlayerSlot) -> String 
 fn select_browse_action(
     sessions: &[Session],
     games: &[CatalogGame],
+    seat_id: &str,
 ) -> Result<BrowseSelection, Box<dyn std::error::Error>> {
     if games.is_empty() {
         return Err("no games are currently available on an online runtime host".into());
@@ -389,10 +390,15 @@ fn select_browse_action(
         let Some(session) = sessions.get(session_index.saturating_sub(1)) else {
             return Err("session selection is outside the displayed range".into());
         };
-        if !session.player_slots.iter().any(|slot| {
-            slot.player_number == player_number && matches!(slot.state, PlayerSlotState::Open)
-        }) {
-            return Err("selected player slot is not open".into());
+        let Some(slot) = session
+            .player_slots
+            .iter()
+            .find(|slot| slot.player_number == player_number)
+        else {
+            return Err("selected player slot does not exist".into());
+        };
+        if !slot_is_joinable_by_seat(slot, seat_id) {
+            return Err("selected player slot is not open or reconnectable by this seat".into());
         }
         let player_number = u8::try_from(player_number)
             .map_err(|_| "selected player number is outside the supported range")?;
@@ -409,6 +415,12 @@ fn select_browse_action(
         .get(index.saturating_sub(1))
         .map(|game| BrowseSelection::StartGame(game.id.clone()))
         .ok_or_else(|| "game selection is outside the displayed range".into())
+}
+
+fn slot_is_joinable_by_seat(slot: &PlayerSlot, seat_id: &str) -> bool {
+    matches!(slot.state, PlayerSlotState::Open)
+        || (matches!(slot.state, PlayerSlotState::Disconnected)
+            && slot.seat_id.as_deref() == Some(seat_id))
 }
 
 fn validate_requested_game(
@@ -1021,6 +1033,43 @@ mod tests {
     #[test]
     fn missing_player_slots_are_reported_as_unavailable() {
         assert_eq!(describe_player_slots(&[]), "player slots unavailable");
+    }
+
+    #[test]
+    fn open_slots_are_joinable() {
+        let slot = PlayerSlot {
+            player_number: 2,
+            state: PlayerSlotState::Open,
+            seat_id: None,
+            lease_expires_unix_ms: None,
+        };
+
+        assert!(slot_is_joinable_by_seat(&slot, "windows-seat-2"));
+    }
+
+    #[test]
+    fn disconnected_slots_are_only_joinable_by_same_seat() {
+        let slot = PlayerSlot {
+            player_number: 2,
+            state: PlayerSlotState::Disconnected,
+            seat_id: Some("windows-seat-2".to_owned()),
+            lease_expires_unix_ms: Some(123),
+        };
+
+        assert!(slot_is_joinable_by_seat(&slot, "windows-seat-2"));
+        assert!(!slot_is_joinable_by_seat(&slot, "windows-seat-3"));
+    }
+
+    #[test]
+    fn occupied_slots_are_not_joinable() {
+        let slot = PlayerSlot {
+            player_number: 1,
+            state: PlayerSlotState::Occupied,
+            seat_id: Some("windows-seat-1".to_owned()),
+            lease_expires_unix_ms: Some(123),
+        };
+
+        assert!(!slot_is_joinable_by_seat(&slot, "windows-seat-2"));
     }
 
     #[test]
