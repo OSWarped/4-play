@@ -109,12 +109,14 @@ Last updated: 2026-10-04
 - same-PC development joins default to input-only to avoid local media-port
   binding conflicts; `--joined-media` exists for separate display/host
   experiments
+- the development client exposes media-only spectator selection for active
+  sessions without claiming a player slot
 
 ## Not started
 
 - catalog and game-package workflow
 - low-cost active-session previews
-- spectator workflows
+- production spectator/media fan-out workflows
 
 ## Next milestone
 

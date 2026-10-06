@@ -23,8 +23,11 @@ The Phase 2 development client can join an active player slot and route input
 to that slot. Joined seats run input-only by default so multiple PowerShell
 clients on one Windows development PC do not collide while binding the same
 local gameplay UDP media port. A separate physical seat or experiment may pass
-`--joined-media` to launch its own FFplay receiver, but that is still the
-full-quality gameplay stream, not the final preview/spectator design.
+`--joined-media` to launch its own FFplay receiver. The development client also
+offers `s<session-number>` spectator selection, which opens media without
+reserving a player slot or sending input. Both modes still use the full-quality
+gameplay stream and assigned gameplay media port; they are not the final
+preview/spectator design.
 
 This keeps player-slot and input work testable while preserving the Product MVP
 requirement that preview or spectator media must not block joining or degrade

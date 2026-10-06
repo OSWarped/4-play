@@ -46,6 +46,7 @@ struct SeatConfig {
 enum BrowseSelection {
     StartGame(String),
     JoinSlot(PlayTarget),
+    Spectate(String),
     Quit,
 }
 
@@ -152,6 +153,13 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                         target.player_number, session.id
                     );
                     target
+                }
+                BrowseSelection::Spectate(session_id) => {
+                    spectate_session(&client, &config, &session_id)?;
+                    if one_shot {
+                        return Ok(());
+                    }
+                    continue;
                 }
                 BrowseSelection::Quit => {
                     println!("Seat client stopped.");
@@ -351,6 +359,9 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
     println!(
         "  Join an open or same-seat disconnected slot with j<session-number>.<player-number>, for example j1.2."
     );
+    println!(
+        "  Spectate a session with s<session-number>, for example s1. Spectating opens media only."
+    );
 }
 
 fn describe_player_slots(slots: &[PlayerSlot]) -> String {
@@ -395,7 +406,7 @@ fn select_browse_action(
     for (index, game) in games.iter().enumerate() {
         println!("  {}. {} ({})", index + 1, game.display_name, game.id);
     }
-    print!("Choose a game number, j<session>.<player> to reserve, or q to quit: ");
+    print!("Choose a game number, j<session>.<player>, s<session>, or q to quit: ");
     io::stdout().flush()?;
     let mut selection = String::new();
     io::stdin().read_line(&mut selection)?;
@@ -425,9 +436,15 @@ fn select_browse_action(
             stop_session_on_exit: false,
         }));
     }
+    if let Some(session_index) = parse_spectate_selection(selection) {
+        let Some(session) = sessions.get(session_index.saturating_sub(1)) else {
+            return Err("session selection is outside the displayed range".into());
+        };
+        return Ok(BrowseSelection::Spectate(session.id.clone()));
+    }
     let index = selection
         .parse::<usize>()
-        .map_err(|_| "selection must be a game number, reservation, or q")?;
+        .map_err(|_| "selection must be a game number, reservation, spectator selection, or q")?;
     games
         .get(index.saturating_sub(1))
         .map(|game| BrowseSelection::StartGame(game.id.clone()))
@@ -467,6 +484,15 @@ fn parse_reservation_selection(selection: &str) -> Option<(usize, u32)> {
         return None;
     }
     Some((session_index, player_number))
+}
+
+fn parse_spectate_selection(selection: &str) -> Option<usize> {
+    let selection = selection.trim();
+    let rest = selection
+        .strip_prefix('s')
+        .or_else(|| selection.strip_prefix('S'))?;
+    let session_index = rest.parse::<usize>().ok()?;
+    (session_index > 0).then_some(session_index)
 }
 
 fn create_session(
@@ -602,6 +628,46 @@ fn wait_for_active(
         }
         thread::sleep(SESSION_POLL_INTERVAL);
     }
+}
+
+fn spectate_session(
+    client: &Client,
+    config: &SeatConfig,
+    session_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if config.no_media {
+        return Err("spectator mode requires media; remove --no-media".into());
+    }
+    let active = wait_for_active(client, &config.control_plane_url, session_id)?;
+    let mut media = spawn_ffplay(&config.ffplay_path, active.connection_grant.media_udp_port)?;
+    println!(
+        "Spectating {} through host {}. Press Esc to return to browsing.",
+        active.game_id, active.runtime_host_id
+    );
+    println!("Spectator mode opens media only; it does not reserve a player slot or send input.");
+
+    let _raw_mode = RawMode::enter()?;
+    loop {
+        if media.try_wait()?.is_some() {
+            break;
+        }
+        if event::poll(HEARTBEAT_INTERVAL)?
+            && let Event::Key(key) = event::read()?
+            && key.code == KeyCode::Esc
+            && key.kind == KeyEventKind::Press
+        {
+            break;
+        }
+    }
+    if media.try_wait()?.is_none() {
+        let _ = media.kill();
+    }
+    let _ = media.wait();
+    println!(
+        "Stopped spectating session {}; returning to browsing.",
+        active.id
+    );
+    Ok(())
 }
 
 fn wait_for_terminal(
@@ -1137,5 +1203,20 @@ mod tests {
         assert_eq!(parse_reservation_selection("j1.0"), None);
         assert_eq!(parse_reservation_selection("j1"), None);
         assert_eq!(parse_reservation_selection("jone.two"), None);
+    }
+
+    #[test]
+    fn spectator_selection_uses_session_number() {
+        assert_eq!(parse_spectate_selection("s1"), Some(1));
+        assert_eq!(parse_spectate_selection("S12"), Some(12));
+    }
+
+    #[test]
+    fn spectator_selection_rejects_invalid_values() {
+        assert_eq!(parse_spectate_selection("1"), None);
+        assert_eq!(parse_spectate_selection("s0"), None);
+        assert_eq!(parse_spectate_selection("s"), None);
+        assert_eq!(parse_spectate_selection("sone"), None);
+        assert_eq!(parse_spectate_selection("j1.2"), None);
     }
 }
