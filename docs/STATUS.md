@@ -102,19 +102,24 @@ Last updated: 2026-10-04
 - session responses expose explicit player slots derived from each game's
   maximum player count
 - the seat client lists active sessions and occupied/open slots while browsing
-- the control plane supports atomic, lease-based reservation of open player
-  slots in ready/active sessions
+- the control plane supports atomic, lease-based reservation, connection,
+  disconnection, reconnection, and release of player slots in ready/active
+  sessions
+- joined seats route gameplay input to their assigned player number
+- same-PC development joins default to input-only to avoid local media-port
+  binding conflicts; `--joined-media` exists for separate display/host
+  experiments
 
 ## Not started
 
 - catalog and game-package workflow
 - low-cost active-session previews
-- runtime multi-controller join wiring for reserved player slots
 - spectator workflows
-- reconnect lease recovery
 
 ## Next milestone
 
-Connect reserved player slots to runtime-owned virtual controllers and media
-delivery so a second seat can actually join and play an active compatible
-session. Preview, reconnect, and spectator workflows follow that join path.
+Design and implement low-cost active-session previews and spectator/media
+fan-out so browsing and joined seats can observe sessions without requiring one
+full-quality gameplay encoder or one shared local UDP media port per viewer.
+Richer fixed-position and character-aware player-slot metadata follows that
+media path.
