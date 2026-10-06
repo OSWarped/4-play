@@ -132,6 +132,17 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                         "Reserved player {} in session {}.",
                         target.player_number, session.id
                     );
+                    let session = connect_player_slot(
+                        &client,
+                        &config.control_plane_url,
+                        &target.session_id,
+                        target.player_number,
+                        &config.seat_id,
+                    )?;
+                    println!(
+                        "Connected player {} in session {}.",
+                        target.player_number, session.id
+                    );
                     target
                 }
                 BrowseSelection::Quit => {
@@ -452,6 +463,25 @@ fn release_player_slot(
     Ok(client
         .post(format!(
             "{control_plane_url}/api/v1/sessions/{session_id}/player-slots/{player_number}/release"
+        ))
+        .json(&ReservePlayerSlotRequest {
+            seat_id: seat_id.to_owned(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
+fn connect_player_slot(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+    player_number: u8,
+    seat_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    Ok(client
+        .post(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/player-slots/{player_number}/connect"
         ))
         .json(&ReservePlayerSlotRequest {
             seat_id: seat_id.to_owned(),
