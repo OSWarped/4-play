@@ -113,13 +113,14 @@ Last updated: 2026-10-04
   sessions without claiming a player slot
 - the control plane can allocate distinct spectator media-port grants for
   active sessions and exposes those ports to the runtime host assignment feed;
-  runtime fan-out to those ports is not wired yet
+- session-runtime can launch FFmpeg with primary plus spectator UDP outputs
+  when those grants are present before the process starts
 
 ## Not started
 
 - catalog and game-package workflow
 - low-cost active-session previews
-- runtime spectator/media fan-out workflows
+- dynamic runtime spectator/media fan-out updates for already-running sessions
 
 ## Next milestone
 

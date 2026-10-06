@@ -119,7 +119,13 @@ impl RuntimeSupervisor {
             .arg("--destination-ip")
             .arg(&assignment.destination_address)
             .arg("--udp-port")
-            .arg(assignment.media_udp_port.to_string())
+            .arg(assignment.media_udp_port.to_string());
+        for spectator_port in &assignment.spectator_media_ports {
+            command
+                .arg("--spectator-udp-port")
+                .arg(spectator_port.to_string());
+        }
+        command
             .arg("--input-port")
             .arg(assignment.input_udp_port.to_string())
             .arg("--input-token")

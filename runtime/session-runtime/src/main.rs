@@ -37,6 +37,7 @@ struct RuntimeArgs {
     fps: f64,
     destination_ip: String,
     udp_port: u16,
+    spectator_udp_ports: Vec<u16>,
     terminal_input: bool,
     input_port: Option<u16>,
     input_token: Option<SessionToken>,
@@ -80,6 +81,7 @@ fn print_usage(program: &str) {
     --height <pixels> \
     --fps <rate> \
     --udp-port <port> \
+    [--spectator-udp-port <port>]... \
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
     [--input-token <uuid>] \
@@ -135,6 +137,7 @@ fn parse_args() -> RuntimeArgs {
     let mut height = None;
     let mut fps = None;
     let mut udp_port = None;
+    let mut spectator_udp_ports = Vec::new();
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
     let mut input_port = None;
@@ -179,6 +182,12 @@ fn parse_args() -> RuntimeArgs {
                 udp_port = Some(parse_value(
                     require_value(&mut args, "--udp-port"),
                     "--udp-port",
+                ));
+            }
+            "--spectator-udp-port" => {
+                spectator_udp_ports.push(parse_value(
+                    require_value(&mut args, "--spectator-udp-port"),
+                    "--spectator-udp-port",
                 ));
             }
             "--terminal-input" => {
@@ -250,6 +259,7 @@ fn parse_args() -> RuntimeArgs {
         fps: required(fps, "--fps", &program),
         destination_ip,
         udp_port: required(udp_port, "--udp-port", &program),
+        spectator_udp_ports,
         terminal_input,
         input_port,
         input_token,
@@ -352,6 +362,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         fps: session.config.fps,
         destination_ip: session.config.destination_ip.clone(),
         udp_port: session.config.udp_port,
+        spectator_udp_ports: args.spectator_udp_ports,
         audio_codec: args.audio_codec,
         audio_thread_queue_size: args.audio_thread_queue_size,
     };

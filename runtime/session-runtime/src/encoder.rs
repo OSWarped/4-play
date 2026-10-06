@@ -46,6 +46,7 @@ pub struct EncoderConfig {
     pub fps: f64,
     pub destination_ip: String,
     pub udp_port: u16,
+    pub spectator_udp_ports: Vec<u16>,
     pub audio_codec: AudioCodec,
     pub audio_thread_queue_size: usize,
 }
@@ -66,10 +67,7 @@ impl EncoderProcess {
 
         let video_size = format!("{}x{}", config.width, config.height);
         let fps = format!("{:.6}", config.fps);
-        let destination = format!(
-            "udp://{}:{}?pkt_size=1316",
-            config.destination_ip, config.udp_port
-        );
+        let destinations = output_destinations(config);
 
         let mut command = Command::new("ffmpeg");
 
@@ -170,9 +168,7 @@ impl EncoderProcess {
             .arg("0")
             .arg("-muxpreload")
             .arg("0")
-            .arg("-f")
-            .arg("mpegts")
-            .arg(destination)
+            .args(output_args(&destinations))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
@@ -204,10 +200,9 @@ impl EncoderProcess {
         let child = child_result?;
 
         println!(
-            "Encoder started: PID={} destination={}:{} video_fps={fps} video_timestamp_clock_hz={} audio_codec={} audio_thread_queue={}",
+            "Encoder started: PID={} destinations={} video_fps={fps} video_timestamp_clock_hz={} audio_codec={} audio_thread_queue={}",
             child.id(),
-            config.destination_ip,
-            config.udp_port,
+            destinations.join(","),
             VIDEO_TIMESTAMP_CLOCK_HZ,
             config.audio_codec.name(),
             config.audio_thread_queue_size
@@ -259,6 +254,29 @@ impl Drop for EncoderProcess {
     }
 }
 
+fn output_destinations(config: &EncoderConfig) -> Vec<String> {
+    std::iter::once(config.udp_port)
+        .chain(config.spectator_udp_ports.iter().copied())
+        .map(|port| format!("udp://{}:{port}?pkt_size=1316", config.destination_ip))
+        .collect()
+}
+
+fn output_args(destinations: &[String]) -> Vec<String> {
+    if destinations.len() == 1 {
+        return vec![
+            "-f".to_owned(),
+            "mpegts".to_owned(),
+            destinations[0].clone(),
+        ];
+    }
+    let tee_spec = destinations
+        .iter()
+        .map(|destination| format!("[f=mpegts]{destination}"))
+        .collect::<Vec<_>>()
+        .join("|");
+    vec!["-f".to_owned(), "tee".to_owned(), tee_spec]
+}
+
 fn create_pipe() -> io::Result<(RawFd, File)> {
     let mut descriptors = [0; 2];
 
@@ -304,12 +322,52 @@ fn install_child_descriptor(source: RawFd, destination: RawFd) -> io::Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::AudioCodec;
+    use super::{AudioCodec, EncoderConfig, output_args, output_destinations};
 
     #[test]
     fn parses_supported_audio_codecs() {
         assert_eq!("aac".parse(), Ok(AudioCodec::Aac));
         assert_eq!("OPUS".parse(), Ok(AudioCodec::Opus));
         assert!("mp3".parse::<AudioCodec>().is_err());
+    }
+
+    #[test]
+    fn builds_single_mpegts_output_for_primary_media() {
+        let config = test_config(vec![]);
+        let destinations = output_destinations(&config);
+
+        assert_eq!(destinations, vec!["udp://192.0.2.25:41000?pkt_size=1316"]);
+        assert_eq!(
+            output_args(&destinations),
+            vec!["-f", "mpegts", "udp://192.0.2.25:41000?pkt_size=1316"]
+        );
+    }
+
+    #[test]
+    fn builds_tee_output_for_spectator_media() {
+        let config = test_config(vec![41001, 41002]);
+        let destinations = output_destinations(&config);
+
+        assert_eq!(
+            output_args(&destinations),
+            vec![
+                "-f",
+                "tee",
+                "[f=mpegts]udp://192.0.2.25:41000?pkt_size=1316|[f=mpegts]udp://192.0.2.25:41001?pkt_size=1316|[f=mpegts]udp://192.0.2.25:41002?pkt_size=1316",
+            ]
+        );
+    }
+
+    fn test_config(spectator_udp_ports: Vec<u16>) -> EncoderConfig {
+        EncoderConfig {
+            width: 320,
+            height: 224,
+            fps: 60.0,
+            destination_ip: "192.0.2.25".to_owned(),
+            udp_port: 41000,
+            spectator_udp_ports,
+            audio_codec: AudioCodec::Aac,
+            audio_thread_queue_size: 64,
+        }
     }
 }
