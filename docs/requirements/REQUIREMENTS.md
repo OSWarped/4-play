@@ -58,9 +58,11 @@ validated runtime arguments.
 
 Current evidence: session responses expose explicit player slots, the seat
 client can inspect active-session slots while browsing, and the control plane
-can atomically reserve open slots with a lease. Runtime multi-controller join,
-slot reconnect recovery, and gameplay input routing for joined seats remain
-Product MVP work.
+can atomically reserve open slots with a lease. Joined seats connect to their
+assigned player slot, route gameplay input to that slot, release the slot on
+intentional exit, and mark the slot disconnected for a reconnect grace period
+when the session or media path ends unexpectedly. Richer cabinet-position and
+character-aware slot metadata remains Product MVP work.
 
 ### Input
 

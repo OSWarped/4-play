@@ -40,12 +40,17 @@ Slot states:
 - `occupied`
 - `disconnected`
 
-A reservation includes a lease expiration and seat identity. Reservation and
-release operations must be atomic and idempotent. The initial Phase 2
-implementation stores player slots with each session, exposes them in session
-responses, and allows seats to reserve open slots in ready or active sessions.
-The runtime still needs multi-controller join wiring before a reserved slot can
-become a fully playable joined seat.
+A reservation includes a lease expiration and seat identity. Reservation,
+connect, disconnect, and release operations must be atomic and idempotent. The
+initial Phase 2 implementation stores player slots with each session, exposes
+them in session responses, allows seats to reserve open slots in ready or active
+sessions, and lets a reserved seat become a fully playable joined seat through
+its assigned player number.
+
+An intentional seat exit releases the slot. If a joined seat is interrupted by
+an external session/media end, the seat marks the slot `disconnected` and keeps
+the seat identity for the reconnect grace period before the slot can become
+open again.
 
 ## Fixed and interchangeable slots
 
