@@ -17,6 +17,19 @@ An active-session card may show:
 
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 
+## Current development behavior
+
+The Phase 2 development client can join an active player slot and route input
+to that slot. Joined seats run input-only by default so multiple PowerShell
+clients on one Windows development PC do not collide while binding the same
+local gameplay UDP media port. A separate physical seat or experiment may pass
+`--joined-media` to launch its own FFplay receiver, but that is still the
+full-quality gameplay stream, not the final preview/spectator design.
+
+This keeps player-slot and input work testable while preserving the Product MVP
+requirement that preview or spectator media must not block joining or degrade
+gameplay.
+
 ## Design goals
 
 - one session preview can be consumed by many browsing seats

@@ -84,7 +84,13 @@ sequence rejection, reconnect, and timeout neutralization are validated.
 - Preview generation shall not materially degrade active gameplay.
 - Preview availability shall never block starting, joining, or continuing gameplay.
 
-Current evidence: synchronized live video and audio have been demonstrated for several MAME titles using raw MAME output, a Rust bridge, FFmpeg, and UDP MPEG-TS. Preview behavior is not implemented.
+Current evidence: synchronized live video and audio have been demonstrated for
+several MAME titles using raw MAME output, a Rust bridge, FFmpeg, and UDP
+MPEG-TS. In the single-Windows-PC development setup, joined seats default to
+input-only because a second FFplay instance cannot bind the same local gameplay
+UDP port. The seat client exposes `--joined-media` for separate display/host
+experiments, but reusable previews, spectator media, and media fan-out are not
+implemented yet.
 
 ### Operations
 

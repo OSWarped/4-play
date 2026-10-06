@@ -256,6 +256,13 @@ UDP has no connection close or end-of-stream signal, so receiver lifecycle
 management remains a seat-orchestration task. The two receivers were closed
 manually at the end of this test.
 
+For shared-session testing on one Windows development PC, joined seats are
+input-only by default. This avoids a local FFplay bind conflict when seat 1 is
+already receiving the gameplay stream on the session's media UDP port. Use the
+existing seat 1 media window to observe player 2 input. Pass `--joined-media`
+only when the joined seat has a separate display/host arrangement that can bind
+the assigned media port.
+
 Abnormal MAME and FFmpeg termination is covered separately by
 [Two-Session Failure Isolation](TWO-SESSION-FAILURE-ISOLATION.md).
 

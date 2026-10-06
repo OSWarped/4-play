@@ -37,6 +37,7 @@ struct SeatConfig {
     game_id: Option<String>,
     ffplay_path: String,
     no_media: bool,
+    joined_media: bool,
     play_for: Option<Duration>,
     api_token: String,
     debug_input: bool,
@@ -180,8 +181,12 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
         )
         .parse::<SocketAddr>()?;
         let input_token = active.connection_grant.token.parse::<SessionToken>()?;
-        let input_only_join = !target.stop_session_on_exit;
-        let mut media = if config.no_media || input_only_join {
+        let launch_media = should_launch_media(
+            target.stop_session_on_exit,
+            config.no_media,
+            config.joined_media,
+        );
+        let mut media = if !launch_media {
             None
         } else {
             match spawn_ffplay(&config.ffplay_path, active.connection_grant.media_udp_port) {
@@ -199,9 +204,9 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
             "Playing {} as player {} through host {}. Press Esc to return to browsing.",
             active.game_id, target.player_number, active.runtime_host_id
         );
-        if input_only_join {
+        if !target.stop_session_on_exit && !config.joined_media {
             println!(
-                "Joined seats currently run input-only; watch the existing session media window."
+                "Joined seats run input-only by default; watch the existing session media window or pass --joined-media on a separate display/host."
             );
         } else if config.no_media {
             println!("Media disabled by --no-media; sending input only.");
@@ -433,6 +438,10 @@ fn slot_is_joinable_by_seat(slot: &PlayerSlot, seat_id: &str) -> bool {
     matches!(slot.state, PlayerSlotState::Open)
         || (matches!(slot.state, PlayerSlotState::Disconnected)
             && slot.seat_id.as_deref() == Some(seat_id))
+}
+
+fn should_launch_media(starts_session: bool, no_media: bool, joined_media: bool) -> bool {
+    !no_media && (starts_session || joined_media)
 }
 
 fn validate_requested_game(
@@ -783,6 +792,7 @@ fn parse_mode() -> Mode {
     let mut game_id = None;
     let mut ffplay_path = env::var("FOURPLAY_FFPLAY_PATH").unwrap_or_else(|_| "ffplay".to_owned());
     let mut no_media = false;
+    let mut joined_media = false;
     let mut play_for = None;
     let mut api_token = env::var("FOURPLAY_SEAT_API_TOKEN").ok();
     let mut debug_input = false;
@@ -803,6 +813,7 @@ fn parse_mode() -> Mode {
             "--game" => game_id = Some(value(&mut index)),
             "--ffplay-path" => ffplay_path = value(&mut index),
             "--no-media" => no_media = true,
+            "--joined-media" => joined_media = true,
             "--debug-input" => debug_input = true,
             "--api-token" => api_token = Some(value(&mut index)),
             "--play-for-ms" => {
@@ -837,6 +848,7 @@ fn parse_mode() -> Mode {
         game_id,
         ffplay_path,
         no_media,
+        joined_media,
         play_for,
         api_token,
         debug_input,
@@ -845,7 +857,7 @@ fn parse_mode() -> Mode {
 
 fn usage(program: &str) -> ! {
     eprintln!(
-        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--debug-input] [--play-for-ms <milliseconds>]"
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--debug-input] [--play-for-ms <milliseconds>]"
     );
     process::exit(2)
 }
@@ -1082,6 +1094,27 @@ mod tests {
         };
 
         assert!(!slot_is_joinable_by_seat(&slot, "windows-seat-2"));
+    }
+
+    #[test]
+    fn media_launches_for_session_starters_by_default() {
+        assert!(should_launch_media(true, false, false));
+    }
+
+    #[test]
+    fn joined_seats_are_input_only_by_default() {
+        assert!(!should_launch_media(false, false, false));
+    }
+
+    #[test]
+    fn joined_media_can_be_requested_explicitly() {
+        assert!(should_launch_media(false, false, true));
+    }
+
+    #[test]
+    fn no_media_disables_starter_and_joined_media() {
+        assert!(!should_launch_media(true, true, false));
+        assert!(!should_launch_media(false, true, true));
     }
 
     #[test]
