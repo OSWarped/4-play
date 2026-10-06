@@ -31,8 +31,9 @@ preview/spectator design.
 
 The control plane now has a spectator-grant API that allocates a distinct
 viewer media UDP port for an active session. The grant model is intentionally
-separate from player-slot ownership. Runtime media duplication to those viewer
-ports is still the next implementation step.
+separate from player-slot ownership. Runtime-host assignment responses include
+the active spectator media ports for each session. Runtime media duplication to
+those viewer ports is still the next implementation step.
 
 This keeps player-slot and input work testable while preserving the Product MVP
 requirement that preview or spectator media must not block joining or degrade

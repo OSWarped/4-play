@@ -1357,6 +1357,19 @@ mod tests {
         assert_eq!(second_status, 201);
         assert_eq!(second["media_udp_port"], 41_002);
 
+        let (assignments_status, assignments) = request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux/sessions",
+            None,
+        )
+        .await;
+        assert_eq!(assignments_status, 200);
+        assert_eq!(
+            assignments["sessions"][0]["spectator_media_ports"],
+            json!([41_001, 41_002])
+        );
+
         let session_path = format!("/api/v1/sessions/{session_id}");
         let (_, session) = request_json(service, Method::GET, &session_path, None).await;
         assert_eq!(session["player_slots"][0]["state"], "occupied");

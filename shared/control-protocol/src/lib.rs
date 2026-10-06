@@ -208,6 +208,8 @@ pub struct RuntimeSessionAssignment {
     pub rom_name: String,
     pub destination_address: String,
     pub media_udp_port: u16,
+    #[serde(default)]
+    pub spectator_media_ports: Vec<u16>,
     pub input_udp_port: u16,
     pub input_token: String,
     pub runtime_profile: GameRuntimeProfile,

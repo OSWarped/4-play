@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, error::Error, fmt, path::Path};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fmt,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
@@ -91,6 +97,7 @@ type AssignmentRow = (
     String,
     String,
     i64,
+    String,
     i64,
     String,
     String,
@@ -791,6 +798,8 @@ impl RuntimeHostStore {
         &self,
         runtime_host_id: String,
     ) -> Result<Vec<RuntimeSessionAssignment>, StoreError> {
+        let now_unix_ms = current_unix_ms()?;
+        let now = to_sql_integer(now_unix_ms, "assignment timestamp")?;
         let rows = self
             .connection
             .call(
@@ -805,7 +814,18 @@ impl RuntimeHostStore {
                 }
                 let mut statement = connection.prepare(
                     "SELECT s.id, s.game_id, g.rom_name, s.destination_address,
-                            s.media_udp_port, s.input_udp_port, s.grant_token,
+                            s.media_udp_port,
+                            COALESCE((
+                                SELECT group_concat(media_udp_port, ',')
+                                FROM (
+                                    SELECT sg.media_udp_port
+                                    FROM spectator_grants sg
+                                    WHERE sg.session_id = s.id
+                                      AND sg.expires_unix_ms > ?2
+                                    ORDER BY sg.media_udp_port
+                                )
+                            ), '') AS spectator_media_ports,
+                            s.input_udp_port, s.grant_token,
                             s.runtime_profile_json, s.state
                      FROM sessions s
                      JOIN games g ON g.id = s.game_id
@@ -815,17 +835,18 @@ impl RuntimeHostStore {
                      ORDER BY s.created_unix_ms, s.id",
                 )?;
                 let sessions = statement
-                    .query_map([runtime_host_id], |row| {
+                    .query_map(params![runtime_host_id, now], |row| {
                         Ok((
                             row.get::<_, String>(0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, String>(2)?,
                             row.get::<_, String>(3)?,
                             row.get::<_, i64>(4)?,
-                            row.get::<_, i64>(5)?,
-                            row.get::<_, String>(6)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, i64>(6)?,
                             row.get::<_, String>(7)?,
                             row.get::<_, String>(8)?,
+                            row.get::<_, String>(9)?,
                         ))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
@@ -843,6 +864,7 @@ impl RuntimeHostStore {
                     rom_name,
                     destination_address,
                     media,
+                    spectator_media_ports,
                     input,
                     input_token,
                     profile,
@@ -856,6 +878,7 @@ impl RuntimeHostStore {
                         media_udp_port: u16::try_from(media).map_err(|_| {
                             StoreError::data("media UDP port is outside the supported range")
                         })?,
+                        spectator_media_ports: parse_media_ports(&spectator_media_ports)?,
                         input_udp_port: u16::try_from(input).map_err(|_| {
                             StoreError::data("input UDP port is outside the supported range")
                         })?,
@@ -1704,6 +1727,27 @@ fn to_sql_integer(value: u64, field: &str) -> Result<i64, StoreError> {
 
 fn from_sql_integer(value: i64, field: &str) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::data(format!("{field} must not be negative")))
+}
+
+fn current_unix_ms() -> Result<u64, StoreError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
+        .map_err(|error| StoreError::data(format!("system clock is before Unix epoch: {error}")))
+}
+
+fn parse_media_ports(value: &str) -> Result<Vec<u16>, StoreError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|port| {
+            port.parse::<u16>().map_err(|error| {
+                StoreError::data(format!("spectator media port is invalid: {error}"))
+            })
+        })
+        .collect()
 }
 
 enum HeartbeatRejection {

@@ -112,7 +112,8 @@ Last updated: 2026-10-04
 - the development client exposes media-only spectator selection for active
   sessions without claiming a player slot
 - the control plane can allocate distinct spectator media-port grants for
-  active sessions; runtime fan-out to those ports is not wired yet
+  active sessions and exposes those ports to the runtime host assignment feed;
+  runtime fan-out to those ports is not wired yet
 
 ## Not started
 
