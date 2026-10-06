@@ -113,6 +113,10 @@ pub fn app_with_state(state: AppState) -> Router {
             post(connect_player_slot),
         )
         .route(
+            "/api/v1/sessions/{session_id}/player-slots/{player_number}/disconnect",
+            post(disconnect_player_slot),
+        )
+        .route(
             "/api/v1/sessions/{session_id}/player-slots/{player_number}/release",
             post(release_player_slot),
         )
@@ -401,6 +405,26 @@ async fn connect_player_slot(
     state
         .runtime_hosts
         .connect_player_slot(session_id, player_number, request.seat_id, unix_time_ms())
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn disconnect_player_slot(
+    State(state): State<AppState>,
+    AxumPath((session_id, player_number)): AxumPath<(String, u32)>,
+    Json(request): Json<ReservePlayerSlotRequest>,
+) -> Result<Json<Session>, ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    state
+        .runtime_hosts
+        .disconnect_player_slot(
+            session_id,
+            player_number,
+            request.seat_id,
+            unix_time_ms(),
+            state.grant_ttl_ms,
+        )
         .await
         .map(Json)
         .map_err(ApiError::store)
@@ -1426,6 +1450,40 @@ mod tests {
         .await;
         assert_eq!(connect_retry_status, 200);
         assert_eq!(connect_retry["player_slots"][1]["state"], "occupied");
+
+        let disconnect_p2 = format!("/api/v1/sessions/{session_id}/player-slots/2/disconnect");
+        let (wrong_disconnect_status, wrong_disconnect) = request_json(
+            service.clone(),
+            Method::POST,
+            &disconnect_p2,
+            Some(json!({ "seat_id": "seat-three" })),
+        )
+        .await;
+        assert_eq!(wrong_disconnect_status, 409);
+        assert_eq!(wrong_disconnect["code"], "player_slot_unavailable");
+
+        let (disconnect_status, disconnected) = request_json(
+            service.clone(),
+            Method::POST,
+            &disconnect_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(disconnect_status, 200);
+        assert_eq!(disconnected["player_slots"][1]["state"], "disconnected");
+        assert_eq!(disconnected["player_slots"][1]["seat_id"], "seat-two");
+        assert!(disconnected["player_slots"][1]["lease_expires_unix_ms"].is_number());
+
+        let (reconnect_status, reconnected) = request_json(
+            service.clone(),
+            Method::POST,
+            &connect_p2,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(reconnect_status, 200);
+        assert_eq!(reconnected["player_slots"][1]["state"], "occupied");
+        assert!(reconnected["player_slots"][1]["lease_expires_unix_ms"].is_null());
 
         let release_p2 = format!("/api/v1/sessions/{session_id}/player-slots/2/release");
         let (wrong_release_status, wrong_release) = request_json(

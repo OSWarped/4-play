@@ -54,6 +54,13 @@ struct PlayTarget {
     stop_session_on_exit: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputExit {
+    UserRequested,
+    ExternallyStopped,
+    Completed,
+}
+
 struct RawMode;
 
 impl RawMode {
@@ -81,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_direct(destination: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     println!("4-Play direct seat input -> {destination}");
     println!("Press Esc to disconnect and stop the development session.");
-    run_controller(destination, None, 1, true, false, || false)
+    run_controller(destination, None, 1, true, false, || false).map(|_| ())
 }
 
 fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -203,7 +210,7 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                     .and_then(|child| child.try_wait().ok().flatten())
                     .is_some()
         };
-        let input_result = if let Some(duration) = config.play_for {
+        let input_exit = if let Some(duration) = config.play_for {
             run_automated_controller(
                 input_destination,
                 input_token,
@@ -220,23 +227,35 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                 config.debug_input,
                 &mut stopped,
             )
-        };
+        }?;
 
         if target.stop_session_on_exit && !runtime_ended.load(Ordering::Acquire) {
             request_stop(&client, &config.control_plane_url, &active.id)?;
         } else if !target.stop_session_on_exit {
-            release_player_slot(
-                &client,
-                &config.control_plane_url,
-                &active.id,
-                target.player_number,
-                &config.seat_id,
-            )?;
+            match input_exit {
+                InputExit::UserRequested | InputExit::Completed => {
+                    release_player_slot(
+                        &client,
+                        &config.control_plane_url,
+                        &active.id,
+                        target.player_number,
+                        &config.seat_id,
+                    )?;
+                }
+                InputExit::ExternallyStopped => {
+                    disconnect_player_slot(
+                        &client,
+                        &config.control_plane_url,
+                        &active.id,
+                        target.player_number,
+                        &config.seat_id,
+                    )?;
+                }
+            }
         }
         runtime_ended.store(true, Ordering::Release);
         let _ = monitor.join();
         stop_media(&mut media);
-        input_result?;
 
         if target.stop_session_on_exit {
             let final_session = wait_for_terminal(&client, &config.control_plane_url, &active.id)?;
@@ -472,6 +491,25 @@ fn release_player_slot(
         .json()?)
 }
 
+fn disconnect_player_slot(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+    player_number: u8,
+    seat_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    Ok(client
+        .post(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/player-slots/{player_number}/disconnect"
+        ))
+        .json(&ReservePlayerSlotRequest {
+            seat_id: seat_id.to_owned(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
 fn connect_player_slot(
     client: &Client,
     control_plane_url: &str,
@@ -624,7 +662,7 @@ fn run_controller<F>(
     send_stop_flag: bool,
     debug_input: bool,
     mut externally_stopped: F,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<InputExit, Box<dyn std::error::Error>>
 where
     F: FnMut() -> bool,
 {
@@ -654,12 +692,12 @@ where
                     player_slot,
                     input_token,
                 )?;
-                break;
+                return Ok(InputExit::UserRequested);
             }
             changed = update_held_keys(&mut held, key);
         }
         if externally_stopped() {
-            break;
+            return Ok(InputExit::ExternallyStopped);
         }
         if changed || last_send.elapsed() >= HEARTBEAT_INTERVAL {
             let state = send_state(&socket, &held, &mut sequence, 0, player_slot, input_token)?;
@@ -671,7 +709,6 @@ where
             last_send = Instant::now();
         }
     }
-    Ok(())
 }
 
 fn run_automated_controller<F>(
@@ -680,7 +717,7 @@ fn run_automated_controller<F>(
     player_slot: u8,
     duration: Duration,
     mut externally_stopped: F,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<InputExit, Box<dyn std::error::Error>>
 where
     F: FnMut() -> bool,
 {
@@ -689,7 +726,10 @@ where
     let held = HashSet::new();
     let mut sequence = 0_u32;
     let started = Instant::now();
-    while started.elapsed() < duration && !externally_stopped() {
+    while started.elapsed() < duration {
+        if externally_stopped() {
+            return Ok(InputExit::ExternallyStopped);
+        }
         send_state(
             &socket,
             &held,
@@ -700,7 +740,7 @@ where
         )?;
         thread::sleep(HEARTBEAT_INTERVAL);
     }
-    Ok(())
+    Ok(InputExit::Completed)
 }
 
 fn parse_mode() -> Mode {

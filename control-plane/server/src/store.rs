@@ -1162,6 +1162,112 @@ impl RuntimeHostStore {
             .map_err(StoreError::from_slot_reservation_rejection)?;
         stored.into_session()
     }
+
+    pub async fn disconnect_player_slot(
+        &self,
+        session_id: String,
+        player_number: u32,
+        seat_id: String,
+        now_unix_ms: u64,
+        lease_duration_ms: u64,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "slot disconnect timestamp")?;
+        let lease_expires = to_sql_integer(
+            now_unix_ms.saturating_add(lease_duration_ms),
+            "slot disconnect expiry",
+        )?;
+        let stored = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<
+                    Result<StoredSession, SlotReservationRejection>,
+                > {
+                    let transaction = connection.transaction()?;
+                    let current = transaction
+                        .query_row(
+                            "SELECT state, player_slots_json FROM sessions WHERE id = ?1",
+                            [&session_id],
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                        )
+                        .optional()?;
+                    let Some((state_name, player_slots_json)) = current else {
+                        return Ok(Err(SlotReservationRejection::SessionNotFound));
+                    };
+                    let state = match parse_session_state(&state_name) {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredState)),
+                    };
+                    if !matches!(state, SessionState::Ready | SessionState::Active) {
+                        return Ok(Err(SlotReservationRejection::Unavailable));
+                    }
+
+                    let mut slots: Vec<PlayerSlot> = match serde_json::from_str(&player_slots_json)
+                    {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                    };
+                    expire_slot_leases(&mut slots, now_unix_ms);
+
+                    let Some(slot) = slots
+                        .iter_mut()
+                        .find(|slot| slot.player_number == player_number)
+                    else {
+                        return Ok(Err(SlotReservationRejection::SlotNotFound));
+                    };
+
+                    match slot.state {
+                        PlayerSlotState::Reserved | PlayerSlotState::Occupied
+                            if slot.seat_id.as_deref() == Some(seat_id.as_str()) =>
+                        {
+                            slot.state = PlayerSlotState::Disconnected;
+                            slot.lease_expires_unix_ms =
+                                Some(now_unix_ms.saturating_add(lease_duration_ms));
+                        }
+                        PlayerSlotState::Disconnected
+                            if slot.seat_id.as_deref() == Some(seat_id.as_str()) =>
+                        {
+                            slot.lease_expires_unix_ms =
+                                Some(now_unix_ms.saturating_add(lease_duration_ms));
+                        }
+                        _ => return Ok(Err(SlotReservationRejection::Unavailable)),
+                    }
+
+                    let updated_slots = match serde_json::to_string(&slots) {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                    };
+                    transaction.execute(
+                        "UPDATE sessions
+                     SET player_slots_json = ?2, updated_unix_ms = ?3
+                     WHERE id = ?1",
+                        params![session_id, updated_slots, now],
+                    )?;
+                    transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                     VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            session_id,
+                            state_name,
+                            now,
+                            format!(
+                                "player {player_number} disconnected by {seat_id} until {lease_expires}"
+                            )
+                        ],
+                    )?;
+                    let stored = transaction.query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )?;
+                    transaction.commit()?;
+                    Ok(Ok(stored))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .map_err(StoreError::from_slot_reservation_rejection)?;
+        stored.into_session()
+    }
 }
 
 fn session_select_sql(suffix: &str) -> String {
