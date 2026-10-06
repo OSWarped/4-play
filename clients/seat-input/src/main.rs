@@ -180,13 +180,16 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
         )
         .parse::<SocketAddr>()?;
         let input_token = active.connection_grant.token.parse::<SessionToken>()?;
-        let mut media = if config.no_media {
+        let input_only_join = !target.stop_session_on_exit;
+        let mut media = if config.no_media || input_only_join {
             None
         } else {
             match spawn_ffplay(&config.ffplay_path, active.connection_grant.media_udp_port) {
                 Ok(child) => Some(child),
                 Err(error) => {
-                    let _ = request_stop(&client, &config.control_plane_url, &active.id);
+                    if target.stop_session_on_exit {
+                        let _ = request_stop(&client, &config.control_plane_url, &active.id);
+                    }
                     return Err(error.into());
                 }
             }
@@ -196,6 +199,13 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
             "Playing {} as player {} through host {}. Press Esc to return to browsing.",
             active.game_id, target.player_number, active.runtime_host_id
         );
+        if input_only_join {
+            println!(
+                "Joined seats currently run input-only; watch the existing session media window."
+            );
+        } else if config.no_media {
+            println!("Media disabled by --no-media; sending input only.");
+        }
         let runtime_ended = Arc::new(AtomicBool::new(false));
         let monitor = spawn_session_monitor(
             client.clone(),
@@ -333,7 +343,9 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
         );
         println!("     {}", describe_player_slots(&session.player_slots));
     }
-    println!("  Reserve an open slot with j<session-number>.<player-number>, for example j1.2.");
+    println!(
+        "  Join an open or same-seat disconnected slot with j<session-number>.<player-number>, for example j1.2."
+    );
 }
 
 fn describe_player_slots(slots: &[PlayerSlot]) -> String {
