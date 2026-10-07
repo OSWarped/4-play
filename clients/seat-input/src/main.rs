@@ -1,6 +1,7 @@
 use control_protocol::{
-    CatalogGame, CatalogGameList, CreateSessionRequest, PlayerSlot, PlayerSlotState,
-    ReservePlayerSlotRequest, RuntimeHostStatus, Session, SessionList, SessionState,
+    CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
+    PlayerSlotState, ReservePlayerSlotRequest, RuntimeHostStatus, Session, SessionList,
+    SessionState, SpectatorGrant,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -588,6 +589,26 @@ fn connect_player_slot(
         .json()?)
 }
 
+fn create_spectator_grant(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+    seat_id: &str,
+    destination_address: IpAddr,
+) -> Result<SpectatorGrant, Box<dyn std::error::Error>> {
+    Ok(client
+        .post(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/spectators"
+        ))
+        .json(&CreateSpectatorGrantRequest {
+            seat_id: seat_id.to_owned(),
+            destination_address: destination_address.to_string(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
 fn get_session(
     client: &Client,
     control_plane_url: &str,
@@ -638,11 +659,18 @@ fn spectate_session(
     if config.no_media {
         return Err("spectator mode requires media; remove --no-media".into());
     }
+    let grant = create_spectator_grant(
+        client,
+        &config.control_plane_url,
+        session_id,
+        &config.seat_id,
+        config.destination_address,
+    )?;
     let active = wait_for_active(client, &config.control_plane_url, session_id)?;
-    let mut media = spawn_ffplay(&config.ffplay_path, active.connection_grant.media_udp_port)?;
+    let mut media = spawn_ffplay(&config.ffplay_path, grant.media_udp_port)?;
     println!(
-        "Spectating {} through host {}. Press Esc to return to browsing.",
-        active.game_id, active.runtime_host_id
+        "Spectating {} through host {} on media port {}. Press Esc to return to browsing.",
+        active.game_id, grant.runtime_host_id, grant.media_udp_port
     );
     println!("Spectator mode opens media only; it does not reserve a player slot or send input.");
 

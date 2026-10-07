@@ -25,9 +25,10 @@ clients on one Windows development PC do not collide while binding the same
 local gameplay UDP media port. A separate physical seat or experiment may pass
 `--joined-media` to launch its own FFplay receiver. The development client also
 offers `s<session-number>` spectator selection, which opens media without
-reserving a player slot or sending input. Both modes still use the full-quality
-gameplay stream and assigned gameplay media port; they are not the final
-preview/spectator design.
+reserving a player slot or sending input. Spectator selection requests a
+spectator grant and binds the grant's distinct media UDP port. Both joined
+media and spectator modes still use the full-quality gameplay stream; they are
+not the final preview/spectator design.
 
 The control plane now has a spectator-grant API that allocates a distinct
 viewer media UDP port for an active session. The grant model is intentionally
