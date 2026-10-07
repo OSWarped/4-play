@@ -38,6 +38,7 @@ struct RuntimeArgs {
     destination_ip: String,
     udp_port: u16,
     spectator_udp_ports: Vec<u16>,
+    spectator_ports_file: Option<PathBuf>,
     terminal_input: bool,
     input_port: Option<u16>,
     input_token: Option<SessionToken>,
@@ -82,6 +83,7 @@ fn print_usage(program: &str) {
     --fps <rate> \
     --udp-port <port> \
     [--spectator-udp-port <port>]... \
+    [--spectator-ports-file <path>] \
     [--destination-ip <address>] \
     [--terminal-input | --input-port <port>] \
     [--input-token <uuid>] \
@@ -138,6 +140,7 @@ fn parse_args() -> RuntimeArgs {
     let mut fps = None;
     let mut udp_port = None;
     let mut spectator_udp_ports = Vec::new();
+    let mut spectator_ports_file = None;
     let mut destination_ip = String::from("192.168.20.10");
     let mut terminal_input = false;
     let mut input_port = None;
@@ -189,6 +192,12 @@ fn parse_args() -> RuntimeArgs {
                     require_value(&mut args, "--spectator-udp-port"),
                     "--spectator-udp-port",
                 ));
+            }
+            "--spectator-ports-file" => {
+                spectator_ports_file = Some(PathBuf::from(require_value(
+                    &mut args,
+                    "--spectator-ports-file",
+                )));
             }
             "--terminal-input" => {
                 terminal_input = true;
@@ -260,6 +269,7 @@ fn parse_args() -> RuntimeArgs {
         destination_ip,
         udp_port: required(udp_port, "--udp-port", &program),
         spectator_udp_ports,
+        spectator_ports_file,
         terminal_input,
         input_port,
         input_token,
@@ -363,6 +373,7 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         destination_ip: session.config.destination_ip.clone(),
         udp_port: session.config.udp_port,
         spectator_udp_ports: args.spectator_udp_ports,
+        spectator_ports_file: args.spectator_ports_file,
         audio_codec: args.audio_codec,
         audio_thread_queue_size: args.audio_thread_queue_size,
     };

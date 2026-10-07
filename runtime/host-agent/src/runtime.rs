@@ -53,6 +53,7 @@ struct ManagedRuntime {
     pid: u32,
     status_file: PathBuf,
     pid_file: PathBuf,
+    spectator_ports_file: PathBuf,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,8 @@ impl RuntimeSupervisor {
         fs::create_dir_all(&self.config.state_directory)?;
         let status_file = self.status_file(&assignment.session_id);
         let pid_file = self.pid_file(&assignment.session_id);
+        let spectator_ports_file = self.spectator_ports_file(&assignment.session_id);
+        write_spectator_ports(&spectator_ports_file, &assignment.spectator_media_ports)?;
         if let Some(pid) = read_live_pid(&pid_file, &assignment.session_id)? {
             self.processes.insert(
                 assignment.session_id.clone(),
@@ -90,6 +93,7 @@ impl RuntimeSupervisor {
                     pid,
                     status_file,
                     pid_file,
+                    spectator_ports_file,
                 },
             );
             return Ok(());
@@ -126,6 +130,8 @@ impl RuntimeSupervisor {
                 .arg(spectator_port.to_string());
         }
         command
+            .arg("--spectator-ports-file")
+            .arg(&spectator_ports_file)
             .arg("--input-port")
             .arg(assignment.input_udp_port.to_string())
             .arg("--input-token")
@@ -155,8 +161,22 @@ impl RuntimeSupervisor {
                 pid,
                 status_file,
                 pid_file,
+                spectator_ports_file,
             },
         );
+        Ok(())
+    }
+
+    pub fn refresh_spectator_ports(
+        &mut self,
+        assignment: &RuntimeSessionAssignment,
+    ) -> io::Result<()> {
+        if let Some(process) = self.processes.get(&assignment.session_id) {
+            write_spectator_ports(
+                &process.spectator_ports_file,
+                &assignment.spectator_media_ports,
+            )?;
+        }
         Ok(())
     }
 
@@ -236,6 +256,12 @@ impl RuntimeSupervisor {
             .state_directory
             .join(format!("{session_id}.pid"))
     }
+
+    fn spectator_ports_file(&self, session_id: &str) -> PathBuf {
+        self.config
+            .state_directory
+            .join(format!("{session_id}.spectator-ports"))
+    }
 }
 
 fn input_debug_enabled() -> bool {
@@ -270,6 +296,23 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 fn cleanup_process_files(process: &ManagedRuntime) {
     let _ = remove_if_present(&process.pid_file);
     let _ = remove_if_present(&process.status_file);
+    let _ = remove_if_present(&process.spectator_ports_file);
+}
+
+fn write_spectator_ports(path: &Path, ports: &[u16]) -> io::Result<()> {
+    let body = ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(
+        path,
+        if body.is_empty() {
+            body
+        } else {
+            format!("{body}\n")
+        },
+    )
 }
 
 #[cfg(unix)]

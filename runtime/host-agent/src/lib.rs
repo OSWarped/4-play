@@ -335,6 +335,11 @@ impl RuntimeHostAgent {
                 | SessionState::Ready
                 | SessionState::Active
                 | SessionState::Unhealthy => {
+                    supervisor
+                        .refresh_spectator_ports(&assignment)
+                        .map_err(|error| {
+                            format!("could not refresh spectator media ports: {error}")
+                        })?;
                     match supervisor
                         .observe(&assignment.session_id)
                         .map_err(|error| format!("could not inspect runtime process: {error}"))?

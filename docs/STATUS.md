@@ -115,12 +115,15 @@ Last updated: 2026-10-04
   active sessions and exposes those ports to the runtime host assignment feed;
 - session-runtime can launch FFmpeg with primary plus spectator UDP outputs
   when those grants are present before the process starts
+- running sessions can pick up newly granted spectator media ports through the
+  runtime host's refreshed spectator port file and session-runtime's Rust
+  MPEG-TS fan-out loop
 
 ## Not started
 
 - catalog and game-package workflow
 - low-cost active-session previews
-- dynamic runtime spectator/media fan-out updates for already-running sessions
+- lower-bitrate preview streams distinct from full-quality spectator media
 
 ## Next milestone
 
