@@ -16,9 +16,10 @@ use axum::{
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
-    ErrorResponse, RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
-    RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session,
-    SessionList, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateSessionState,
+    ErrorResponse, GameMetadata, RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost,
+    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList,
+    ServiceStatus, Session, SessionList, SessionSummaryList, SpectatorGrant, StatusResponse,
+    UpdateGameMetadataRequest, UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -147,6 +148,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
+        .route(
+            "/api/v1/games/{game_id}/metadata",
+            get(get_game_metadata).put(update_game_metadata),
+        )
         .route(
             "/api/v1/active-sessions",
             get(list_active_session_summaries),
@@ -357,6 +362,32 @@ async fn get_catalog_game(
     state
         .runtime_hosts
         .get_catalog_game(game_id, unix_time_ms(), state.offline_after_ms)
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn get_game_metadata(
+    State(state): State<AppState>,
+    AxumPath(game_id): AxumPath<String>,
+) -> Result<Json<GameMetadata>, ApiError> {
+    state
+        .runtime_hosts
+        .get_game_metadata(game_id)
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
+}
+
+async fn update_game_metadata(
+    State(state): State<AppState>,
+    AxumPath(game_id): AxumPath<String>,
+    Json(request): Json<UpdateGameMetadataRequest>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    validate_game_metadata(&request.metadata)?;
+    state
+        .runtime_hosts
+        .update_game_metadata(game_id, request.metadata)
         .await
         .map(Json)
         .map_err(ApiError::store)
@@ -702,6 +733,62 @@ fn validate_catalog(catalog: &RuntimeHostCatalog) -> Result<(), ApiError> {
                 "catalog games require a name, dimensions, refresh rate, and player count",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_game_metadata(metadata: &GameMetadata) -> Result<(), ApiError> {
+    for (field, value, max_len) in [
+        ("sort_title", metadata.sort_title.as_deref(), 256),
+        ("description", metadata.description.as_deref(), 4_096),
+        ("genre", metadata.genre.as_deref(), 128),
+        ("manufacturer", metadata.manufacturer.as_deref(), 256),
+        ("control_notes", metadata.control_notes.as_deref(), 2_048),
+    ] {
+        if let Some(value) = value
+            && value.len() > max_len
+        {
+            return Err(ApiError::bad_request(
+                "game_metadata_too_long",
+                &format!("{field} must not exceed {max_len} bytes"),
+            ));
+        }
+    }
+    if metadata
+        .player_count
+        .is_some_and(|count| count == 0 || count > 16)
+    {
+        return Err(ApiError::bad_request(
+            "invalid_player_count",
+            "player count must be between 1 and 16",
+        ));
+    }
+    for (field, value) in [
+        ("artwork_path", metadata.artwork_path.as_deref()),
+        ("marquee_path", metadata.marquee_path.as_deref()),
+        ("screenshot_path", metadata.screenshot_path.as_deref()),
+        ("logo_path", metadata.logo_path.as_deref()),
+    ] {
+        if let Some(value) = value {
+            validate_asset_path(field, value)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_asset_path(field: &str, value: &str) -> Result<(), ApiError> {
+    let invalid = value.is_empty()
+        || value.len() > 512
+        || value.starts_with('/')
+        || value.starts_with('\\')
+        || value.contains("..")
+        || value.contains(':')
+        || value.chars().any(char::is_control);
+    if invalid {
+        return Err(ApiError::bad_request(
+            "invalid_asset_path",
+            &format!("{field} must be a relative asset path without traversal"),
+        ));
     }
     Ok(())
 }
@@ -1199,6 +1286,74 @@ mod tests {
             expired_game["availability"][0]["runtime_host_status"],
             "offline"
         );
+    }
+
+    #[tokio::test]
+    async fn game_metadata_can_be_updated_and_overrides_player_count() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+
+        let metadata_path = "/api/v1/games/tmnt/metadata";
+        let (metadata_status, metadata) =
+            request_json(service.clone(), Method::GET, metadata_path, None).await;
+        assert_eq!(metadata_status, 200);
+        assert!(metadata["player_count"].is_null());
+
+        let (update_status, updated_game) = request_json(
+            service.clone(),
+            Method::PUT,
+            metadata_path,
+            Some(json!({
+                "metadata": {
+                    "sort_title": "Teenage Mutant Ninja Turtles",
+                    "description": "Four-player arcade brawler.",
+                    "genre": "Beat 'em up",
+                    "release_year": 1989,
+                    "manufacturer": "Konami",
+                    "player_count": 3,
+                    "artwork_path": "media/tmnt/artwork.png",
+                    "marquee_path": "media/tmnt/marquee.png",
+                    "screenshot_path": "media/tmnt/screen.png",
+                    "logo_path": "media/tmnt/logo.png",
+                    "control_notes": "Jump and attack."
+                }
+            })),
+        )
+        .await;
+        assert_eq!(update_status, 200);
+        assert_eq!(updated_game["metadata"]["player_count"], 3);
+        assert_eq!(updated_game["availability"][0]["profile"]["max_players"], 3);
+
+        let (_, created) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(created["player_slots"].as_array().unwrap().len(), 3);
+        assert_eq!(created["runtime_profile"]["max_players"], 3);
+    }
+
+    #[tokio::test]
+    async fn game_metadata_rejects_unsafe_asset_paths() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+
+        let (status, error) = request_json(
+            service,
+            Method::PUT,
+            "/api/v1/games/tmnt/metadata",
+            Some(json!({
+                "metadata": {
+                    "player_count": 4,
+                    "marquee_path": "../secret.png"
+                }
+            })),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(error["code"], "invalid_asset_path");
     }
 
     #[tokio::test]

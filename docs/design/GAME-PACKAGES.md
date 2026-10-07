@@ -39,6 +39,38 @@ controls:
 - health-check hints
 - package version
 
+## Editable catalog metadata
+
+The Phase 2 control plane stores administrator-editable presentation metadata
+beside runtime-discovered catalog entries. This is the foundation for a future
+admin module and a Batocera/RetroPie-style seat browser.
+
+Current editable fields:
+
+- sort title
+- description
+- genre
+- release year
+- manufacturer
+- player-count override
+- artwork path
+- marquee path
+- screenshot path
+- logo path
+- control notes
+
+The metadata API accepts relative asset paths only; path traversal, absolute
+paths, drive-qualified paths, and control characters are rejected. A
+player-count override updates the effective catalog profile and the number of
+player slots allocated for newly launched sessions.
+
+Current endpoints:
+
+```text
+GET /api/v1/games/{game_id}/metadata
+PUT /api/v1/games/{game_id}/metadata
+```
+
 ## Validation
 
 A validator shall reject:

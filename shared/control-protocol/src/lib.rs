@@ -102,6 +102,21 @@ pub struct RuntimeHostCatalog {
     pub games: Vec<DiscoveredGame>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameMetadata {
+    pub sort_title: Option<String>,
+    pub description: Option<String>,
+    pub genre: Option<String>,
+    pub release_year: Option<u16>,
+    pub manufacturer: Option<String>,
+    pub player_count: Option<u32>,
+    pub artwork_path: Option<String>,
+    pub marquee_path: Option<String>,
+    pub screenshot_path: Option<String>,
+    pub logo_path: Option<String>,
+    pub control_notes: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameAvailability {
     pub runtime_host_id: String,
@@ -114,12 +129,19 @@ pub struct CatalogGame {
     pub id: String,
     pub display_name: String,
     pub rom_name: String,
+    #[serde(default)]
+    pub metadata: GameMetadata,
     pub availability: Vec<GameAvailability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CatalogGameList {
     pub games: Vec<CatalogGame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateGameMetadataRequest {
+    pub metadata: GameMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,9 +317,9 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, GameRuntimeProfile, PreviewStatus, RuntimeHost,
+        API_VERSION, ApiInfo, GameMetadata, GameRuntimeProfile, PreviewStatus, RuntimeHost,
         RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
-        SpectatorGrant, StatusResponse,
+        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
     };
 
     #[test]
@@ -379,6 +401,30 @@ mod tests {
         assert_eq!(value["state"], "active");
         assert_eq!(value["active_spectator_count"], 1);
         assert_eq!(value["preview_status"], "spectator_available");
+    }
+
+    #[test]
+    fn game_metadata_update_payload_has_stable_field_names() {
+        let request = UpdateGameMetadataRequest {
+            metadata: GameMetadata {
+                sort_title: Some("Teenage Mutant Ninja Turtles".to_owned()),
+                description: Some("Four-player arcade brawler.".to_owned()),
+                genre: Some("Beat 'em up".to_owned()),
+                release_year: Some(1989),
+                manufacturer: Some("Konami".to_owned()),
+                player_count: Some(4),
+                artwork_path: Some("media/tmnt/artwork.png".to_owned()),
+                marquee_path: Some("media/tmnt/marquee.png".to_owned()),
+                screenshot_path: Some("media/tmnt/screen.png".to_owned()),
+                logo_path: Some("media/tmnt/logo.png".to_owned()),
+                control_notes: Some("Jump and attack.".to_owned()),
+            },
+        };
+
+        let value = serde_json::to_value(request).unwrap();
+        assert_eq!(value["metadata"]["player_count"], 4);
+        assert_eq!(value["metadata"]["marquee_path"], "media/tmnt/marquee.png");
+        assert_eq!(value["metadata"]["release_year"], 1989);
     }
 
     #[test]

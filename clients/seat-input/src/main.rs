@@ -1540,6 +1540,7 @@ mod tests {
             id: game_id.to_owned(),
             display_name: display_name.to_owned(),
             rom_name: game_id.to_owned(),
+            metadata: control_protocol::GameMetadata::default(),
             availability: vec![control_protocol::GameAvailability {
                 runtime_host_id: "reference-linux".to_owned(),
                 runtime_host_status: RuntimeHostStatus::Online,

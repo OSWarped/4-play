@@ -123,10 +123,12 @@ Last updated: 2026-10-04
 - control-plane media and input UDP port pools are configurable for n-seat
   development and deployment; session allocation also avoids active spectator
   media ports when launching new games
+- game catalog entries now carry editable presentation metadata for an admin
+  module, including descriptions, artwork/marquee/screenshot/logo paths,
+  manufacturer/year/genre, control notes, and player-count overrides
 
 ## Not started
 
-- catalog and game-package workflow
 - low-cost active-session previews
 - lower-bitrate preview streams distinct from full-quality spectator media
 

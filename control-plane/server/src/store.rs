@@ -7,10 +7,11 @@ use std::{
 };
 
 use control_protocol::{
-    CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
-    PlayerSlot, PlayerSlotState, PreviewStatus, RegisterRuntimeHost, RuntimeHost,
-    RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus,
-    RuntimeSessionAssignment, Session, SessionState, SessionSummary, SpectatorGrant,
+    CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameMetadata,
+    GameRuntimeProfile, PlayerSlot, PlayerSlotState, PreviewStatus, RegisterRuntimeHost,
+    RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat,
+    RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState, SessionSummary,
+    SpectatorGrant,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -31,7 +32,8 @@ const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS games (
         id TEXT PRIMARY KEY NOT NULL,
         display_name TEXT NOT NULL,
-        rom_name TEXT NOT NULL
+        rom_name TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
     );
     CREATE TABLE IF NOT EXISTS runtime_profiles (
         runtime_host_id TEXT NOT NULL,
@@ -139,6 +141,17 @@ impl RuntimeHostStore {
                     connection.execute(
                         "ALTER TABLE sessions
                          ADD COLUMN player_slots_json TEXT NOT NULL DEFAULT '[]'",
+                        [],
+                    )?;
+                }
+                let game_columns = connection
+                    .prepare("PRAGMA table_info(games)")?
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !game_columns.iter().any(|name| name == "metadata_json") {
+                    connection.execute(
+                        "ALTER TABLE games
+                         ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
                         [],
                     )?;
                 }
@@ -418,7 +431,7 @@ impl RuntimeHostStore {
             .call(move |connection| {
                 mark_expired_offline(connection, cutoff, now)?;
                 let mut statement = connection.prepare(
-                    "SELECT g.id, g.display_name, g.rom_name, rp.runtime_host_id,
+                    "SELECT g.id, g.display_name, g.rom_name, g.metadata_json, rp.runtime_host_id,
                             h.status, rp.profile_json
                      FROM games g
                      JOIN runtime_profiles rp ON rp.game_id = g.id
@@ -434,6 +447,7 @@ impl RuntimeHostStore {
                             row.get::<_, String>(3)?,
                             row.get::<_, String>(4)?,
                             row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
                         ))
                     })?
                     .collect::<Result<Vec<_>, _>>()
@@ -442,20 +456,25 @@ impl RuntimeHostStore {
             .map_err(StoreError::database)?;
 
         let mut games = BTreeMap::<String, CatalogGame>::new();
-        for (game_id, display_name, rom_name, host_id, status, profile_json) in rows {
+        for (game_id, display_name, rom_name, metadata_json, host_id, status, profile_json) in rows
+        {
             let runtime_host_status = match status.as_str() {
                 "online" => RuntimeHostStatus::Online,
                 "offline" => RuntimeHostStatus::Offline,
                 _ => return Err(StoreError::data("runtime host has an unknown status")),
             };
-            let profile = serde_json::from_str::<GameRuntimeProfile>(&profile_json)
+            let metadata = serde_json::from_str::<GameMetadata>(&metadata_json)
                 .map_err(StoreError::serialization)?;
+            let mut profile = serde_json::from_str::<GameRuntimeProfile>(&profile_json)
+                .map_err(StoreError::serialization)?;
+            apply_metadata_to_profile(&mut profile, &metadata);
             games
                 .entry(game_id.clone())
                 .or_insert_with(|| CatalogGame {
                     id: game_id,
                     display_name,
                     rom_name,
+                    metadata,
                     availability: Vec::new(),
                 })
                 .availability
@@ -479,6 +498,48 @@ impl RuntimeHostStore {
             .into_iter()
             .find(|game| game.id == game_id)
             .ok_or(StoreError::GameNotFound)
+    }
+
+    pub async fn get_game_metadata(&self, game_id: String) -> Result<GameMetadata, StoreError> {
+        let metadata_json = self
+            .connection
+            .call(move |connection| {
+                connection
+                    .query_row(
+                        "SELECT metadata_json FROM games WHERE id = ?1",
+                        [&game_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+            })
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::GameNotFound)?;
+        serde_json::from_str::<GameMetadata>(&metadata_json).map_err(StoreError::serialization)
+    }
+
+    pub async fn update_game_metadata(
+        &self,
+        game_id: String,
+        metadata: GameMetadata,
+    ) -> Result<CatalogGame, StoreError> {
+        let metadata_json = serde_json::to_string(&metadata).map_err(StoreError::serialization)?;
+        let updated_game_id = game_id.clone();
+        let updated = self
+            .connection
+            .call(move |connection| {
+                connection.execute(
+                    "UPDATE games SET metadata_json = ?2 WHERE id = ?1",
+                    params![updated_game_id, metadata_json],
+                )
+            })
+            .await
+            .map_err(StoreError::database)?;
+        if updated == 0 {
+            return Err(StoreError::GameNotFound);
+        }
+        self.get_catalog_game(game_id, current_unix_ms()?, u64::MAX)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -531,21 +592,27 @@ impl RuntimeHostStore {
 
                 let selected = transaction
                     .query_row(
-                        "SELECT h.id, h.capabilities_json, rp.profile_json
+                        "SELECT h.id, h.capabilities_json, rp.profile_json, g.metadata_json
                          FROM runtime_hosts h
                          JOIN runtime_profiles rp ON rp.runtime_host_id = h.id
+                         JOIN games g ON g.id = rp.game_id
                          WHERE rp.game_id = ?1 AND h.status = 'online'
                          ORDER BY (
                             SELECT COUNT(*) FROM sessions s
                             WHERE s.runtime_host_id = h.id AND s.state NOT IN
                                 ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
                          ), h.id
-                         LIMIT 1",
+                        LIMIT 1",
                         [&request.game_id],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                        |row| Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        )),
                     )
                     .optional()?;
-                let Some((runtime_host_id, capabilities_json, runtime_profile_json)) = selected else {
+                let Some((runtime_host_id, capabilities_json, runtime_profile_json, metadata_json)) = selected else {
                     return Ok(Err(AllocationRejection::GameUnavailable));
                 };
                 let capabilities: RuntimeHostCapabilities = match serde_json::from_str(&capabilities_json) {
@@ -555,7 +622,16 @@ impl RuntimeHostStore {
                 if capabilities.data_plane_address.trim().is_empty() {
                     return Ok(Err(AllocationRejection::MissingDataPlaneAddress));
                 }
-                let runtime_profile: GameRuntimeProfile = match serde_json::from_str(&runtime_profile_json) {
+                let metadata: GameMetadata = match serde_json::from_str(&metadata_json) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
+                };
+                let mut runtime_profile: GameRuntimeProfile = match serde_json::from_str(&runtime_profile_json) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
+                };
+                apply_metadata_to_profile(&mut runtime_profile, &metadata);
+                let runtime_profile_json = match serde_json::to_string(&runtime_profile) {
                     Ok(value) => value,
                     Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
                 };
@@ -1822,6 +1898,12 @@ fn preview_status_for_state(state: SessionState) -> PreviewStatus {
         PreviewStatus::SpectatorAvailable
     } else {
         PreviewStatus::Unavailable
+    }
+}
+
+fn apply_metadata_to_profile(profile: &mut GameRuntimeProfile, metadata: &GameMetadata) {
+    if let Some(player_count) = metadata.player_count {
+        profile.max_players = player_count.max(1);
     }
 }
 
