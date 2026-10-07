@@ -1,7 +1,7 @@
 use control_protocol::{
     CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
-    PlayerSlotState, ReservePlayerSlotRequest, RuntimeHostStatus, Session, SessionList,
-    SessionState, SpectatorGrant,
+    PlayerSlotState, PreviewStatus, ReservePlayerSlotRequest, RuntimeHostStatus, Session,
+    SessionState, SessionSummary, SessionSummaryList, SpectatorGrant,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -356,20 +356,16 @@ fn fetch_available_games(
 fn fetch_active_sessions(
     client: &Client,
     control_plane_url: &str,
-) -> Result<Vec<Session>, Box<dyn std::error::Error>> {
+) -> Result<Vec<SessionSummary>, Box<dyn std::error::Error>> {
     let sessions = client
-        .get(format!("{control_plane_url}/api/v1/sessions"))
+        .get(format!("{control_plane_url}/api/v1/active-sessions"))
         .send()?
         .error_for_status()?
-        .json::<SessionList>()?;
-    Ok(sessions
-        .sessions
-        .into_iter()
-        .filter(|session| !session.state.is_terminal())
-        .collect())
+        .json::<SessionSummaryList>()?;
+    Ok(sessions.sessions)
 }
 
-fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
+fn print_active_sessions(sessions: &[SessionSummary], games: &[CatalogGame]) {
     if sessions.is_empty() {
         return;
     }
@@ -386,7 +382,7 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
     );
 }
 
-fn active_session_lines(sessions: &[Session], games: &[CatalogGame]) -> Vec<String> {
+fn active_session_lines(sessions: &[SessionSummary], games: &[CatalogGame]) -> Vec<String> {
     let mut lines = Vec::new();
     for (index, session) in sessions.iter().enumerate() {
         let game_name = games
@@ -417,8 +413,19 @@ fn active_session_lines(sessions: &[Session], games: &[CatalogGame]) -> Vec<Stri
                 }
             ));
         }
+        lines.push(format!(
+            "     preview: {}",
+            describe_preview_status(session.preview_status)
+        ));
     }
     lines
+}
+
+fn describe_preview_status(status: PreviewStatus) -> &'static str {
+    match status {
+        PreviewStatus::Unavailable => "unavailable",
+        PreviewStatus::SpectatorAvailable => "spectator available",
+    }
 }
 
 fn describe_player_slots(slots: &[PlayerSlot]) -> String {
@@ -450,7 +457,7 @@ fn describe_claimed_slot(label: &str, state: &str, slot: &PlayerSlot) -> String 
 }
 
 fn select_browse_action(
-    sessions: &[Session],
+    sessions: &[SessionSummary],
     games: &[CatalogGame],
     seat_id: &str,
 ) -> Result<BrowseSelection, Box<dyn std::error::Error>> {
@@ -1291,6 +1298,7 @@ mod tests {
                 "  1. Teenage Mutant Ninja Turtles (tmnt) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
                 "     1 active spectator".to_owned(),
+                "     preview: spectator available".to_owned(),
             ]
         );
     }
@@ -1307,6 +1315,7 @@ mod tests {
                 "  1. aliens (aliens) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
                 "     2 active spectators".to_owned(),
+                "     preview: spectator available".to_owned(),
             ]
         );
     }
@@ -1322,6 +1331,7 @@ mod tests {
             vec![
                 "  1. aliens (aliens) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
+                "     preview: spectator available".to_owned(),
             ]
         );
     }
@@ -1498,23 +1508,13 @@ mod tests {
         assert!(text.contains("FOURPLAY_FFPLAY_PATH"));
     }
 
-    fn sample_session(game_id: &str, active_spectator_count: u32) -> Session {
-        Session {
+    fn sample_session(game_id: &str, active_spectator_count: u32) -> SessionSummary {
+        SessionSummary {
             id: "session-1".to_owned(),
             game_id: game_id.to_owned(),
-            seat_id: "windows-seat-1".to_owned(),
-            destination_address: "192.0.2.10".to_owned(),
             runtime_host_id: "reference-linux".to_owned(),
             runtime_profile: sample_profile(),
             state: SessionState::Active,
-            connection_grant: control_protocol::ConnectionGrant {
-                token: "token".repeat(8),
-                expires_unix_ms: 123,
-                runtime_host_id: "reference-linux".to_owned(),
-                runtime_host_address: "192.0.2.68".to_owned(),
-                media_udp_port: 41_000,
-                input_udp_port: 42_000,
-            },
             player_slots: vec![
                 PlayerSlot {
                     player_number: 1,
@@ -1530,9 +1530,8 @@ mod tests {
                 },
             ],
             active_spectator_count,
-            created_unix_ms: 100,
+            preview_status: PreviewStatus::SpectatorAvailable,
             updated_unix_ms: 101,
-            failure_reason: None,
         }
     }
 

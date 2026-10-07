@@ -15,6 +15,13 @@ An active-session card may show:
 - package artwork when live preview is unavailable
 - session health and preview status
 
+The control plane exposes a seat-safe active-session summary feed for browsing
+clients. The feed includes player slots, spectator counts, and preview status
+without exposing the per-session player connection grant or input token. The
+current development preview status reports whether full-quality spectator media
+can be requested; it is a bridge toward lower-cost preview streams, not the
+final preview transport.
+
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 
 ## Current development behavior

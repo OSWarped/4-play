@@ -8,9 +8,9 @@ use std::{
 
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameRuntimeProfile,
-    PlayerSlot, PlayerSlotState, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities,
-    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session,
-    SessionState, SpectatorGrant,
+    PlayerSlot, PlayerSlotState, PreviewStatus, RegisterRuntimeHost, RuntimeHost,
+    RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostStatus,
+    RuntimeSessionAssignment, Session, SessionState, SessionSummary, SpectatorGrant,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -845,6 +845,26 @@ impl RuntimeHostStore {
         stored
             .into_iter()
             .map(StoredSession::into_session)
+            .collect()
+    }
+
+    pub async fn list_active_session_summaries(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        let stored = self
+            .connection
+            .call(move |connection| {
+                let mut statement = connection.prepare(&session_select_sql(
+                    "WHERE state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                     ORDER BY created_unix_ms, id",
+                ))?;
+                statement
+                    .query_map([], StoredSession::from_row)?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(StoreError::database)?;
+        stored
+            .into_iter()
+            .map(StoredSession::into_summary)
             .collect()
     }
 
@@ -1772,6 +1792,36 @@ impl StoredSession {
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
             failure_reason: self.failure_reason,
         })
+    }
+
+    fn into_summary(self) -> Result<SessionSummary, StoreError> {
+        let runtime_profile =
+            serde_json::from_str::<GameRuntimeProfile>(&self.runtime_profile_json)
+                .map_err(StoreError::serialization)?;
+        let player_slots = serde_json::from_str::<Vec<PlayerSlot>>(&self.player_slots_json)
+            .map_err(StoreError::serialization)?;
+        let state = parse_session_state(&self.state)?;
+        Ok(SessionSummary {
+            id: self.id,
+            game_id: self.game_id,
+            runtime_host_id: self.runtime_host_id,
+            runtime_profile,
+            state,
+            player_slots,
+            active_spectator_count: u32::try_from(self.active_spectator_count).map_err(|_| {
+                StoreError::data("active_spectator_count is outside the supported range")
+            })?,
+            preview_status: preview_status_for_state(state),
+            updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
+        })
+    }
+}
+
+fn preview_status_for_state(state: SessionState) -> PreviewStatus {
+    if state == SessionState::Active {
+        PreviewStatus::SpectatorAvailable
+    } else {
+        PreviewStatus::Unavailable
     }
 }
 

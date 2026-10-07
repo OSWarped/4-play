@@ -102,6 +102,8 @@ Last updated: 2026-10-04
 - session responses expose explicit player slots derived from each game's
   maximum player count
 - the seat client lists active sessions and occupied/open slots while browsing
+- the seat client discovers active sessions through a seat-safe summary API
+  that omits per-player connection grants and reports preview availability
 - the control plane supports atomic, lease-based reservation, connection,
   disconnection, reconnection, and release of player slots in ready/active
   sessions

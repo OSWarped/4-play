@@ -18,7 +18,7 @@ use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
     ErrorResponse, RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
     RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session,
-    SessionList, SpectatorGrant, StatusResponse, UpdateSessionState,
+    SessionList, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -147,6 +147,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
+        .route(
+            "/api/v1/active-sessions",
+            get(list_active_session_summaries),
+        )
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
@@ -389,6 +393,17 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList
         .list_sessions()
         .await
         .map(|sessions| Json(SessionList { sessions }))
+        .map_err(ApiError::store)
+}
+
+async fn list_active_session_summaries(
+    State(state): State<AppState>,
+) -> Result<Json<SessionSummaryList>, ApiError> {
+    state
+        .runtime_hosts
+        .list_active_session_summaries()
+        .await
+        .map(|sessions| Json(SessionSummaryList { sessions }))
         .map_err(ApiError::store)
 }
 
@@ -1394,6 +1409,21 @@ mod tests {
             )
             .await;
         }
+
+        let (summary_status, summaries) = request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/active-sessions",
+            None,
+        )
+        .await;
+        assert_eq!(summary_status, 200);
+        assert_eq!(summaries["sessions"][0]["id"], session_id);
+        assert_eq!(
+            summaries["sessions"][0]["preview_status"],
+            "spectator_available"
+        );
+        assert!(summaries["sessions"][0]["connection_grant"].is_null());
 
         let spectator_path = format!("/api/v1/sessions/{session_id}/spectators");
         let (first_status, first) = request_json(

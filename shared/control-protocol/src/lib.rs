@@ -203,6 +203,33 @@ pub struct SessionList {
     pub sessions: Vec<Session>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewStatus {
+    Unavailable,
+    SpectatorAvailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub game_id: String,
+    pub runtime_host_id: String,
+    pub runtime_profile: GameRuntimeProfile,
+    pub state: SessionState,
+    #[serde(default)]
+    pub player_slots: Vec<PlayerSlot>,
+    #[serde(default)]
+    pub active_spectator_count: u32,
+    pub preview_status: PreviewStatus,
+    pub updated_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSummaryList {
+    pub sessions: Vec<SessionSummary>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeSessionAssignment {
     pub session_id: String,
@@ -268,8 +295,9 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus,
-        ServiceStatus, SessionState, SpectatorGrant, StatusResponse,
+        API_VERSION, ApiInfo, GameRuntimeProfile, PreviewStatus, RuntimeHost,
+        RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
+        SpectatorGrant, StatusResponse,
     };
 
     #[test]
@@ -320,6 +348,37 @@ mod tests {
         assert_eq!(value["session_id"], "session-one");
         assert_eq!(value["media_udp_port"], 41_001);
         assert_eq!(value["expires_unix_ms"], 123_456);
+    }
+
+    #[test]
+    fn session_summary_payload_has_stable_field_names() {
+        let summary = SessionSummary {
+            id: "session-one".to_owned(),
+            game_id: "tmnt".to_owned(),
+            runtime_host_id: "reference-linux".to_owned(),
+            runtime_profile: GameRuntimeProfile {
+                width: 320,
+                height: 224,
+                refresh_hz: 60.0,
+                rotation_degrees: 0,
+                max_players: 4,
+                buttons_per_player: 2,
+                supports_save_state: true,
+            },
+            state: SessionState::Active,
+            player_slots: Vec::new(),
+            active_spectator_count: 1,
+            preview_status: PreviewStatus::SpectatorAvailable,
+            updated_unix_ms: 123_456,
+        };
+
+        let value = serde_json::to_value(summary).unwrap();
+        assert_eq!(value["id"], "session-one");
+        assert_eq!(value["game_id"], "tmnt");
+        assert_eq!(value["runtime_host_id"], "reference-linux");
+        assert_eq!(value["state"], "active");
+        assert_eq!(value["active_spectator_count"], 1);
+        assert_eq!(value["preview_status"], "spectator_available");
     }
 
     #[test]
