@@ -44,6 +44,40 @@ struct SeatConfig {
     debug_input: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SeatEnvironment {
+    seat_id: Option<String>,
+    destination_address: Option<String>,
+    ffplay_path: Option<String>,
+    api_token: Option<String>,
+}
+
+impl SeatEnvironment {
+    fn from_process() -> Self {
+        Self {
+            seat_id: env::var("FOURPLAY_SEAT_ID").ok(),
+            destination_address: env::var("FOURPLAY_SEAT_ADDRESS").ok(),
+            ffplay_path: env::var("FOURPLAY_FFPLAY_PATH").ok(),
+            api_token: env::var("FOURPLAY_SEAT_API_TOKEN").ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModeError {
+    program: String,
+    message: String,
+}
+
+impl ModeError {
+    fn new(program: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            message: message.into(),
+        }
+    }
+}
+
 enum BrowseSelection {
     StartGame(String),
     JoinSlot(PlayTarget),
@@ -82,7 +116,7 @@ impl Drop for RawMode {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match parse_mode() {
+    match parse_mode().unwrap_or_else(|error| usage_error(&error.program, &error.message)) {
         Mode::Direct(destination) => run_direct(destination),
         Mode::Orchestrated(config) => run_orchestrated(config),
     }
@@ -909,72 +943,109 @@ where
     Ok(InputExit::Completed)
 }
 
-fn parse_mode() -> Mode {
+fn parse_mode() -> Result<Mode, ModeError> {
     let mut args = env::args();
     let program = args.next().unwrap_or_else(|| "seat-input".into());
-    let values = args.collect::<Vec<_>>();
+    parse_mode_from(
+        program,
+        args.collect::<Vec<_>>(),
+        SeatEnvironment::from_process(),
+    )
+}
+
+fn parse_mode_from(
+    program: String,
+    values: Vec<String>,
+    environment: SeatEnvironment,
+) -> Result<Mode, ModeError> {
     if values.len() == 1
         && let Ok(destination) = values[0].parse::<SocketAddr>()
     {
-        return Mode::Direct(destination);
+        return Ok(Mode::Direct(destination));
     }
 
     let mut control_plane_url = None;
-    let mut seat_id = env::var("FOURPLAY_SEAT_ID").unwrap_or_else(|_| "seat-dev".to_owned());
-    let mut destination_address = env::var("FOURPLAY_SEAT_ADDRESS").ok();
+    let mut seat_id = environment.seat_id.unwrap_or_else(|| "seat-dev".to_owned());
+    let mut destination_address = environment.destination_address;
     let mut game_id = None;
-    let mut ffplay_path = env::var("FOURPLAY_FFPLAY_PATH").unwrap_or_else(|_| "ffplay".to_owned());
+    let mut ffplay_path = environment
+        .ffplay_path
+        .unwrap_or_else(|| "ffplay".to_owned());
     let mut no_media = false;
     let mut joined_media = false;
     let mut play_for = None;
-    let mut api_token = env::var("FOURPLAY_SEAT_API_TOKEN").ok();
+    let mut api_token = environment.api_token;
     let mut debug_input = false;
     let mut index = 0;
     while index < values.len() {
         let option = &values[index];
-        let value = |index: &mut usize| {
+        let value = |index: &mut usize, option: &str| {
             *index += 1;
             values
                 .get(*index)
                 .cloned()
-                .unwrap_or_else(|| usage(&program))
+                .ok_or_else(|| ModeError::new(&program, format!("{option} requires a value")))
         };
         match option.as_str() {
-            "--control-plane" => control_plane_url = Some(value(&mut index)),
-            "--seat-id" => seat_id = value(&mut index),
-            "--destination-ip" => destination_address = Some(value(&mut index)),
-            "--game" => game_id = Some(value(&mut index)),
-            "--ffplay-path" => ffplay_path = value(&mut index),
+            "--control-plane" => control_plane_url = Some(value(&mut index, option)?),
+            "--seat-id" => seat_id = value(&mut index, option)?,
+            "--destination-ip" => destination_address = Some(value(&mut index, option)?),
+            "--game" => game_id = Some(value(&mut index, option)?),
+            "--ffplay-path" => ffplay_path = value(&mut index, option)?,
             "--no-media" => no_media = true,
             "--joined-media" => joined_media = true,
             "--debug-input" => debug_input = true,
-            "--api-token" => api_token = Some(value(&mut index)),
+            "--api-token" => api_token = Some(value(&mut index, option)?),
             "--play-for-ms" => {
-                let milliseconds = value(&mut index).parse::<u64>().unwrap_or_else(|error| {
-                    eprintln!("Invalid --play-for-ms value: {error}");
-                    process::exit(2);
-                });
+                let raw = value(&mut index, option)?;
+                let milliseconds = raw.parse::<u64>().map_err(|error| {
+                    ModeError::new(&program, format!("invalid --play-for-ms value: {error}"))
+                })?;
                 play_for = Some(Duration::from_millis(milliseconds));
             }
             "--help" | "-h" => usage(&program),
-            _ => usage(&program),
+            _ => {
+                return Err(ModeError::new(
+                    &program,
+                    format!("unknown option: {option}"),
+                ));
+            }
         }
         index += 1;
     }
-    let control_plane_url = control_plane_url.unwrap_or_else(|| usage(&program));
+    let control_plane_url = control_plane_url.ok_or_else(|| {
+        ModeError::new(
+            &program,
+            "missing --control-plane <url> for orchestrated seat mode",
+        )
+    })?;
     let destination_address = destination_address
-        .unwrap_or_else(|| usage(&program))
+        .ok_or_else(|| {
+            ModeError::new(
+                &program,
+                "missing --destination-ip <seat-ip> or FOURPLAY_SEAT_ADDRESS",
+            )
+        })?
         .parse::<IpAddr>()
-        .unwrap_or_else(|error| {
-            eprintln!("Invalid seat destination address: {error}");
-            process::exit(2);
-        });
-    let api_token = api_token.unwrap_or_else(|| usage(&program));
+        .map_err(|error| {
+            ModeError::new(
+                &program,
+                format!("invalid seat destination address: {error}"),
+            )
+        })?;
+    let api_token = api_token.ok_or_else(|| {
+        ModeError::new(
+            &program,
+            "missing --api-token <token> or FOURPLAY_SEAT_API_TOKEN",
+        )
+    })?;
     if api_token.len() < 16 {
-        eprintln!("Seat API token must contain at least 16 characters");
-        process::exit(2);
+        return Err(ModeError::new(
+            &program,
+            "seat API token must contain at least 16 characters",
+        ));
     }
-    Mode::Orchestrated(SeatConfig {
+    Ok(Mode::Orchestrated(SeatConfig {
         control_plane_url: control_plane_url.trim_end_matches('/').to_owned(),
         seat_id,
         destination_address,
@@ -985,7 +1056,7 @@ fn parse_mode() -> Mode {
         play_for,
         api_token,
         debug_input,
-    })
+    }))
 }
 
 fn usage(program: &str) -> ! {
@@ -993,6 +1064,11 @@ fn usage(program: &str) -> ! {
         "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--debug-input] [--play-for-ms <milliseconds>]"
     );
     process::exit(2)
+}
+
+fn usage_error(program: &str, message: &str) -> ! {
+    eprintln!("Error: {message}\n");
+    usage(program)
 }
 
 fn update_held_keys(held: &mut HashSet<KeyCode>, key: KeyEvent) -> bool {
@@ -1285,5 +1361,67 @@ mod tests {
         assert_eq!(parse_spectate_selection("s"), None);
         assert_eq!(parse_spectate_selection("sone"), None);
         assert_eq!(parse_spectate_selection("j1.2"), None);
+    }
+
+    #[test]
+    fn orchestrated_mode_reports_missing_api_token_clearly() {
+        let error = match parse_mode_from(
+            "seat-input".to_owned(),
+            vec![
+                "--control-plane".to_owned(),
+                "http://127.0.0.1:8080".to_owned(),
+                "--destination-ip".to_owned(),
+                "192.0.2.10".to_owned(),
+            ],
+            SeatEnvironment::default(),
+        ) {
+            Ok(_) => panic!("expected missing API token error"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.message,
+            "missing --api-token <token> or FOURPLAY_SEAT_API_TOKEN"
+        );
+    }
+
+    #[test]
+    fn orchestrated_mode_reports_missing_option_values_clearly() {
+        let error = match parse_mode_from(
+            "seat-input".to_owned(),
+            vec!["--control-plane".to_owned()],
+            SeatEnvironment::default(),
+        ) {
+            Ok(_) => panic!("expected missing value error"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.message, "--control-plane requires a value");
+    }
+
+    #[test]
+    fn orchestrated_mode_accepts_environment_defaults() {
+        let mode = parse_mode_from(
+            "seat-input".to_owned(),
+            vec![
+                "--control-plane".to_owned(),
+                "http://127.0.0.1:8080".to_owned(),
+            ],
+            SeatEnvironment {
+                seat_id: Some("windows-seat-3".to_owned()),
+                destination_address: Some("192.0.2.10".to_owned()),
+                ffplay_path: Some("ffplay-custom".to_owned()),
+                api_token: Some("phase-1c-seat-token-2026".to_owned()),
+            },
+        )
+        .unwrap();
+
+        let Mode::Orchestrated(config) = mode else {
+            panic!("expected orchestrated mode");
+        };
+        assert_eq!(config.seat_id, "windows-seat-3");
+        assert_eq!(config.destination_address, IpAddr::from([192, 0, 2, 10]));
+        assert_eq!(config.ffplay_path, "ffplay-custom");
+        assert_eq!(config.api_token, "phase-1c-seat-token-2026");
     }
 }
