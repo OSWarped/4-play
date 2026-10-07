@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderMap, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
@@ -107,6 +107,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/sessions/{session_id}/spectators",
             post(create_spectator_grant),
+        )
+        .route(
+            "/api/v1/sessions/{session_id}/spectators/{grant_id}",
+            delete(release_spectator_grant),
         )
         .route(
             "/api/v1/sessions/{session_id}/player-slots/{player_number}/reserve",
@@ -394,6 +398,20 @@ async fn create_spectator_grant(
         .await
         .map_err(ApiError::store)?;
     Ok((StatusCode::CREATED, Json(grant)))
+}
+
+async fn release_spectator_grant(
+    State(state): State<AppState>,
+    AxumPath((session_id, grant_id)): AxumPath<(String, String)>,
+    Json(request): Json<ReservePlayerSlotRequest>,
+) -> Result<Json<Session>, ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    state
+        .runtime_hosts
+        .release_spectator_grant(session_id, grant_id, request.seat_id, unix_time_ms())
+        .await
+        .map(Json)
+        .map_err(ApiError::store)
 }
 
 async fn reserve_player_slot(
@@ -691,6 +709,11 @@ impl ApiError {
                 StatusCode::CONFLICT,
                 "player_slot_unavailable",
                 "player slot is not currently open",
+            ),
+            StoreError::SpectatorGrantNotFound => Self::new(
+                StatusCode::NOT_FOUND,
+                "spectator_grant_not_found",
+                "spectator grant was not found",
             ),
             StoreError::MissingDataPlaneAddress => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1371,9 +1394,46 @@ mod tests {
         );
 
         let session_path = format!("/api/v1/sessions/{session_id}");
-        let (_, session) = request_json(service, Method::GET, &session_path, None).await;
+        let (_, session) = request_json(service.clone(), Method::GET, &session_path, None).await;
         assert_eq!(session["player_slots"][0]["state"], "occupied");
         assert_eq!(session["player_slots"][1]["state"], "open");
+        assert_eq!(session["active_spectator_count"], 2);
+
+        let release_path = format!(
+            "/api/v1/sessions/{session_id}/spectators/{}",
+            first["id"].as_str().unwrap()
+        );
+        let (wrong_seat_status, wrong_seat) = request_json(
+            service.clone(),
+            Method::DELETE,
+            &release_path,
+            Some(json!({ "seat_id": "seat-three" })),
+        )
+        .await;
+        assert_eq!(wrong_seat_status, 404);
+        assert_eq!(wrong_seat["code"], "spectator_grant_not_found");
+
+        let (release_status, released) = request_json(
+            service.clone(),
+            Method::DELETE,
+            &release_path,
+            Some(json!({ "seat_id": "seat-two" })),
+        )
+        .await;
+        assert_eq!(release_status, 200);
+        assert_eq!(released["active_spectator_count"], 1);
+
+        let (_, assignments_after_release) = request_json(
+            service,
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux/sessions",
+            None,
+        )
+        .await;
+        assert_eq!(
+            assignments_after_release["sessions"][0]["spectator_media_ports"],
+            json!([41_002])
+        );
     }
 
     #[tokio::test]

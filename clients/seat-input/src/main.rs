@@ -356,6 +356,17 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
             session.state
         );
         println!("     {}", describe_player_slots(&session.player_slots));
+        if session.active_spectator_count > 0 {
+            println!(
+                "     {} active spectator{}",
+                session.active_spectator_count,
+                if session.active_spectator_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            );
+        }
     }
     println!(
         "  Join an open or same-seat disconnected slot with j<session-number>.<player-number>, for example j1.2."
@@ -609,6 +620,25 @@ fn create_spectator_grant(
         .json()?)
 }
 
+fn release_spectator_grant(
+    client: &Client,
+    control_plane_url: &str,
+    session_id: &str,
+    grant_id: &str,
+    seat_id: &str,
+) -> Result<Session, Box<dyn std::error::Error>> {
+    Ok(client
+        .delete(format!(
+            "{control_plane_url}/api/v1/sessions/{session_id}/spectators/{grant_id}"
+        ))
+        .json(&ReservePlayerSlotRequest {
+            seat_id: seat_id.to_owned(),
+        })
+        .send()?
+        .error_for_status()?
+        .json()?)
+}
+
 fn get_session(
     client: &Client,
     control_plane_url: &str,
@@ -691,6 +721,15 @@ fn spectate_session(
         let _ = media.kill();
     }
     let _ = media.wait();
+    if let Err(error) = release_spectator_grant(
+        client,
+        &config.control_plane_url,
+        &active.id,
+        &grant.id,
+        &config.seat_id,
+    ) {
+        eprintln!("Failed to release spectator grant {}: {error}", grant.id);
+    }
     println!(
         "Stopped spectating session {}; returning to browsing.",
         active.id

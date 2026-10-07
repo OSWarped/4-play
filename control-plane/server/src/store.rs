@@ -776,6 +776,64 @@ impl RuntimeHostStore {
             .map_err(StoreError::database)?
     }
 
+    pub async fn release_spectator_grant(
+        &self,
+        session_id: String,
+        grant_id: String,
+        seat_id: String,
+        now_unix_ms: u64,
+    ) -> Result<Session, StoreError> {
+        let now = to_sql_integer(now_unix_ms, "spectator grant release timestamp")?;
+        let stored = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Option<StoredSession>> {
+                    let transaction = connection.transaction()?;
+                    let state_name = transaction
+                        .query_row(
+                            "SELECT state FROM sessions WHERE id = ?1",
+                            [&session_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?;
+                    let Some(state_name) = state_name else {
+                        return Ok(None);
+                    };
+
+                    let deleted = transaction.execute(
+                        "DELETE FROM spectator_grants
+                         WHERE id = ?1 AND session_id = ?2 AND seat_id = ?3",
+                        params![grant_id, session_id, seat_id],
+                    )?;
+                    if deleted == 0 {
+                        return Ok(None);
+                    }
+
+                    transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            session_id,
+                            state_name,
+                            now,
+                            format!("spectator {grant_id} released by {seat_id}")
+                        ],
+                    )?;
+                    let stored = transaction.query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )?;
+                    transaction.commit()?;
+                    Ok(Some(stored))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::SpectatorGrantNotFound)?;
+        stored.into_session()
+    }
+
     pub async fn list_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let stored = self
             .connection
@@ -1440,7 +1498,15 @@ fn session_select_sql(suffix: &str) -> String {
         "SELECT id, game_id, seat_id, destination_address, runtime_host_id,
                 runtime_host_address, runtime_profile_json, state, grant_token,
                 grant_expires_unix_ms, media_udp_port, input_udp_port,
-                player_slots_json, created_unix_ms, updated_unix_ms, failure_reason
+                player_slots_json,
+                (
+                    SELECT COUNT(*)
+                    FROM spectator_grants sg
+                    WHERE sg.session_id = sessions.id
+                      AND sg.expires_unix_ms >
+                          (CAST(strftime('%s', 'now') AS INTEGER) * 1000)
+                ) AS active_spectator_count,
+                created_unix_ms, updated_unix_ms, failure_reason
          FROM sessions {suffix}"
     )
 }
@@ -1584,6 +1650,7 @@ struct StoredSession {
     media_udp_port: i64,
     input_udp_port: i64,
     player_slots_json: String,
+    active_spectator_count: i64,
     created_unix_ms: i64,
     updated_unix_ms: i64,
     failure_reason: Option<String>,
@@ -1605,9 +1672,10 @@ impl StoredSession {
             media_udp_port: row.get(10)?,
             input_udp_port: row.get(11)?,
             player_slots_json: row.get(12)?,
-            created_unix_ms: row.get(13)?,
-            updated_unix_ms: row.get(14)?,
-            failure_reason: row.get(15)?,
+            active_spectator_count: row.get(13)?,
+            created_unix_ms: row.get(14)?,
+            updated_unix_ms: row.get(15)?,
+            failure_reason: row.get(16)?,
         })
     }
 
@@ -1641,6 +1709,9 @@ impl StoredSession {
                 })?,
             },
             player_slots,
+            active_spectator_count: u32::try_from(self.active_spectator_count).map_err(|_| {
+                StoreError::data("active_spectator_count is outside the supported range")
+            })?,
             created_unix_ms: from_sql_integer(self.created_unix_ms, "created_unix_ms")?,
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
             failure_reason: self.failure_reason,
@@ -1794,6 +1865,7 @@ pub enum StoreError {
     PortsExhausted,
     PlayerSlotNotFound,
     PlayerSlotUnavailable,
+    SpectatorGrantNotFound,
     MissingDataPlaneAddress,
     WrongRuntimeHost,
     InvalidSessionTransition,
@@ -1883,6 +1955,7 @@ impl fmt::Display for StoreError {
             }
             Self::PlayerSlotNotFound => write!(formatter, "player slot was not found"),
             Self::PlayerSlotUnavailable => write!(formatter, "player slot is not currently open"),
+            Self::SpectatorGrantNotFound => write!(formatter, "spectator grant was not found"),
             Self::MissingDataPlaneAddress => {
                 write!(formatter, "runtime host has no data-plane address")
             }

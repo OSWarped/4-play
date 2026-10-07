@@ -191,6 +191,8 @@ pub struct Session {
     pub connection_grant: ConnectionGrant,
     #[serde(default)]
     pub player_slots: Vec<PlayerSlot>,
+    #[serde(default)]
+    pub active_spectator_count: u32,
     pub created_unix_ms: u64,
     pub updated_unix_ms: u64,
     pub failure_reason: Option<String>,
