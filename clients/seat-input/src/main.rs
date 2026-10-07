@@ -1071,10 +1071,14 @@ fn parse_mode_from(
 }
 
 fn usage(program: &str) -> ! {
-    eprintln!(
-        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--debug-input] [--play-for-ms <milliseconds>]"
-    );
+    eprintln!("{}", usage_text(program));
     process::exit(2)
+}
+
+fn usage_text(program: &str) -> String {
+    format!(
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--debug-input] [--play-for-ms <milliseconds>]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token; replaces --api-token.\n  FOURPLAY_SEAT_ID            Default seat identity; replaces --seat-id.\n  FOURPLAY_SEAT_ADDRESS       Default seat media destination IP; replaces --destination-ip.\n  FOURPLAY_FFPLAY_PATH        FFplay executable path; replaces --ffplay-path."
+    )
 }
 
 fn usage_error(program: &str, message: &str) -> ! {
@@ -1482,6 +1486,16 @@ mod tests {
         assert_eq!(config.destination_address, IpAddr::from([192, 0, 2, 10]));
         assert_eq!(config.ffplay_path, "ffplay-custom");
         assert_eq!(config.api_token, "phase-1c-seat-token-2026");
+    }
+
+    #[test]
+    fn usage_text_lists_orchestrated_environment_variables() {
+        let text = usage_text("seat-input");
+
+        assert!(text.contains("FOURPLAY_SEAT_API_TOKEN"));
+        assert!(text.contains("FOURPLAY_SEAT_ID"));
+        assert!(text.contains("FOURPLAY_SEAT_ADDRESS"));
+        assert!(text.contains("FOURPLAY_FFPLAY_PATH"));
     }
 
     fn sample_session(game_id: &str, active_spectator_count: u32) -> Session {
