@@ -102,8 +102,8 @@ keeps the model compatible with reconnects, multiple runtime hosts, uneven
 session lifetimes, future join/spectator flows, and cabinet configurations
 where a physical seat may not map one-to-one with a process.
 
-The ranges should become configurable before production deployments, for
-example:
+The control plane reads these ranges from environment variables, defaulting to
+the reference development ranges:
 
 ```text
 FOURPLAY_MEDIA_PORT_START=41000
@@ -112,5 +112,6 @@ FOURPLAY_INPUT_PORT_START=42000
 FOURPLAY_INPUT_PORT_COUNT=1000
 ```
 
-Installation documentation should derive firewall requirements from those
-configured ranges.
+Session allocation picks free media and input ports from those pools and skips
+media ports held by active spectator grants. Installation documentation should
+derive firewall requirements from the configured ranges.

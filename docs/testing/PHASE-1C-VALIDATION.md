@@ -98,9 +98,9 @@ at `192.168.20.10`:
 ```bash
 sudo ufw allow from 192.168.20.10 to any port 8080 proto tcp \
   comment '4-play control plane'
-sudo ufw allow from 192.168.20.10 to any port 41000:41099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 41000:41999 proto udp \
   comment '4-play media range'
-sudo ufw allow from 192.168.20.10 to any port 42000:42099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 42000:42999 proto udp \
   comment '4-play seat input range'
 ```
 

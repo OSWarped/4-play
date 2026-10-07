@@ -42,17 +42,23 @@ For a Windows seat at `192.168.20.10` connecting to the reference Linux runtime
 host at `192.168.20.68`, UFW must allow:
 
 - TCP `8080` from the seat for the control plane
-- UDP `41000:41099` from the seat for media sessions
-- UDP `42000:42099` from the seat for seat input
+- UDP `41000:41999` from the seat for media sessions
+- UDP `42000:42999` from the seat for seat input
+
+The control-plane defaults are `FOURPLAY_MEDIA_PORT_START=41000`,
+`FOURPLAY_MEDIA_PORT_COUNT=1000`, `FOURPLAY_INPUT_PORT_START=42000`, and
+`FOURPLAY_INPUT_PORT_COUNT=1000`. If those values are changed for an
+installation, derive the firewall range from the configured pool rather than
+from the reference example above.
 
 Reference UFW setup:
 
 ```bash
 sudo ufw allow from 192.168.20.10 to any port 8080 proto tcp \
   comment '4-play control plane'
-sudo ufw allow from 192.168.20.10 to any port 41000:41099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 41000:41999 proto udp \
   comment '4-play media range'
-sudo ufw allow from 192.168.20.10 to any port 42000:42099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 42000:42999 proto udp \
   comment '4-play seat input range'
 ```
 

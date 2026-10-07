@@ -491,8 +491,9 @@ impl RuntimeHostStore {
         grant_expires_unix_ms: u64,
         offline_after_ms: u64,
         media_port_start: u16,
+        media_port_count: u16,
         input_port_start: u16,
-        port_count: u16,
+        input_port_count: u16,
     ) -> Result<Session, StoreError> {
         let now = to_sql_integer(now_unix_ms, "session timestamp")?;
         let grant_expires = to_sql_integer(grant_expires_unix_ms, "grant expiry")?;
@@ -567,25 +568,20 @@ impl RuntimeHostStore {
                     Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
                 };
 
-                let mut selected_ports = None;
-                for offset in 0..port_count {
-                    let Some(media_port) = media_port_start.checked_add(offset) else { break };
-                    let Some(input_port) = input_port_start.checked_add(offset) else { break };
-                    let in_use = transaction.query_row(
-                        "SELECT EXISTS(
-                            SELECT 1 FROM sessions
-                            WHERE runtime_host_id = ?1
-                              AND state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
-                              AND (media_udp_port = ?2 OR input_udp_port = ?3)
-                        )",
-                        params![runtime_host_id, i64::from(media_port), i64::from(input_port)],
-                        |row| row.get::<_, bool>(0),
-                    )?;
-                    if !in_use {
-                        selected_ports = Some((media_port, input_port));
-                        break;
-                    }
-                }
+                let media_port = first_available_media_port(
+                    &transaction,
+                    &runtime_host_id,
+                    media_port_start,
+                    media_port_count,
+                    now,
+                )?;
+                let input_port = first_available_input_port(
+                    &transaction,
+                    &runtime_host_id,
+                    input_port_start,
+                    input_port_count,
+                )?;
+                let selected_ports = media_port.zip(input_port);
                 let Some((media_udp_port, input_udp_port)) = selected_ports else {
                     return Ok(Err(AllocationRejection::PortsExhausted));
                 };
@@ -1552,6 +1548,66 @@ fn expire_slot_leases(slots: &mut [PlayerSlot], now_unix_ms: u64) {
             slot.lease_expires_unix_ms = None;
         }
     }
+}
+
+fn first_available_media_port(
+    connection: &tokio_rusqlite::rusqlite::Connection,
+    runtime_host_id: &str,
+    media_port_start: u16,
+    media_port_count: u16,
+    now: i64,
+) -> tokio_rusqlite::rusqlite::Result<Option<u16>> {
+    for offset in 0..media_port_count {
+        let Some(media_port) = media_port_start.checked_add(offset) else {
+            break;
+        };
+        let in_use = connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sessions
+                WHERE runtime_host_id = ?1
+                  AND state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                  AND media_udp_port = ?2
+                UNION
+                SELECT 1 FROM spectator_grants
+                WHERE runtime_host_id = ?1
+                  AND media_udp_port = ?2
+                  AND expires_unix_ms > ?3
+            )",
+            params![runtime_host_id, i64::from(media_port), now],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !in_use {
+            return Ok(Some(media_port));
+        }
+    }
+    Ok(None)
+}
+
+fn first_available_input_port(
+    connection: &tokio_rusqlite::rusqlite::Connection,
+    runtime_host_id: &str,
+    input_port_start: u16,
+    input_port_count: u16,
+) -> tokio_rusqlite::rusqlite::Result<Option<u16>> {
+    for offset in 0..input_port_count {
+        let Some(input_port) = input_port_start.checked_add(offset) else {
+            break;
+        };
+        let in_use = connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sessions
+                WHERE runtime_host_id = ?1
+                  AND state NOT IN ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
+                  AND input_udp_port = ?2
+            )",
+            params![runtime_host_id, i64::from(input_port)],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !in_use {
+            return Ok(Some(input_port));
+        }
+    }
+    Ok(None)
 }
 
 fn mark_expired_offline(

@@ -25,15 +25,32 @@ pub use store::StoreError;
 
 pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
 pub const DEFAULT_GRANT_TTL: Duration = Duration::from_secs(300);
-const MEDIA_PORT_START: u16 = 41_000;
-const INPUT_PORT_START: u16 = 42_000;
-const SESSION_PORT_COUNT: u16 = 1_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PortPoolConfig {
+    pub media_port_start: u16,
+    pub media_port_count: u16,
+    pub input_port_start: u16,
+    pub input_port_count: u16,
+}
+
+impl Default for PortPoolConfig {
+    fn default() -> Self {
+        Self {
+            media_port_start: 41_000,
+            media_port_count: 1_000,
+            input_port_start: 42_000,
+            input_port_count: 1_000,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
     runtime_hosts: RuntimeHostStore,
     offline_after_ms: u64,
     grant_ttl_ms: u64,
+    port_pools: PortPoolConfig,
     seat_api_token: String,
     runtime_host_api_token: String,
 }
@@ -44,6 +61,7 @@ impl AppState {
             runtime_hosts: RuntimeHostStore::in_memory().await?,
             offline_after_ms: duration_ms(offline_after),
             grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
+            port_pools: PortPoolConfig::default(),
             seat_api_token: "test-seat-token".to_owned(),
             runtime_host_api_token: "test-runtime-host-token".to_owned(),
         })
@@ -54,11 +72,13 @@ impl AppState {
         offline_after: Duration,
         seat_api_token: String,
         runtime_host_api_token: String,
+        port_pools: PortPoolConfig,
     ) -> Result<Self, StoreError> {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
             offline_after_ms: duration_ms(offline_after),
             grant_ttl_ms: duration_ms(DEFAULT_GRANT_TTL),
+            port_pools,
             seat_api_token,
             runtime_host_api_token,
         })
@@ -81,6 +101,7 @@ pub async fn app_with_database(
             offline_after,
             "test-seat-token".to_owned(),
             "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
         )
         .await?,
     ))
@@ -92,8 +113,32 @@ pub async fn app_with_database_and_tokens(
     seat_api_token: String,
     runtime_host_api_token: String,
 ) -> Result<Router, StoreError> {
+    app_with_database_tokens_and_ports(
+        path,
+        offline_after,
+        seat_api_token,
+        runtime_host_api_token,
+        PortPoolConfig::default(),
+    )
+    .await
+}
+
+pub async fn app_with_database_tokens_and_ports(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+    seat_api_token: String,
+    runtime_host_api_token: String,
+    port_pools: PortPoolConfig,
+) -> Result<Router, StoreError> {
     Ok(app_with_state(
-        AppState::persistent(path, offline_after, seat_api_token, runtime_host_api_token).await?,
+        AppState::persistent(
+            path,
+            offline_after,
+            seat_api_token,
+            runtime_host_api_token,
+            port_pools,
+        )
+        .await?,
     ))
 }
 
@@ -328,9 +373,10 @@ async fn create_session(
             now,
             now.saturating_add(state.grant_ttl_ms),
             state.offline_after_ms,
-            MEDIA_PORT_START,
-            INPUT_PORT_START,
-            SESSION_PORT_COUNT,
+            state.port_pools.media_port_start,
+            state.port_pools.media_port_count,
+            state.port_pools.input_port_start,
+            state.port_pools.input_port_count,
         )
         .await
         .map_err(ApiError::store)?;
@@ -392,8 +438,8 @@ async fn create_spectator_grant(
             request.destination_address,
             now,
             now.saturating_add(state.grant_ttl_ms),
-            MEDIA_PORT_START,
-            SESSION_PORT_COUNT,
+            state.port_pools.media_port_start,
+            state.port_pools.media_port_count,
         )
         .await
         .map_err(ApiError::store)?;
@@ -782,7 +828,7 @@ impl IntoResponse for ApiError {
 mod tests {
     use std::time::Duration;
 
-    use super::{app, app_with_database};
+    use super::{PortPoolConfig, app, app_with_database, app_with_database_tokens_and_ports};
     use axum::{
         body::Body,
         http::{Method, Request},
@@ -1380,6 +1426,17 @@ mod tests {
         assert_eq!(second_status, 201);
         assert_eq!(second["media_udp_port"], 41_002);
 
+        let (next_session_status, next_session) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-four")),
+        )
+        .await;
+        assert_eq!(next_session_status, 201);
+        assert_eq!(next_session["connection_grant"]["media_udp_port"], 41_003);
+        assert_eq!(next_session["connection_grant"]["input_udp_port"], 42_001);
+
         let (assignments_status, assignments) = request_json(
             service.clone(),
             Method::GET,
@@ -1434,6 +1491,58 @@ mod tests {
             assignments_after_release["sessions"][0]["spectator_media_ports"],
             json!([41_002])
         );
+    }
+
+    #[tokio::test]
+    async fn session_port_pools_are_configurable_and_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database_tokens_and_ports(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig {
+                media_port_start: 45_000,
+                media_port_count: 2,
+                input_port_start: 46_000,
+                input_port_count: 2,
+            },
+        )
+        .await
+        .unwrap();
+        register_host_and_catalog(&service).await;
+
+        let (first_status, first) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(first_status, 201);
+        assert_eq!(first["connection_grant"]["media_udp_port"], 45_000);
+        assert_eq!(first["connection_grant"]["input_udp_port"], 46_000);
+
+        let (second_status, second) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-two")),
+        )
+        .await;
+        assert_eq!(second_status, 201);
+        assert_eq!(second["connection_grant"]["media_udp_port"], 45_001);
+        assert_eq!(second["connection_grant"]["input_udp_port"], 46_001);
+
+        let (exhausted_status, exhausted) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-three")),
+        )
+        .await;
+        assert_eq!(exhausted_status, 503);
+        assert_eq!(exhausted["code"], "session_ports_exhausted");
     }
 
     #[tokio::test]

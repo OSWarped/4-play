@@ -133,7 +133,7 @@ seat 1 uses `42000`, seat 2 uses `42001`, seat 3 uses `42002`, and so on.
 Use a range rule during installation rather than opening only the first seat:
 
 ```bash
-sudo ufw allow from 192.168.20.10 to any port 42000:42099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 42000:42999 proto udp \
   comment '4-play seat input range'
 ```
 
@@ -141,7 +141,7 @@ The media ports are also allocated from `41000` upward. If host firewall rules
 are enabled, allow the media range as well:
 
 ```bash
-sudo ufw allow from 192.168.20.10 to any port 41000:41099 proto udp \
+sudo ufw allow from 192.168.20.10 to any port 41000:41999 proto udp \
   comment '4-play media range'
 ```
 

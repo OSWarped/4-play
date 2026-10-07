@@ -118,6 +118,9 @@ Last updated: 2026-10-04
 - running sessions can pick up newly granted spectator media ports through the
   runtime host's refreshed spectator port file and session-runtime's Rust
   MPEG-TS fan-out loop
+- control-plane media and input UDP port pools are configurable for n-seat
+  development and deployment; session allocation also avoids active spectator
+  media ports when launching new games
 
 ## Not started
 
