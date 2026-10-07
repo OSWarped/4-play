@@ -375,32 +375,8 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
     }
 
     println!("\nActive sessions:");
-    for (index, session) in sessions.iter().enumerate() {
-        let game_name = games
-            .iter()
-            .find(|game| game.id == session.game_id)
-            .map(|game| game.display_name.as_str())
-            .unwrap_or(&session.game_id);
-        println!(
-            "  {}. {} ({}) on {} [{:?}]",
-            index + 1,
-            game_name,
-            session.game_id,
-            session.runtime_host_id,
-            session.state
-        );
-        println!("     {}", describe_player_slots(&session.player_slots));
-        if session.active_spectator_count > 0 {
-            println!(
-                "     {} active spectator{}",
-                session.active_spectator_count,
-                if session.active_spectator_count == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            );
-        }
+    for line in active_session_lines(sessions, games) {
+        println!("{line}");
     }
     println!(
         "  Join an open or same-seat disconnected slot with j<session-number>.<player-number>, for example j1.2."
@@ -408,6 +384,41 @@ fn print_active_sessions(sessions: &[Session], games: &[CatalogGame]) {
     println!(
         "  Spectate a session with s<session-number>, for example s1. Spectating opens media only."
     );
+}
+
+fn active_session_lines(sessions: &[Session], games: &[CatalogGame]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (index, session) in sessions.iter().enumerate() {
+        let game_name = games
+            .iter()
+            .find(|game| game.id == session.game_id)
+            .map(|game| game.display_name.as_str())
+            .unwrap_or(&session.game_id);
+        lines.push(format!(
+            "  {}. {} ({}) on {} [{:?}]",
+            index + 1,
+            game_name,
+            session.game_id,
+            session.runtime_host_id,
+            session.state
+        ));
+        lines.push(format!(
+            "     {}",
+            describe_player_slots(&session.player_slots)
+        ));
+        if session.active_spectator_count > 0 {
+            lines.push(format!(
+                "     {} active spectator{}",
+                session.active_spectator_count,
+                if session.active_spectator_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+    }
+    lines
 }
 
 fn describe_player_slots(slots: &[PlayerSlot]) -> String {
@@ -1264,6 +1275,54 @@ mod tests {
     }
 
     #[test]
+    fn active_session_lines_include_spectator_counts() {
+        let session = sample_session("tmnt", 1);
+        let games = vec![sample_catalog_game("tmnt", "Teenage Mutant Ninja Turtles")];
+
+        let lines = active_session_lines(&[session], &games);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. Teenage Mutant Ninja Turtles (tmnt) on reference-linux [Active]".to_owned(),
+                "     P1 occupied by windows-seat-1; P2 open".to_owned(),
+                "     1 active spectator".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn active_session_lines_pluralize_spectator_counts() {
+        let session = sample_session("aliens", 2);
+
+        let lines = active_session_lines(&[session], &[]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. aliens (aliens) on reference-linux [Active]".to_owned(),
+                "     P1 occupied by windows-seat-1; P2 open".to_owned(),
+                "     2 active spectators".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn active_session_lines_omit_zero_spectator_counts() {
+        let session = sample_session("aliens", 0);
+
+        let lines = active_session_lines(&[session], &[]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. aliens (aliens) on reference-linux [Active]".to_owned(),
+                "     P1 occupied by windows-seat-1; P2 open".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn missing_player_slots_are_reported_as_unavailable() {
         assert_eq!(describe_player_slots(&[]), "player slots unavailable");
     }
@@ -1423,5 +1482,68 @@ mod tests {
         assert_eq!(config.destination_address, IpAddr::from([192, 0, 2, 10]));
         assert_eq!(config.ffplay_path, "ffplay-custom");
         assert_eq!(config.api_token, "phase-1c-seat-token-2026");
+    }
+
+    fn sample_session(game_id: &str, active_spectator_count: u32) -> Session {
+        Session {
+            id: "session-1".to_owned(),
+            game_id: game_id.to_owned(),
+            seat_id: "windows-seat-1".to_owned(),
+            destination_address: "192.0.2.10".to_owned(),
+            runtime_host_id: "reference-linux".to_owned(),
+            runtime_profile: sample_profile(),
+            state: SessionState::Active,
+            connection_grant: control_protocol::ConnectionGrant {
+                token: "token".repeat(8),
+                expires_unix_ms: 123,
+                runtime_host_id: "reference-linux".to_owned(),
+                runtime_host_address: "192.0.2.68".to_owned(),
+                media_udp_port: 41_000,
+                input_udp_port: 42_000,
+            },
+            player_slots: vec![
+                PlayerSlot {
+                    player_number: 1,
+                    state: PlayerSlotState::Occupied,
+                    seat_id: Some("windows-seat-1".to_owned()),
+                    lease_expires_unix_ms: Some(123),
+                },
+                PlayerSlot {
+                    player_number: 2,
+                    state: PlayerSlotState::Open,
+                    seat_id: None,
+                    lease_expires_unix_ms: None,
+                },
+            ],
+            active_spectator_count,
+            created_unix_ms: 100,
+            updated_unix_ms: 101,
+            failure_reason: None,
+        }
+    }
+
+    fn sample_catalog_game(game_id: &str, display_name: &str) -> CatalogGame {
+        CatalogGame {
+            id: game_id.to_owned(),
+            display_name: display_name.to_owned(),
+            rom_name: game_id.to_owned(),
+            availability: vec![control_protocol::GameAvailability {
+                runtime_host_id: "reference-linux".to_owned(),
+                runtime_host_status: RuntimeHostStatus::Online,
+                profile: sample_profile(),
+            }],
+        }
+    }
+
+    fn sample_profile() -> control_protocol::GameRuntimeProfile {
+        control_protocol::GameRuntimeProfile {
+            width: 320,
+            height: 224,
+            refresh_hz: 60.0,
+            rotation_degrees: 0,
+            max_players: 2,
+            buttons_per_player: 2,
+            supports_save_state: true,
+        }
     }
 }
