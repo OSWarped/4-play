@@ -71,6 +71,31 @@ GET /api/v1/games/{game_id}/metadata
 PUT /api/v1/games/{game_id}/metadata
 ```
 
+Development admin workflow:
+
+```powershell
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  list
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  show tmnt
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  set tmnt `
+  --player-count 4 `
+  --genre "Beat 'em up" `
+  --marquee-path media/tmnt/marquee.png
+```
+
+This CLI is an interim admin module. A later graphical admin interface can use
+the same metadata endpoints.
+
 ## Validation
 
 A validator shall reject:

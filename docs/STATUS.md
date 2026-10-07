@@ -126,6 +126,8 @@ Last updated: 2026-10-04
 - game catalog entries now carry editable presentation metadata for an admin
   module, including descriptions, artwork/marquee/screenshot/logo paths,
   manufacturer/year/genre, control notes, and player-count overrides
+- `catalog-admin` provides an interim command-line admin module for listing
+  games, showing metadata, and updating metadata through the control-plane API
 
 ## Not started
 

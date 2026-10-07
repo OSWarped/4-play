@@ -8,6 +8,7 @@ members = [
     "runtime/session-runtime",
     "shared/control-protocol",
     "shared/input-protocol",
+    "tools/catalog-admin",
     "tools/input-inject",
     "tools/uinput-test",
 ]
