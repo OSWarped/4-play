@@ -2,7 +2,8 @@
 
 Date: 2026-10-08
 
-Status: **in progress — repeatable smoke harness added.**
+Status: **automated smoke PASS on the reference host; manual multi-seat play
+validation still required before Phase 2 exit.**
 
 ## Exit criterion
 
@@ -48,6 +49,13 @@ It verifies the current Phase 2 product flow:
 14. the spectator grant releases without affecting player slots
 15. the shared session stops cleanly and reaps its runtime process
 16. the agent and control plane exit cleanly
+
+The accepted automated run produced 33 passing assertions:
+
+```text
+Results: /tmp/4play-phase-2-shared-session-smoke-20261008-144444
+OVERALL  PASS
+```
 
 The harness is intentionally focused on orchestration and safety. It does not
 replace manual cabinet/play validation for input feel, local display layout, or

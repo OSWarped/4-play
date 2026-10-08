@@ -371,7 +371,10 @@ if curl -fsS -X POST "$base_url/api/v1/sessions/$session_id/stop" >"$stop_json" 
 else
     fail "shared session stops cleanly"
 fi
-session_pid="$(tr -d '[:space:]' <"$runtime_state_directory/$session_id.pid" 2>/dev/null || true)"
+session_pid=""
+if [[ -r "$runtime_state_directory/$session_id.pid" ]]; then
+    session_pid="$(tr -d '[:space:]' <"$runtime_state_directory/$session_id.pid" 2>/dev/null || true)"
+fi
 if [[ -z "$session_pid" ]] || ! process_running "$session_pid"; then
     pass "shared session runtime process is reaped"
 else
