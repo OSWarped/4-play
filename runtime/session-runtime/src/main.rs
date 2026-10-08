@@ -48,6 +48,8 @@ struct RuntimeArgs {
     audio_codec: AudioCodec,
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
+    preview_image_path: Option<PathBuf>,
+    preview_interval_ms: u64,
     mame_path: PathBuf,
     mame_ini_path: PathBuf,
     status_file: Option<PathBuf>,
@@ -93,6 +95,8 @@ fn print_usage(program: &str) {
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
     [--audio-thread-queue-size <packets>] \
+    [--preview-image-path <path>] \
+    [--preview-interval-ms <milliseconds>] \
     [--mame-path <path>] \
     [--mame-ini-path <path>] \
     [--status-file <path>]"
@@ -151,6 +155,8 @@ fn parse_args() -> RuntimeArgs {
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
     let mut audio_thread_queue_size = 64;
+    let mut preview_image_path = None;
+    let mut preview_interval_ms = 1_000;
     let mut mame_path = PathBuf::from("/home/blake/src/mame-4play/mame");
     let mut mame_ini_path = PathBuf::from("/opt/4play/config/mame");
     let mut status_file = None;
@@ -239,6 +245,18 @@ fn parse_args() -> RuntimeArgs {
                     "--audio-thread-queue-size",
                 );
             }
+            "--preview-image-path" => {
+                preview_image_path = Some(PathBuf::from(require_value(
+                    &mut args,
+                    "--preview-image-path",
+                )));
+            }
+            "--preview-interval-ms" => {
+                preview_interval_ms = parse_value(
+                    require_value(&mut args, "--preview-interval-ms"),
+                    "--preview-interval-ms",
+                );
+            }
             "--mame-path" => {
                 mame_path = PathBuf::from(require_value(&mut args, "--mame-path"));
             }
@@ -279,6 +297,8 @@ fn parse_args() -> RuntimeArgs {
         audio_codec,
         audio_block_ms,
         audio_thread_queue_size,
+        preview_image_path,
+        preview_interval_ms,
         mame_path,
         mame_ini_path,
         status_file,
@@ -387,6 +407,8 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         width: session.config.width,
         height: session.config.height,
         audio_block_ms: args.audio_block_ms,
+        preview_image_path: args.preview_image_path,
+        preview_interval_ms: args.preview_interval_ms,
     });
 
     bridge.start(inputs.video, inputs.audio);

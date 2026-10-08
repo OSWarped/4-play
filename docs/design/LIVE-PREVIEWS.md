@@ -28,6 +28,14 @@ priority is screenshot, artwork, marquee, then logo. This lets a browser render
 a meaningful active-session card before the low-cost live preview transport is
 complete, and gives future clients a graceful degradation path.
 
+The runtime now has a low-cost still-preview producer. `session-runtime` can
+sample its existing raw video bridge and periodically write a top-down BMP file
+without creating another gameplay encoder. `runtime-host-agent` enables this by
+passing a per-session preview file path under `FOURPLAY_PREVIEW_DIRECTORY`, or
+under its runtime state directory when that environment variable is unset. The
+default interval is one still per second and can be changed with
+`FOURPLAY_PREVIEW_INTERVAL_MS`.
+
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 
 ## Current development behavior
@@ -69,9 +77,9 @@ gameplay.
 
 Evaluate these in order of preference:
 
-1. reuse the gameplay encode with a lower-rate or lower-resolution subscriber path
-2. use one low-bitrate simulcast or secondary layer per active session
-3. publish periodic JPEG or WebP frames from the runtime host
+1. publish periodic still frames from the runtime host
+2. reuse the gameplay encode with a lower-rate or lower-resolution subscriber path
+3. use one low-bitrate simulcast or secondary layer per active session
 4. use package artwork when encoder or host capacity is constrained
 
 The experiment should compare GPU encoder usage, CPU usage, bandwidth, decode cost on seats, startup delay, and the number of concurrent browsing clients supported.

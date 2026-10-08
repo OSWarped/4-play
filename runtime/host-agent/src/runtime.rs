@@ -14,6 +14,8 @@ pub struct RuntimeAdapterConfig {
     pub mame_path: PathBuf,
     pub mame_ini_path: PathBuf,
     pub state_directory: PathBuf,
+    pub preview_directory: PathBuf,
+    pub preview_interval_ms: u64,
 }
 
 impl RuntimeAdapterConfig {
@@ -27,11 +29,20 @@ impl RuntimeAdapterConfig {
         let state_directory = std::env::var_os("FOURPLAY_RUNTIME_STATE_DIRECTORY")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp/4play/host-agent"));
+        let preview_directory = std::env::var_os("FOURPLAY_PREVIEW_DIRECTORY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| state_directory.join("previews"));
+        let preview_interval_ms = std::env::var("FOURPLAY_PREVIEW_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1_000);
         Self {
             session_runtime_path,
             mame_path: mame_path.into(),
             mame_ini_path: mame_ini_path.into(),
             state_directory,
+            preview_directory,
+            preview_interval_ms,
         }
     }
 }
@@ -54,6 +65,7 @@ struct ManagedRuntime {
     status_file: PathBuf,
     pid_file: PathBuf,
     spectator_ports_file: PathBuf,
+    preview_image_file: PathBuf,
 }
 
 #[derive(Debug)]
@@ -84,6 +96,7 @@ impl RuntimeSupervisor {
         let status_file = self.status_file(&assignment.session_id);
         let pid_file = self.pid_file(&assignment.session_id);
         let spectator_ports_file = self.spectator_ports_file(&assignment.session_id);
+        let preview_image_file = self.preview_image_file(&assignment.session_id);
         write_spectator_ports(&spectator_ports_file, &assignment.spectator_media_ports)?;
         if let Some(pid) = read_live_pid(&pid_file, &assignment.session_id)? {
             self.processes.insert(
@@ -94,12 +107,14 @@ impl RuntimeSupervisor {
                     status_file,
                     pid_file,
                     spectator_ports_file,
+                    preview_image_file,
                 },
             );
             return Ok(());
         }
         remove_if_present(&status_file)?;
         remove_if_present(&pid_file)?;
+        remove_if_present(&preview_image_file)?;
         let log_path = self
             .config
             .state_directory
@@ -142,6 +157,10 @@ impl RuntimeSupervisor {
             .arg(&self.config.mame_ini_path)
             .arg("--status-file")
             .arg(&status_file)
+            .arg("--preview-image-path")
+            .arg(&preview_image_file)
+            .arg("--preview-interval-ms")
+            .arg(self.config.preview_interval_ms.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
@@ -162,6 +181,7 @@ impl RuntimeSupervisor {
                 status_file,
                 pid_file,
                 spectator_ports_file,
+                preview_image_file,
             },
         );
         Ok(())
@@ -262,6 +282,12 @@ impl RuntimeSupervisor {
             .state_directory
             .join(format!("{session_id}.spectator-ports"))
     }
+
+    fn preview_image_file(&self, session_id: &str) -> PathBuf {
+        self.config
+            .preview_directory
+            .join(format!("{session_id}.bmp"))
+    }
 }
 
 fn input_debug_enabled() -> bool {
@@ -297,6 +323,7 @@ fn cleanup_process_files(process: &ManagedRuntime) {
     let _ = remove_if_present(&process.pid_file);
     let _ = remove_if_present(&process.status_file);
     let _ = remove_if_present(&process.spectator_ports_file);
+    let _ = remove_if_present(&process.preview_image_file);
 }
 
 fn write_spectator_ports(path: &Path, ports: &[u16]) -> io::Result<()> {

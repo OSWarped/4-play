@@ -146,6 +146,9 @@ Last updated: 2026-10-04
 - active-session summaries can expose a catalog artwork fallback preview path
   and distinguish `artwork_available` from `spectator_available` and
   `unavailable`
+- `session-runtime` can write periodic low-cost BMP still previews from the
+  existing raw video bridge; `runtime-host-agent` passes per-session preview
+  paths and interval configuration
 
 ## Not started
 

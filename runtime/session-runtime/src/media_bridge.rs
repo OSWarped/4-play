@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -23,6 +23,8 @@ pub struct MediaBridgeConfig {
     pub width: u32,
     pub height: u32,
     pub audio_block_ms: usize,
+    pub preview_image_path: Option<PathBuf>,
+    pub preview_interval_ms: u64,
 }
 
 #[derive(Debug, Default)]
@@ -38,6 +40,7 @@ pub struct MediaBridgeMetrics {
 
     pub video_queue_depth: AtomicU64,
     pub audio_queue_depth: AtomicU64,
+    pub preview_frames_written: AtomicU64,
 
     pub first_video_at: Mutex<Option<Instant>>,
     pub first_audio_at: Mutex<Option<Instant>>,
@@ -65,15 +68,21 @@ impl MediaBridge {
         self.running.store(true, Ordering::Release);
 
         let (video_sender, video_receiver) = bounded::<Vec<u8>>(VIDEO_QUEUE_CAPACITY);
+        let latest_preview_frame = Arc::new(Mutex::new(None));
 
         let (audio_sender, audio_receiver) = bounded::<Vec<u8>>(AUDIO_QUEUE_CAPACITY);
 
-        self.start_video_reader(video_sender, video_receiver.clone());
+        self.start_video_reader(
+            video_sender,
+            video_receiver.clone(),
+            Arc::clone(&latest_preview_frame),
+        );
 
         self.start_audio_reader(audio_sender, audio_receiver.clone());
 
         self.start_video_writer(video_receiver, video_output);
         self.start_audio_writer(audio_receiver, audio_output);
+        self.start_preview_writer(latest_preview_frame);
         self.start_metrics_monitor(bridge_started);
     }
 
@@ -82,7 +91,12 @@ impl MediaBridge {
             && self.metrics.audio_blocks.load(Ordering::Acquire) > 0
     }
 
-    fn start_video_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
+    fn start_video_reader(
+        &mut self,
+        sender: Sender<Vec<u8>>,
+        drop_receiver: Receiver<Vec<u8>>,
+        latest_preview_frame: Arc<Mutex<Option<Vec<u8>>>>,
+    ) {
         let video_path = self.config.video_path.clone();
 
         let frame_bytes = self.config.width as usize * self.config.height as usize * 4;
@@ -112,6 +126,10 @@ impl MediaBridge {
                         metrics
                             .video_bytes
                             .fetch_add(frame_bytes as u64, Ordering::Relaxed);
+
+                        if let Ok(mut latest) = latest_preview_frame.lock() {
+                            *latest = Some(frame.clone());
+                        }
 
                         send_latest(
                             &sender,
@@ -228,6 +246,40 @@ impl MediaBridge {
         }));
     }
 
+    fn start_preview_writer(&mut self, latest_preview_frame: Arc<Mutex<Option<Vec<u8>>>>) {
+        let Some(preview_path) = self.config.preview_image_path.clone() else {
+            return;
+        };
+        let width = self.config.width;
+        let height = self.config.height;
+        let interval = Duration::from_millis(self.config.preview_interval_ms.max(100));
+        let metrics = Arc::clone(&self.metrics);
+        let running = Arc::clone(&self.running);
+
+        self.handles.push(thread::spawn(move || {
+            println!(
+                "Preview writer enabled: {} every {} ms",
+                preview_path.display(),
+                interval.as_millis()
+            );
+            while running.load(Ordering::Acquire) {
+                thread::sleep(interval);
+                let frame = latest_preview_frame
+                    .lock()
+                    .map_err(|_| io::Error::other("preview frame lock poisoned"))?
+                    .clone();
+                let Some(frame) = frame else {
+                    continue;
+                };
+                write_bgr0_bmp_atomic(&preview_path, width, height, &frame)?;
+                metrics
+                    .preview_frames_written
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(())
+        }));
+    }
+
     fn start_metrics_monitor(&mut self, bridge_started: Instant) {
         let metrics = Arc::clone(&self.metrics);
         let running = Arc::clone(&self.running);
@@ -249,6 +301,8 @@ impl MediaBridge {
                 let video_queue = metrics.video_queue_depth.load(Ordering::Relaxed);
 
                 let audio_queue = metrics.audio_queue_depth.load(Ordering::Relaxed);
+
+                let preview_frames = metrics.preview_frames_written.load(Ordering::Relaxed);
 
                 let first_video = metrics.first_video_at.lock().ok().and_then(|value| *value);
 
@@ -281,7 +335,7 @@ impl MediaBridge {
                  offset_ms={startup_offset_ms:+.3} \
                  dropped_v={dropped_video:<5} \
                  dropped_a={dropped_audio:<5} \
-                 vq={video_queue} aq={audio_queue}"
+                 vq={video_queue} aq={audio_queue} preview_frames={preview_frames}"
                 );
             }
 
@@ -361,6 +415,70 @@ fn send_latest(
     }
 }
 
+fn write_bgr0_bmp_atomic(path: &Path, width: u32, height: u32, frame: &[u8]) -> io::Result<()> {
+    let expected = width as usize * height as usize * 4;
+    if frame.len() != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "preview frame has unexpected size",
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut tmp = path.to_path_buf();
+    tmp.set_extension("tmp");
+    let bmp = encode_bgr0_as_bmp(width, height, frame)?;
+    std::fs::write(&tmp, bmp)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+fn encode_bgr0_as_bmp(width: u32, height: u32, frame: &[u8]) -> io::Result<Vec<u8>> {
+    let row_bytes = width as usize * 3;
+    let row_stride = row_bytes.div_ceil(4) * 4;
+    let pixel_bytes = row_stride
+        .checked_mul(height as usize)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "preview image is too large"))?;
+    let file_size = 54usize
+        .checked_add(pixel_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "preview image is too large"))?;
+    let file_size_u32 = u32::try_from(file_size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "preview image is too large"))?;
+    let pixel_bytes_u32 = u32::try_from(pixel_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "preview image is too large"))?;
+    let height_i32 = i32::try_from(height)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "preview image is too tall"))?;
+
+    let mut bmp = Vec::with_capacity(file_size);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_size_u32.to_le_bytes());
+    bmp.extend_from_slice(&[0, 0, 0, 0]);
+    bmp.extend_from_slice(&(54u32).to_le_bytes());
+    bmp.extend_from_slice(&(40u32).to_le_bytes());
+    bmp.extend_from_slice(&(width as i32).to_le_bytes());
+    bmp.extend_from_slice(&(-height_i32).to_le_bytes());
+    bmp.extend_from_slice(&(1u16).to_le_bytes());
+    bmp.extend_from_slice(&(24u16).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+    bmp.extend_from_slice(&pixel_bytes_u32.to_le_bytes());
+    bmp.extend_from_slice(&(2_835i32).to_le_bytes());
+    bmp.extend_from_slice(&(2_835i32).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+    bmp.extend_from_slice(&(0u32).to_le_bytes());
+
+    let padding = row_stride - row_bytes;
+    for row in 0..height as usize {
+        let row_start = row * width as usize * 4;
+        for column in 0..width as usize {
+            let pixel_start = row_start + column * 4;
+            bmp.extend_from_slice(&frame[pixel_start..pixel_start + 3]);
+        }
+        bmp.extend(std::iter::repeat_n(0, padding));
+    }
+    Ok(bmp)
+}
+
 fn record_first_video(metrics: &MediaBridgeMetrics) -> io::Result<()> {
     if metrics.video_frames.load(Ordering::Relaxed) == 0 {
         let mut first = metrics
@@ -407,4 +525,26 @@ fn elapsed_ms(started: Instant, event: Option<Instant>) -> f64 {
     event
         .map(|event| event.duration_since(started).as_secs_f64() * 1_000.0)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_bgr0_as_bmp;
+
+    #[test]
+    fn encodes_bgr0_frame_as_top_down_bmp() {
+        let frame = [
+            0, 0, 255, 0, // red
+            0, 255, 0, 0, // green
+            255, 0, 0, 0, // blue
+            255, 255, 255, 0, // white
+        ];
+
+        let bmp = encode_bgr0_as_bmp(2, 2, &frame).unwrap();
+
+        assert_eq!(&bmp[0..2], b"BM");
+        assert_eq!(i32::from_le_bytes(bmp[22..26].try_into().unwrap()), -2);
+        assert_eq!(&bmp[54..57], &[0, 0, 255]);
+        assert_eq!(&bmp[57..60], &[0, 255, 0]);
+    }
 }
