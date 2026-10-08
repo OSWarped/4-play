@@ -17,10 +17,11 @@ use axum::{
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
-    ErrorResponse, GameMetadata, RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost,
-    RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList,
-    ServiceStatus, Session, SessionList, SessionSummaryList, SpectatorGrant, StatusResponse,
-    UpdateGameMetadataRequest, UpdateSessionState,
+    ErrorResponse, GameMetadata, PreviewStatus, RegisterRuntimeHost, ReservePlayerSlotRequest,
+    RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList,
+    RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList, SessionSummary,
+    SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+    UpdateSessionState,
 };
 use store::RuntimeHostStore;
 pub use store::StoreError;
@@ -492,12 +493,39 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList
 async fn list_active_session_summaries(
     State(state): State<AppState>,
 ) -> Result<Json<SessionSummaryList>, ApiError> {
-    state
+    let mut sessions = state
         .runtime_hosts
         .list_active_session_summaries()
         .await
-        .map(|sessions| Json(SessionSummaryList { sessions }))
-        .map_err(ApiError::store)
+        .map_err(ApiError::store)?;
+    let games = state
+        .runtime_hosts
+        .list_catalog(unix_time_ms(), state.offline_after_ms)
+        .await
+        .map_err(ApiError::store)?;
+    apply_preview_fallbacks(&mut sessions, &games);
+    Ok(Json(SessionSummaryList { sessions }))
+}
+
+fn apply_preview_fallbacks(sessions: &mut [SessionSummary], games: &[CatalogGame]) {
+    for session in sessions {
+        let Some(game) = games.iter().find(|game| game.id == session.game_id) else {
+            continue;
+        };
+        let fallback = game
+            .metadata
+            .screenshot_path
+            .as_deref()
+            .or(game.metadata.artwork_path.as_deref())
+            .or(game.metadata.marquee_path.as_deref())
+            .or(game.metadata.logo_path.as_deref());
+        if let Some(path) = fallback {
+            session.preview_asset_path = Some(path.to_owned());
+            if session.preview_status == PreviewStatus::Unavailable {
+                session.preview_status = PreviewStatus::ArtworkAvailable;
+            }
+        }
+    }
 }
 
 async fn get_session(
@@ -1467,6 +1495,43 @@ mod tests {
         .await;
         assert_eq!(created["player_slots"].as_array().unwrap().len(), 3);
         assert_eq!(created["runtime_profile"]["max_players"], 3);
+    }
+
+    #[tokio::test]
+    async fn active_session_summaries_include_artwork_preview_fallbacks() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/games/tmnt/metadata",
+            Some(json!({
+                "metadata": {
+                    "screenshot_path": "media/tmnt/screenshot.svg"
+                }
+            })),
+        )
+        .await;
+        let (_, _) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+
+        let (status, summaries) =
+            request_json(service, Method::GET, "/api/v1/active-sessions", None).await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            summaries["sessions"][0]["preview_asset_path"],
+            "media/tmnt/screenshot.svg"
+        );
+        assert_eq!(
+            summaries["sessions"][0]["preview_status"],
+            "artwork_available"
+        );
     }
 
     #[tokio::test]

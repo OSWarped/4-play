@@ -22,6 +22,12 @@ current development preview status reports whether full-quality spectator media
 can be requested; it is a bridge toward lower-cost preview streams, not the
 final preview transport.
 
+When live/spectator preview media is not available yet, the summary feed can
+return an artwork fallback path from catalog metadata. The current fallback
+priority is screenshot, artwork, marquee, then logo. This lets a browser render
+a meaningful active-session card before the low-cost live preview transport is
+complete, and gives future clients a graceful degradation path.
+
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 
 ## Current development behavior

@@ -426,6 +426,7 @@ fn active_session_lines(sessions: &[SessionSummary], games: &[CatalogGame]) -> V
 fn describe_preview_status(status: PreviewStatus) -> &'static str {
     match status {
         PreviewStatus::Unavailable => "unavailable",
+        PreviewStatus::ArtworkAvailable => "artwork available",
         PreviewStatus::SpectatorAvailable => "spectator available",
     }
 }
@@ -1711,6 +1712,7 @@ mod tests {
             ],
             active_spectator_count,
             preview_status: PreviewStatus::SpectatorAvailable,
+            preview_asset_path: None,
             updated_unix_ms: 101,
         }
     }

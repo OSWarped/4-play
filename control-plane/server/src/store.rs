@@ -1899,6 +1899,7 @@ impl StoredSession {
                 StoreError::data("active_spectator_count is outside the supported range")
             })?,
             preview_status: preview_status_for_state(state),
+            preview_asset_path: None,
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
         })
     }

@@ -250,6 +250,7 @@ pub struct SessionList {
 #[serde(rename_all = "snake_case")]
 pub enum PreviewStatus {
     Unavailable,
+    ArtworkAvailable,
     SpectatorAvailable,
 }
 
@@ -265,6 +266,7 @@ pub struct SessionSummary {
     #[serde(default)]
     pub active_spectator_count: u32,
     pub preview_status: PreviewStatus,
+    pub preview_asset_path: Option<String>,
     pub updated_unix_ms: u64,
 }
 
@@ -413,6 +415,7 @@ mod tests {
             player_slots: Vec::new(),
             active_spectator_count: 1,
             preview_status: PreviewStatus::SpectatorAvailable,
+            preview_asset_path: Some("media/tmnt/screenshot.svg".to_owned()),
             updated_unix_ms: 123_456,
         };
 
@@ -423,6 +426,7 @@ mod tests {
         assert_eq!(value["state"], "active");
         assert_eq!(value["active_spectator_count"], 1);
         assert_eq!(value["preview_status"], "spectator_available");
+        assert_eq!(value["preview_asset_path"], "media/tmnt/screenshot.svg");
     }
 
     #[test]

@@ -141,6 +141,9 @@ Last updated: 2026-10-04
 - player slots now carry presentation metadata for labels, positions,
   character hints, and optional artwork paths; new sessions default to
   `Player N` / `PN` labels and the seat browser displays those labels
+- active-session summaries can expose a catalog artwork fallback preview path
+  and distinguish `artwork_available` from `spectator_available` and
+  `unavailable`
 
 ## Not started
 
