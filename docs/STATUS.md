@@ -127,7 +127,10 @@ Last updated: 2026-10-04
   module, including descriptions, artwork/marquee/screenshot/logo paths,
   manufacturer/year/genre, control notes, and player-count overrides
 - `catalog-admin` provides an interim command-line admin module for listing
-  games, showing metadata, and updating metadata through the control-plane API
+  games, showing metadata, updating metadata, and importing/exporting metadata
+  backups through the control-plane API
+- the seat client browsing list now uses editable metadata for stable
+  presentation order, genre/year/manufacturer/player details, and media badges
 
 ## Not started
 

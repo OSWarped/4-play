@@ -1,7 +1,7 @@
 use control_protocol::{
-    CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
-    PlayerSlotState, PreviewStatus, ReservePlayerSlotRequest, RuntimeHostStatus, Session,
-    SessionState, SessionSummary, SessionSummaryList, SpectatorGrant,
+    CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, GameMetadata,
+    PlayerSlot, PlayerSlotState, PreviewStatus, ReservePlayerSlotRequest, RuntimeHostStatus,
+    Session, SessionState, SessionSummary, SessionSummaryList, SpectatorGrant,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -342,7 +342,7 @@ fn fetch_available_games(
         .send()?
         .error_for_status()?
         .json::<CatalogGameList>()?;
-    Ok(catalog
+    let mut games = catalog
         .games
         .into_iter()
         .filter(|game| {
@@ -350,7 +350,9 @@ fn fetch_available_games(
                 .iter()
                 .any(|entry| entry.runtime_host_status == RuntimeHostStatus::Online)
         })
-        .collect())
+        .collect::<Vec<_>>();
+    sort_games_for_browsing(&mut games);
+    Ok(games)
 }
 
 fn fetch_active_sessions(
@@ -467,8 +469,8 @@ fn select_browse_action(
 
     print_active_sessions(sessions, games);
     println!("\nAvailable games:");
-    for (index, game) in games.iter().enumerate() {
-        println!("  {}. {} ({})", index + 1, game.display_name, game.id);
+    for line in available_game_lines(games) {
+        println!("{line}");
     }
     print!("Choose a game number, j<session>.<player>, s<session>, or q to quit: ");
     io::stdout().flush()?;
@@ -513,6 +515,91 @@ fn select_browse_action(
         .get(index.saturating_sub(1))
         .map(|game| BrowseSelection::StartGame(game.id.clone()))
         .ok_or_else(|| "game selection is outside the displayed range".into())
+}
+
+fn sort_games_for_browsing(games: &mut [CatalogGame]) {
+    games.sort_by(|left, right| {
+        game_sort_key(left)
+            .cmp(&game_sort_key(right))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+fn game_sort_key(game: &CatalogGame) -> String {
+    game.metadata
+        .sort_title
+        .as_deref()
+        .unwrap_or(&game.display_name)
+        .to_lowercase()
+}
+
+fn available_game_lines(games: &[CatalogGame]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (index, game) in games.iter().enumerate() {
+        lines.push(format!(
+            "  {}. {} ({})",
+            index + 1,
+            game.display_name,
+            game.id
+        ));
+        let details = game_detail_parts(game);
+        if !details.is_empty() {
+            lines.push(format!("     {}", details.join(" • ")));
+        }
+        let media = game_media_badges(&game.metadata);
+        if !media.is_empty() {
+            lines.push(format!("     media: {}", media.join(", ")));
+        }
+    }
+    lines
+}
+
+fn game_detail_parts(game: &CatalogGame) -> Vec<String> {
+    let mut details = Vec::new();
+    if let Some(genre) = game.metadata.genre.as_deref() {
+        details.push(genre.to_owned());
+    }
+    if let Some(year) = game.metadata.release_year {
+        details.push(year.to_string());
+    }
+    if let Some(manufacturer) = game.metadata.manufacturer.as_deref() {
+        details.push(manufacturer.to_owned());
+    }
+    if let Some(players) = effective_player_count(game) {
+        details.push(format!(
+            "{} player{}",
+            players,
+            if players == 1 { "" } else { "s" }
+        ));
+    }
+    details
+}
+
+fn effective_player_count(game: &CatalogGame) -> Option<u32> {
+    game.metadata.player_count.or_else(|| {
+        game.availability
+            .iter()
+            .filter(|entry| entry.runtime_host_status == RuntimeHostStatus::Online)
+            .map(|entry| entry.profile.max_players)
+            .max()
+    })
+}
+
+fn game_media_badges(metadata: &GameMetadata) -> Vec<&'static str> {
+    let mut media = Vec::new();
+    if metadata.artwork_path.is_some() {
+        media.push("artwork");
+    }
+    if metadata.marquee_path.is_some() {
+        media.push("marquee");
+    }
+    if metadata.screenshot_path.is_some() {
+        media.push("screenshot");
+    }
+    if metadata.logo_path.is_some() {
+        media.push("logo");
+    }
+    media
 }
 
 fn slot_is_joinable_by_seat(slot: &PlayerSlot, seat_id: &str) -> bool {
@@ -1301,6 +1388,61 @@ mod tests {
                 "     preview: spectator available".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn available_game_lines_include_metadata_details_and_media_badges() {
+        let mut game = sample_catalog_game("tmnt", "Teenage Mutant Ninja Turtles");
+        game.metadata = GameMetadata {
+            genre: Some("Beat 'em up".to_owned()),
+            release_year: Some(1989),
+            manufacturer: Some("Konami".to_owned()),
+            player_count: Some(4),
+            marquee_path: Some("media/tmnt/marquee.png".to_owned()),
+            screenshot_path: Some("media/tmnt/screenshot.png".to_owned()),
+            ..GameMetadata::default()
+        };
+
+        let lines = available_game_lines(&[game]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. Teenage Mutant Ninja Turtles (tmnt)".to_owned(),
+                "     Beat 'em up • 1989 • Konami • 4 players".to_owned(),
+                "     media: marquee, screenshot".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn available_game_lines_fall_back_to_runtime_player_count() {
+        let game = sample_catalog_game("aliens", "Aliens");
+
+        let lines = available_game_lines(&[game]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. Aliens (aliens)".to_owned(),
+                "     2 players".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn games_sort_by_metadata_sort_title_then_id() {
+        let mut games = vec![
+            sample_catalog_game("tmnt", "Teenage Mutant Ninja Turtles"),
+            sample_catalog_game("aliens", "Aliens"),
+        ];
+        games[0].metadata.sort_title = Some("Mutant Ninja Turtles".to_owned());
+        games[1].metadata.sort_title = Some("Z Aliens".to_owned());
+
+        sort_games_for_browsing(&mut games);
+
+        assert_eq!(games[0].id, "tmnt");
+        assert_eq!(games[1].id, "aliens");
     }
 
     #[test]
