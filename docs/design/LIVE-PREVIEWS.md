@@ -32,9 +32,26 @@ The runtime now has a low-cost still-preview producer. `session-runtime` can
 sample its existing raw video bridge and periodically write a top-down BMP file
 without creating another gameplay encoder. `runtime-host-agent` enables this by
 passing a per-session preview file path under `FOURPLAY_PREVIEW_DIRECTORY`, or
-under its runtime state directory when that environment variable is unset. The
-default interval is one still per second and can be changed with
-`FOURPLAY_PREVIEW_INTERVAL_MS`.
+under `FOURPLAY_ASSET_ROOT/previews` when a shared asset root is configured. If
+neither variable is set, previews are written under the runtime state directory
+for local troubleshooting. The default interval is one still per second and can
+be changed with `FOURPLAY_PREVIEW_INTERVAL_MS`.
+
+When a still file exists, `runtime-host-agent` reports the relative path
+`previews/<session-id>.bmp` to the control plane by default. Browsing clients
+then see `preview_status: "still_available"` plus `preview_asset_path`. If the
+still is not available yet, the control plane falls back to catalog artwork
+paths, and active sessions still advertise that full spectator media can be
+requested.
+
+For a single-machine reference deployment, set the same asset root for both the
+control plane and runtime host, for example:
+
+```bash
+export FOURPLAY_ASSET_ROOT=/opt/4play/assets
+export FOURPLAY_PREVIEW_DIRECTORY=/opt/4play/assets/previews
+export FOURPLAY_PREVIEW_ASSET_PREFIX=previews
+```
 
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 

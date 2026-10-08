@@ -143,16 +143,16 @@ Last updated: 2026-10-04
   `Player N` / `PN` labels and the seat browser displays those labels
 - game metadata can define per-player slot labels/positions/characters/artwork,
   and `catalog-admin set-slot` edits those fields through the metadata API
-- active-session summaries can expose a catalog artwork fallback preview path
-  and distinguish `artwork_available` from `spectator_available` and
-  `unavailable`
+- active-session summaries can expose live still preview paths, catalog artwork
+  fallback preview paths, and distinguish `still_available`,
+  `artwork_available`, `spectator_available`, and `unavailable`
 - `session-runtime` can write periodic low-cost BMP still previews from the
   existing raw video bridge; `runtime-host-agent` passes per-session preview
-  paths and interval configuration
+  paths and interval configuration, then reports generated preview asset paths
+  back to the control plane
 
 ## Not started
 
-- low-cost active-session previews
 - lower-bitrate preview streams distinct from full-quality spectator media
 
 ## Next milestone

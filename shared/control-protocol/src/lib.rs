@@ -262,6 +262,7 @@ pub struct SessionList {
 pub enum PreviewStatus {
     Unavailable,
     ArtworkAvailable,
+    StillAvailable,
     SpectatorAvailable,
 }
 
@@ -310,6 +311,8 @@ pub struct RuntimeSessionAssignmentList {
 pub struct UpdateSessionState {
     pub state: SessionState,
     pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub preview_asset_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,7 +357,7 @@ mod tests {
         API_VERSION, ApiInfo, GameMetadata, GamePlayerSlotMetadata, GameRuntimeProfile, PlayerSlot,
         PlayerSlotPresentation, PlayerSlotState, PreviewStatus, RuntimeHost,
         RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
-        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest, UpdateSessionState,
     };
 
     #[test]
@@ -438,6 +441,18 @@ mod tests {
         assert_eq!(value["active_spectator_count"], 1);
         assert_eq!(value["preview_status"], "spectator_available");
         assert_eq!(value["preview_asset_path"], "media/tmnt/screenshot.svg");
+    }
+
+    #[test]
+    fn update_session_state_accepts_legacy_payloads_without_preview_paths() {
+        let update: UpdateSessionState = serde_json::from_value(serde_json::json!({
+            "state": "active",
+            "failure_reason": null
+        }))
+        .unwrap();
+
+        assert_eq!(update.state, SessionState::Active);
+        assert_eq!(update.preview_asset_path, None);
     }
 
     #[test]

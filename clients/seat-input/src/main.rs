@@ -427,6 +427,7 @@ fn describe_preview_status(status: PreviewStatus) -> &'static str {
     match status {
         PreviewStatus::Unavailable => "unavailable",
         PreviewStatus::ArtworkAvailable => "artwork available",
+        PreviewStatus::StillAvailable => "still preview available",
         PreviewStatus::SpectatorAvailable => "spectator available",
     }
 }

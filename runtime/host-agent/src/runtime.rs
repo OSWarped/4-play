@@ -15,6 +15,7 @@ pub struct RuntimeAdapterConfig {
     pub mame_ini_path: PathBuf,
     pub state_directory: PathBuf,
     pub preview_directory: PathBuf,
+    pub preview_asset_prefix: String,
     pub preview_interval_ms: u64,
 }
 
@@ -31,7 +32,16 @@ impl RuntimeAdapterConfig {
             .unwrap_or_else(|| PathBuf::from("/tmp/4play/host-agent"));
         let preview_directory = std::env::var_os("FOURPLAY_PREVIEW_DIRECTORY")
             .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("FOURPLAY_ASSET_ROOT")
+                    .map(PathBuf::from)
+                    .map(|root| root.join("previews"))
+            })
             .unwrap_or_else(|| state_directory.join("previews"));
+        let preview_asset_prefix = std::env::var("FOURPLAY_PREVIEW_ASSET_PREFIX")
+            .ok()
+            .and_then(|value| normalize_preview_asset_prefix(&value))
+            .unwrap_or_else(|| "previews".to_owned());
         let preview_interval_ms = std::env::var("FOURPLAY_PREVIEW_INTERVAL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -42,6 +52,7 @@ impl RuntimeAdapterConfig {
             mame_ini_path: mame_ini_path.into(),
             state_directory,
             preview_directory,
+            preview_asset_prefix,
             preview_interval_ms,
         }
     }
@@ -93,6 +104,7 @@ impl RuntimeSupervisor {
             return Ok(());
         }
         fs::create_dir_all(&self.config.state_directory)?;
+        fs::create_dir_all(&self.config.preview_directory)?;
         let status_file = self.status_file(&assignment.session_id);
         let pid_file = self.pid_file(&assignment.session_id);
         let spectator_ports_file = self.spectator_ports_file(&assignment.session_id);
@@ -225,6 +237,14 @@ impl RuntimeSupervisor {
         }
     }
 
+    pub fn preview_asset_path(&self, session_id: &str) -> Option<String> {
+        let process = self.processes.get(session_id)?;
+        process
+            .preview_image_file
+            .is_file()
+            .then(|| format!("{}/{}.bmp", self.config.preview_asset_prefix, session_id))
+    }
+
     pub fn request_stop(&mut self, session_id: &str) -> io::Result<()> {
         let Some(process) = self.processes.get(session_id) else {
             return Ok(());
@@ -298,6 +318,17 @@ fn input_debug_value_enabled(value: Option<&str>) -> bool {
     value
         .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
         .unwrap_or(false)
+}
+
+fn normalize_preview_asset_prefix(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_matches(['/', '\\']);
+    let valid = !trimmed.is_empty()
+        && trimmed.len() <= 256
+        && !trimmed.contains("..")
+        && !trimmed.contains(':')
+        && !trimmed.contains('\\')
+        && !trimmed.chars().any(char::is_control);
+    valid.then(|| trimmed.to_owned())
 }
 
 fn read_live_pid(path: &Path, session_id: &str) -> io::Result<Option<u32>> {
@@ -409,7 +440,7 @@ fn format_exit_status(status: ExitStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::input_debug_value_enabled;
+    use super::{input_debug_value_enabled, normalize_preview_asset_prefix};
 
     #[test]
     fn input_debug_accepts_common_truthy_values() {
@@ -431,5 +462,16 @@ mod tests {
         for value in [None, Some("0"), Some("false"), Some("off"), Some("")] {
             assert!(!input_debug_value_enabled(value));
         }
+    }
+
+    #[test]
+    fn preview_asset_prefix_is_normalized_for_control_plane_assets() {
+        assert_eq!(
+            normalize_preview_asset_prefix("/runtime/previews/").as_deref(),
+            Some("runtime/previews")
+        );
+        assert!(normalize_preview_asset_prefix("../previews").is_none());
+        assert!(normalize_preview_asset_prefix("C:/previews").is_none());
+        assert!(normalize_preview_asset_prefix("").is_none());
     }
 }

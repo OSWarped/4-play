@@ -509,6 +509,9 @@ async fn list_active_session_summaries(
 
 fn apply_preview_fallbacks(sessions: &mut [SessionSummary], games: &[CatalogGame]) {
     for session in sessions {
+        if session.preview_asset_path.is_some() {
+            continue;
+        }
         let Some(game) = games.iter().find(|game| game.id == session.game_id) else {
             continue;
         };
@@ -691,6 +694,9 @@ async fn update_runtime_session_state(
             "failure reason must not exceed 1024 bytes",
         ));
     }
+    if let Some(path) = update.preview_asset_path.as_deref() {
+        validate_asset_path("preview_asset_path", path)?;
+    }
     state
         .runtime_hosts
         .update_session_state(
@@ -698,6 +704,7 @@ async fn update_runtime_session_state(
             session_id,
             update.state,
             update.failure_reason,
+            update.preview_asset_path,
             unix_time_ms(),
         )
         .await
@@ -1567,6 +1574,87 @@ mod tests {
             summaries["sessions"][0]["preview_status"],
             "artwork_available"
         );
+    }
+
+    #[tokio::test]
+    async fn active_session_summaries_publish_runtime_still_previews() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for state in ["starting", "ready"] {
+            request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({ "state": state, "failure_reason": null })),
+            )
+            .await;
+        }
+        let (active_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            &state_path,
+            Some(json!({
+                "state": "active",
+                "failure_reason": null,
+                "preview_asset_path": format!("previews/{session_id}.bmp")
+            })),
+        )
+        .await;
+        assert_eq!(active_status, 200);
+
+        let (status, summaries) =
+            request_json(service, Method::GET, "/api/v1/active-sessions", None).await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            summaries["sessions"][0]["preview_status"],
+            "still_available"
+        );
+        assert_eq!(
+            summaries["sessions"][0]["preview_asset_path"],
+            format!("previews/{session_id}.bmp")
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_state_update_rejects_unsafe_preview_paths() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+
+        let (status, error) = request_json(
+            service,
+            Method::PUT,
+            &state_path,
+            Some(json!({
+                "state": "starting",
+                "failure_reason": null,
+                "preview_asset_path": "../outside.bmp"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 400);
+        assert_eq!(error["code"], "invalid_asset_path");
     }
 
     #[tokio::test]

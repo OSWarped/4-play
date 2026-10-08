@@ -57,6 +57,7 @@ const SCHEMA: &str = "
         media_udp_port INTEGER NOT NULL,
         input_udp_port INTEGER NOT NULL,
         player_slots_json TEXT NOT NULL DEFAULT '[]',
+        preview_asset_path TEXT,
         created_unix_ms INTEGER NOT NULL,
         updated_unix_ms INTEGER NOT NULL,
         failure_reason TEXT,
@@ -131,16 +132,27 @@ impl RuntimeHostStore {
             .map_err(StoreError::database)?;
         connection
             .call(|connection| -> tokio_rusqlite::rusqlite::Result<()> {
-                let has_player_slots = connection
+                let session_columns = connection
                     .prepare("PRAGMA table_info(sessions)")?
                     .query_map([], |row| row.get::<_, String>(1))?
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .any(|name| name == "player_slots_json");
-                if !has_player_slots {
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !session_columns
+                    .iter()
+                    .any(|name| name == "player_slots_json")
+                {
                     connection.execute(
                         "ALTER TABLE sessions
                          ADD COLUMN player_slots_json TEXT NOT NULL DEFAULT '[]'",
+                        [],
+                    )?;
+                }
+                if !session_columns
+                    .iter()
+                    .any(|name| name == "preview_asset_path")
+                {
+                    connection.execute(
+                        "ALTER TABLE sessions
+                         ADD COLUMN preview_asset_path TEXT",
                         [],
                     )?;
                 }
@@ -668,8 +680,8 @@ impl RuntimeHostStore {
                         id, game_id, seat_id, destination_address, runtime_host_id,
                         runtime_host_address, runtime_profile_json, state, grant_token,
                         grant_expires_unix_ms, media_udp_port, input_udp_port, player_slots_json,
-                        created_unix_ms, updated_unix_ms, failure_reason
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, ?13, ?13, NULL)",
+                        preview_asset_path, created_unix_ms, updated_unix_ms, failure_reason
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, NULL, ?13, ?13, NULL)",
                     params![
                         session_id,
                         request.game_id,
@@ -1049,6 +1061,7 @@ impl RuntimeHostStore {
         session_id: String,
         next_state: SessionState,
         failure_reason: Option<String>,
+        preview_asset_path: Option<String>,
         now_unix_ms: u64,
     ) -> Result<Session, StoreError> {
         let now = to_sql_integer(now_unix_ms, "session timestamp")?;
@@ -1059,12 +1072,17 @@ impl RuntimeHostStore {
                 let transaction = connection.transaction()?;
                 let current = transaction
                     .query_row(
-                        "SELECT runtime_host_id, state, failure_reason FROM sessions WHERE id = ?1",
+                        "SELECT runtime_host_id, state, failure_reason, preview_asset_path FROM sessions WHERE id = ?1",
                         [&session_id],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
+                        |row| Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        )),
                     )
                     .optional()?;
-                let Some((assigned_host_id, current_state_name, current_failure)) = current else {
+                let Some((assigned_host_id, current_state_name, current_failure, current_preview_asset_path)) = current else {
                     return Ok(Err(StateUpdateRejection::SessionNotFound));
                 };
                 if assigned_host_id != runtime_host_id {
@@ -1078,6 +1096,13 @@ impl RuntimeHostStore {
                     if current_failure != failure_reason {
                         return Ok(Err(StateUpdateRejection::ConflictingRetry));
                     }
+                    if current_preview_asset_path != preview_asset_path {
+                        transaction.execute(
+                            "UPDATE sessions SET preview_asset_path = ?2, updated_unix_ms = ?3
+                             WHERE id = ?1",
+                            params![session_id, preview_asset_path, now],
+                        )?;
+                    }
                 } else {
                     if !valid_runtime_transition(current_state, next_state) {
                         return Ok(Err(StateUpdateRejection::InvalidTransition));
@@ -1088,9 +1113,10 @@ impl RuntimeHostStore {
                         return Ok(Err(StateUpdateRejection::MissingFailureReason));
                     }
                     transaction.execute(
-                        "UPDATE sessions SET state = ?2, updated_unix_ms = ?3, failure_reason = ?4
+                        "UPDATE sessions SET state = ?2, updated_unix_ms = ?3,
+                            failure_reason = ?4, preview_asset_path = ?5
                          WHERE id = ?1",
-                        params![session_id, next_state_name, now, failure_reason],
+                        params![session_id, next_state_name, now, failure_reason, preview_asset_path],
                     )?;
                     transaction.execute(
                         "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
@@ -1591,7 +1617,7 @@ fn session_select_sql(suffix: &str) -> String {
         "SELECT id, game_id, seat_id, destination_address, runtime_host_id,
                 runtime_host_address, runtime_profile_json, state, grant_token,
                 grant_expires_unix_ms, media_udp_port, input_udp_port,
-                player_slots_json,
+                player_slots_json, preview_asset_path,
                 (
                     SELECT COUNT(*)
                     FROM spectator_grants sg
@@ -1835,6 +1861,7 @@ struct StoredSession {
     media_udp_port: i64,
     input_udp_port: i64,
     player_slots_json: String,
+    preview_asset_path: Option<String>,
     active_spectator_count: i64,
     created_unix_ms: i64,
     updated_unix_ms: i64,
@@ -1857,10 +1884,11 @@ impl StoredSession {
             media_udp_port: row.get(10)?,
             input_udp_port: row.get(11)?,
             player_slots_json: row.get(12)?,
-            active_spectator_count: row.get(13)?,
-            created_unix_ms: row.get(14)?,
-            updated_unix_ms: row.get(15)?,
-            failure_reason: row.get(16)?,
+            preview_asset_path: row.get(13)?,
+            active_spectator_count: row.get(14)?,
+            created_unix_ms: row.get(15)?,
+            updated_unix_ms: row.get(16)?,
+            failure_reason: row.get(17)?,
         })
     }
 
@@ -1920,15 +1948,20 @@ impl StoredSession {
             active_spectator_count: u32::try_from(self.active_spectator_count).map_err(|_| {
                 StoreError::data("active_spectator_count is outside the supported range")
             })?,
-            preview_status: preview_status_for_state(state),
-            preview_asset_path: None,
+            preview_status: preview_status_for_state(state, self.preview_asset_path.as_deref()),
+            preview_asset_path: self.preview_asset_path,
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
         })
     }
 }
 
-fn preview_status_for_state(state: SessionState) -> PreviewStatus {
-    if state == SessionState::Active {
+fn preview_status_for_state(
+    state: SessionState,
+    preview_asset_path: Option<&str>,
+) -> PreviewStatus {
+    if state == SessionState::Active && preview_asset_path.is_some() {
+        PreviewStatus::StillAvailable
+    } else if state == SessionState::Active {
         PreviewStatus::SpectatorAvailable
     } else {
         PreviewStatus::Unavailable

@@ -195,6 +195,7 @@ impl RuntimeHostAgent {
         session_id: &str,
         state: SessionState,
         failure_reason: Option<String>,
+        preview_asset_path: Option<String>,
     ) -> Result<Session, reqwest::Error> {
         self.client
             .put(format!(
@@ -205,6 +206,7 @@ impl RuntimeHostAgent {
             .json(&UpdateSessionState {
                 state,
                 failure_reason,
+                preview_asset_path,
             })
             .send()
             .await?
@@ -317,6 +319,7 @@ impl RuntimeHostAgent {
                             &assignment.session_id,
                             SessionState::AllocationFailed,
                             Some(reason),
+                            None,
                         )
                         .await
                         .map_err(|error| format!("could not report allocation failure: {error}"))?;
@@ -325,6 +328,7 @@ impl RuntimeHostAgent {
                         self.report_session_state(
                             &assignment.session_id,
                             SessionState::Starting,
+                            None,
                             None,
                         )
                         .await
@@ -350,6 +354,7 @@ impl RuntimeHostAgent {
                                     &assignment.session_id,
                                     SessionState::Ready,
                                     None,
+                                    None,
                                 )
                                 .await
                                 .map_err(|error| {
@@ -359,6 +364,7 @@ impl RuntimeHostAgent {
                                     &assignment.session_id,
                                     SessionState::Active,
                                     None,
+                                    supervisor.preview_asset_path(&assignment.session_id),
                                 )
                                 .await
                                 .map_err(|error| {
@@ -372,10 +378,24 @@ impl RuntimeHostAgent {
                                     &assignment.session_id,
                                     SessionState::Active,
                                     None,
+                                    supervisor.preview_asset_path(&assignment.session_id),
                                 )
                                 .await
                                 .map_err(|error| {
                                     format!("could not report active state: {error}")
+                                })?;
+                            } else if let Some(preview_asset_path) =
+                                supervisor.preview_asset_path(&assignment.session_id)
+                            {
+                                self.report_session_state(
+                                    &assignment.session_id,
+                                    SessionState::Active,
+                                    None,
+                                    Some(preview_asset_path),
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("could not report active preview path: {error}")
                                 })?;
                             }
                         }
@@ -389,6 +409,7 @@ impl RuntimeHostAgent {
                                 &assignment.session_id,
                                 failed_state,
                                 Some(reason),
+                                None,
                             )
                             .await
                             .map_err(|error| {
@@ -406,6 +427,7 @@ impl RuntimeHostAgent {
                                 &assignment.session_id,
                                 failed_state,
                                 Some("session runtime process is missing".to_owned()),
+                                None,
                             )
                             .await
                             .map_err(|error| {
@@ -427,6 +449,7 @@ impl RuntimeHostAgent {
                             self.report_session_state(
                                 &assignment.session_id,
                                 SessionState::Stopped,
+                                None,
                                 None,
                             )
                             .await
