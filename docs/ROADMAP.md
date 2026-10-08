@@ -128,6 +128,8 @@ termination or runtime loss. See
 
 ## Phase 2 — Product MVP: Shared Sessions
 
+Status: **in progress on the reference host**.
+
 - active-session discovery
 - low-cost live previews
 - explicit player-slot model
