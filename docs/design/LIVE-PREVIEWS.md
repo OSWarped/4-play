@@ -39,10 +39,13 @@ be changed with `FOURPLAY_PREVIEW_INTERVAL_MS`.
 
 When a still file exists, `runtime-host-agent` reports the relative path
 `previews/<session-id>.bmp` to the control plane by default. Browsing clients
-then see `preview_status: "still_available"` plus `preview_asset_path`. If the
-still is not available yet, the control plane falls back to catalog artwork
-paths, and active sessions still advertise that full spectator media can be
-requested.
+then see `preview_status: "still_available"`, `preview_asset_path`, and
+`preview_updated_unix_ms`. If the control plane has not received a fresh preview
+report within `FOURPLAY_PREVIEW_STALE_MS` (default 5000 ms), it keeps the same
+asset path but labels the card `preview_status: "stale_available"` so the UI can
+show a last-known frame without pretending it is current. If the still is not
+available yet, the control plane falls back to catalog artwork paths, and active
+sessions still advertise that full spectator media can be requested.
 
 For a single-machine reference deployment, set the same asset root for both the
 control plane and runtime host, for example:
@@ -51,7 +54,13 @@ control plane and runtime host, for example:
 export FOURPLAY_ASSET_ROOT=/opt/4play/assets
 export FOURPLAY_PREVIEW_DIRECTORY=/opt/4play/assets/previews
 export FOURPLAY_PREVIEW_ASSET_PREFIX=previews
+export FOURPLAY_PREVIEW_STALE_MS=5000
 ```
+
+Operators can disable runtime still generation with
+`FOURPLAY_PREVIEW_ENABLED=0` on the runtime host. Disabling still previews must
+not prevent starting, joining, spectating, or continuing gameplay; active-session
+summaries fall back to spectator availability or catalog artwork.
 
 The UI should prioritize the selected or focused session. It need not decode full-motion video for every visible card simultaneously.
 
@@ -107,7 +116,6 @@ The experiment should compare GPU encoder usage, CPU usage, bandwidth, decode co
 - How many moving previews should one browsing seat display at once?
 - Should non-focused cards use still frames while the focused card uses motion?
 - Can the selected gameplay transport expose an efficient reusable preview layer?
-- How stale may a preview become before the UI labels it unavailable?
 - What privacy or venue-policy controls are necessary?
 
 ## Product MVP acceptance criteria

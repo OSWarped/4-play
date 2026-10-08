@@ -263,6 +263,7 @@ pub enum PreviewStatus {
     Unavailable,
     ArtworkAvailable,
     StillAvailable,
+    StaleAvailable,
     SpectatorAvailable,
 }
 
@@ -279,6 +280,8 @@ pub struct SessionSummary {
     pub active_spectator_count: u32,
     pub preview_status: PreviewStatus,
     pub preview_asset_path: Option<String>,
+    #[serde(default)]
+    pub preview_updated_unix_ms: Option<u64>,
     pub updated_unix_ms: u64,
 }
 
@@ -430,6 +433,7 @@ mod tests {
             active_spectator_count: 1,
             preview_status: PreviewStatus::SpectatorAvailable,
             preview_asset_path: Some("media/tmnt/screenshot.svg".to_owned()),
+            preview_updated_unix_ms: Some(123_450),
             updated_unix_ms: 123_456,
         };
 
@@ -441,6 +445,7 @@ mod tests {
         assert_eq!(value["active_spectator_count"], 1);
         assert_eq!(value["preview_status"], "spectator_available");
         assert_eq!(value["preview_asset_path"], "media/tmnt/screenshot.svg");
+        assert_eq!(value["preview_updated_unix_ms"], 123_450);
     }
 
     #[test]

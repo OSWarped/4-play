@@ -7,6 +7,7 @@ const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8080";
 const BIND_ENVIRONMENT_VARIABLE: &str = "FOURPLAY_CONTROL_PLANE_BIND";
 const DEFAULT_DATABASE_PATH: &str = "data/control-plane.sqlite3";
 const DEFAULT_OFFLINE_SECONDS: u64 = 15;
+const DEFAULT_PREVIEW_STALE_MS: u64 = 5_000;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -34,19 +35,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let runtime_host_api_token = required_secret("FOURPLAY_RUNTIME_HOST_API_TOKEN")?;
     let port_pools = port_pool_config()?;
     let asset_root = env::var("FOURPLAY_ASSET_ROOT").ok().map(PathBuf::from);
+    let preview_stale_ms = env::var("FOURPLAY_PREVIEW_STALE_MS")
+        .ok()
+        .map(|value| value.parse::<u64>())
+        .transpose()?
+        .unwrap_or(DEFAULT_PREVIEW_STALE_MS);
+    if preview_stale_ms == 0 {
+        return Err("FOURPLAY_PREVIEW_STALE_MS must be greater than zero".into());
+    }
     let listener = TcpListener::bind(bind_address).await?;
-    let app = control_plane_server::app_with_database_tokens_ports_and_assets(
+    let app = control_plane_server::app_with_database_tokens_ports_assets_and_preview(
         &database_path,
         Duration::from_secs(offline_seconds),
         seat_api_token,
         runtime_host_api_token,
         port_pools,
         asset_root.clone(),
+        Duration::from_millis(preview_stale_ms),
     )
     .await?;
 
     println!(
-        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={}",
+        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms}",
         database_path.display(),
         port_pools.media_port_start,
         port_pools.media_port_count,

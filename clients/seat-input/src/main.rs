@@ -428,6 +428,7 @@ fn describe_preview_status(status: PreviewStatus) -> &'static str {
         PreviewStatus::Unavailable => "unavailable",
         PreviewStatus::ArtworkAvailable => "artwork available",
         PreviewStatus::StillAvailable => "still preview available",
+        PreviewStatus::StaleAvailable => "stale preview available",
         PreviewStatus::SpectatorAvailable => "spectator available",
     }
 }
@@ -1714,6 +1715,7 @@ mod tests {
             active_spectator_count,
             preview_status: PreviewStatus::SpectatorAvailable,
             preview_asset_path: None,
+            preview_updated_unix_ms: None,
             updated_unix_ms: 101,
         }
     }

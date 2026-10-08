@@ -28,6 +28,7 @@ pub use store::StoreError;
 
 pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
 pub const DEFAULT_GRANT_TTL: Duration = Duration::from_secs(300);
+pub const DEFAULT_PREVIEW_STALE_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -57,6 +58,7 @@ pub struct AppState {
     seat_api_token: String,
     runtime_host_api_token: String,
     asset_root: Option<PathBuf>,
+    preview_stale_after_ms: u64,
 }
 
 impl AppState {
@@ -69,6 +71,7 @@ impl AppState {
             seat_api_token: "test-seat-token".to_owned(),
             runtime_host_api_token: "test-runtime-host-token".to_owned(),
             asset_root: None,
+            preview_stale_after_ms: duration_ms(DEFAULT_PREVIEW_STALE_AFTER),
         })
     }
 
@@ -79,6 +82,7 @@ impl AppState {
         runtime_host_api_token: String,
         port_pools: PortPoolConfig,
         asset_root: Option<PathBuf>,
+        preview_stale_after: Duration,
     ) -> Result<Self, StoreError> {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
@@ -88,6 +92,7 @@ impl AppState {
             seat_api_token,
             runtime_host_api_token,
             asset_root,
+            preview_stale_after_ms: duration_ms(preview_stale_after),
         })
     }
 }
@@ -110,6 +115,7 @@ pub async fn app_with_database(
             "test-runtime-host-token".to_owned(),
             PortPoolConfig::default(),
             None,
+            DEFAULT_PREVIEW_STALE_AFTER,
         )
         .await?,
     ))
@@ -157,6 +163,27 @@ pub async fn app_with_database_tokens_ports_and_assets(
     port_pools: PortPoolConfig,
     asset_root: Option<PathBuf>,
 ) -> Result<Router, StoreError> {
+    app_with_database_tokens_ports_assets_and_preview(
+        path,
+        offline_after,
+        seat_api_token,
+        runtime_host_api_token,
+        port_pools,
+        asset_root,
+        DEFAULT_PREVIEW_STALE_AFTER,
+    )
+    .await
+}
+
+pub async fn app_with_database_tokens_ports_assets_and_preview(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+    seat_api_token: String,
+    runtime_host_api_token: String,
+    port_pools: PortPoolConfig,
+    asset_root: Option<PathBuf>,
+    preview_stale_after: Duration,
+) -> Result<Router, StoreError> {
     Ok(app_with_state(
         AppState::persistent(
             path,
@@ -165,6 +192,7 @@ pub async fn app_with_database_tokens_ports_and_assets(
             runtime_host_api_token,
             port_pools,
             asset_root,
+            preview_stale_after,
         )
         .await?,
     ))
@@ -498,6 +526,7 @@ async fn list_active_session_summaries(
         .list_active_session_summaries()
         .await
         .map_err(ApiError::store)?;
+    mark_stale_previews(&mut sessions, unix_time_ms(), state.preview_stale_after_ms);
     let games = state
         .runtime_hosts
         .list_catalog(unix_time_ms(), state.offline_after_ms)
@@ -505,6 +534,21 @@ async fn list_active_session_summaries(
         .map_err(ApiError::store)?;
     apply_preview_fallbacks(&mut sessions, &games);
     Ok(Json(SessionSummaryList { sessions }))
+}
+
+fn mark_stale_previews(sessions: &mut [SessionSummary], now_unix_ms: u64, stale_after_ms: u64) {
+    for session in sessions {
+        if session.preview_status != PreviewStatus::StillAvailable {
+            continue;
+        }
+        let Some(preview_updated_unix_ms) = session.preview_updated_unix_ms else {
+            session.preview_status = PreviewStatus::StaleAvailable;
+            continue;
+        };
+        if now_unix_ms.saturating_sub(preview_updated_unix_ms) > stale_after_ms {
+            session.preview_status = PreviewStatus::StaleAvailable;
+        }
+    }
 }
 
 fn apply_preview_fallbacks(sessions: &mut [SessionSummary], games: &[CatalogGame]) {
@@ -1111,6 +1155,7 @@ mod tests {
     use super::{
         PortPoolConfig, app, app_with_database, app_with_database_tokens_and_ports,
         app_with_database_tokens_ports_and_assets,
+        app_with_database_tokens_ports_assets_and_preview,
     };
     use axum::{
         body::Body,
@@ -1623,6 +1668,57 @@ mod tests {
         assert_eq!(
             summaries["sessions"][0]["preview_asset_path"],
             format!("previews/{session_id}.bmp")
+        );
+        assert!(summaries["sessions"][0]["preview_updated_unix_ms"].is_number());
+    }
+
+    #[tokio::test]
+    async fn active_session_summaries_mark_old_still_previews_stale() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database_tokens_ports_assets_and_preview(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            None,
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let state_path =
+            format!("/api/v1/runtime-hosts/reference-linux/sessions/{session_id}/state");
+        for state in ["starting", "ready", "active"] {
+            request_json(
+                service.clone(),
+                Method::PUT,
+                &state_path,
+                Some(json!({
+                    "state": state,
+                    "failure_reason": null,
+                    "preview_asset_path": format!("previews/{session_id}.bmp")
+                })),
+            )
+            .await;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let (status, summaries) =
+            request_json(service, Method::GET, "/api/v1/active-sessions", None).await;
+
+        assert_eq!(status, 200);
+        assert_eq!(
+            summaries["sessions"][0]["preview_status"],
+            "stale_available"
         );
     }
 

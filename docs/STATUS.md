@@ -145,11 +145,15 @@ Last updated: 2026-10-04
   and `catalog-admin set-slot` edits those fields through the metadata API
 - active-session summaries can expose live still preview paths, catalog artwork
   fallback preview paths, and distinguish `still_available`,
-  `artwork_available`, `spectator_available`, and `unavailable`
+  `stale_available`, `artwork_available`, `spectator_available`, and
+  `unavailable`
 - `session-runtime` can write periodic low-cost BMP still previews from the
   existing raw video bridge; `runtime-host-agent` passes per-session preview
   paths and interval configuration, then reports generated preview asset paths
   back to the control plane
+- operators can disable runtime still preview generation with
+  `FOURPLAY_PREVIEW_ENABLED=0`, and the control plane marks old still previews
+  stale after `FOURPLAY_PREVIEW_STALE_MS`
 
 ## Not started
 
@@ -157,8 +161,7 @@ Last updated: 2026-10-04
 
 ## Next milestone
 
-Design and implement low-cost active-session previews and spectator/media
-fan-out so browsing and joined seats can observe sessions without requiring one
-full-quality gameplay encoder or one shared local UDP media port per viewer.
-Richer fixed-position and character-aware player-slot metadata follows that
-media path.
+Validate the Phase 2 shared-session product flow with multiple seats: start,
+join, reconnect, spectate, browse still previews, and confirm stale/fallback
+preview degradation never blocks gameplay. The remaining product work is a more
+cabinet-like browser/admin UI on top of the now-working APIs.

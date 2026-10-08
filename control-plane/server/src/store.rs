@@ -58,6 +58,7 @@ const SCHEMA: &str = "
         input_udp_port INTEGER NOT NULL,
         player_slots_json TEXT NOT NULL DEFAULT '[]',
         preview_asset_path TEXT,
+        preview_updated_unix_ms INTEGER,
         created_unix_ms INTEGER NOT NULL,
         updated_unix_ms INTEGER NOT NULL,
         failure_reason TEXT,
@@ -153,6 +154,16 @@ impl RuntimeHostStore {
                     connection.execute(
                         "ALTER TABLE sessions
                          ADD COLUMN preview_asset_path TEXT",
+                        [],
+                    )?;
+                }
+                if !session_columns
+                    .iter()
+                    .any(|name| name == "preview_updated_unix_ms")
+                {
+                    connection.execute(
+                        "ALTER TABLE sessions
+                         ADD COLUMN preview_updated_unix_ms INTEGER",
                         [],
                     )?;
                 }
@@ -680,8 +691,9 @@ impl RuntimeHostStore {
                         id, game_id, seat_id, destination_address, runtime_host_id,
                         runtime_host_address, runtime_profile_json, state, grant_token,
                         grant_expires_unix_ms, media_udp_port, input_udp_port, player_slots_json,
-                        preview_asset_path, created_unix_ms, updated_unix_ms, failure_reason
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, NULL, ?13, ?13, NULL)",
+                        preview_asset_path, preview_updated_unix_ms,
+                        created_unix_ms, updated_unix_ms, failure_reason
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'allocating', ?8, ?9, ?10, ?11, ?12, NULL, NULL, ?13, ?13, NULL)",
                     params![
                         session_id,
                         request.game_id,
@@ -1065,73 +1077,104 @@ impl RuntimeHostStore {
         now_unix_ms: u64,
     ) -> Result<Session, StoreError> {
         let now = to_sql_integer(now_unix_ms, "session timestamp")?;
+        let preview_updated_unix_ms = preview_asset_path.is_some().then_some(now);
         let next_state_name = session_state_name(next_state);
         let stored = self
             .connection
-            .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, StateUpdateRejection>> {
-                let transaction = connection.transaction()?;
-                let current = transaction
-                    .query_row(
-                        "SELECT runtime_host_id, state, failure_reason, preview_asset_path FROM sessions WHERE id = ?1",
-                        [&session_id],
-                        |row| Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, Option<String>>(2)?,
-                            row.get::<_, Option<String>>(3)?,
-                        )),
-                    )
-                    .optional()?;
-                let Some((assigned_host_id, current_state_name, current_failure, current_preview_asset_path)) = current else {
-                    return Ok(Err(StateUpdateRejection::SessionNotFound));
-                };
-                if assigned_host_id != runtime_host_id {
-                    return Ok(Err(StateUpdateRejection::WrongRuntimeHost));
-                }
-                let current_state = match parse_session_state(&current_state_name) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(Err(StateUpdateRejection::InvalidStoredState)),
-                };
-                if current_state == next_state {
-                    if current_failure != failure_reason {
-                        return Ok(Err(StateUpdateRejection::ConflictingRetry));
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<
+                    Result<StoredSession, StateUpdateRejection>,
+                > {
+                    let transaction = connection.transaction()?;
+                    let current = transaction
+                        .query_row(
+                            "SELECT runtime_host_id, state, failure_reason, preview_asset_path,
+                                preview_updated_unix_ms
+                         FROM sessions WHERE id = ?1",
+                            [&session_id],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, Option<String>>(2)?,
+                                    row.get::<_, Option<String>>(3)?,
+                                    row.get::<_, Option<i64>>(4)?,
+                                ))
+                            },
+                        )
+                        .optional()?;
+                    let Some((
+                        assigned_host_id,
+                        current_state_name,
+                        current_failure,
+                        current_preview_asset_path,
+                        current_preview_updated_unix_ms,
+                    )) = current
+                    else {
+                        return Ok(Err(StateUpdateRejection::SessionNotFound));
+                    };
+                    if assigned_host_id != runtime_host_id {
+                        return Ok(Err(StateUpdateRejection::WrongRuntimeHost));
                     }
-                    if current_preview_asset_path != preview_asset_path {
-                        transaction.execute(
-                            "UPDATE sessions SET preview_asset_path = ?2, updated_unix_ms = ?3
+                    let current_state = match parse_session_state(&current_state_name) {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(StateUpdateRejection::InvalidStoredState)),
+                    };
+                    if current_state == next_state {
+                        if current_failure != failure_reason {
+                            return Ok(Err(StateUpdateRejection::ConflictingRetry));
+                        }
+                        let should_update_preview = preview_asset_path.is_some()
+                            || current_preview_asset_path != preview_asset_path
+                            || current_preview_updated_unix_ms != preview_updated_unix_ms;
+                        if should_update_preview {
+                            transaction.execute(
+                                "UPDATE sessions
+                             SET preview_asset_path = ?2, preview_updated_unix_ms = ?3
                              WHERE id = ?1",
-                            params![session_id, preview_asset_path, now],
-                        )?;
-                    }
-                } else {
-                    if !valid_runtime_transition(current_state, next_state) {
-                        return Ok(Err(StateUpdateRejection::InvalidTransition));
-                    }
-                    if is_failure_state(next_state)
-                        && failure_reason.as_deref().is_none_or(|reason| reason.trim().is_empty())
-                    {
-                        return Ok(Err(StateUpdateRejection::MissingFailureReason));
-                    }
-                    transaction.execute(
-                        "UPDATE sessions SET state = ?2, updated_unix_ms = ?3,
-                            failure_reason = ?4, preview_asset_path = ?5
+                                params![session_id, preview_asset_path, preview_updated_unix_ms],
+                            )?;
+                        }
+                    } else {
+                        if !valid_runtime_transition(current_state, next_state) {
+                            return Ok(Err(StateUpdateRejection::InvalidTransition));
+                        }
+                        if is_failure_state(next_state)
+                            && failure_reason
+                                .as_deref()
+                                .is_none_or(|reason| reason.trim().is_empty())
+                        {
+                            return Ok(Err(StateUpdateRejection::MissingFailureReason));
+                        }
+                        transaction.execute(
+                            "UPDATE sessions SET state = ?2, updated_unix_ms = ?3,
+                            failure_reason = ?4, preview_asset_path = ?5,
+                            preview_updated_unix_ms = ?6
                          WHERE id = ?1",
-                        params![session_id, next_state_name, now, failure_reason, preview_asset_path],
-                    )?;
-                    transaction.execute(
+                            params![
+                                session_id,
+                                next_state_name,
+                                now,
+                                failure_reason,
+                                preview_asset_path,
+                                preview_updated_unix_ms
+                            ],
+                        )?;
+                        transaction.execute(
                         "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
                          VALUES (?1, ?2, ?3, ?4)",
                         params![session_id, next_state_name, now, failure_reason],
                     )?;
-                }
-                let stored = transaction.query_row(
-                    &session_select_sql("WHERE id = ?1"),
-                    [&session_id],
-                    StoredSession::from_row,
-                )?;
-                transaction.commit()?;
-                Ok(Ok(stored))
-            })
+                    }
+                    let stored = transaction.query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )?;
+                    transaction.commit()?;
+                    Ok(Ok(stored))
+                },
+            )
             .await
             .map_err(StoreError::database)?
             .map_err(StoreError::from_state_update_rejection)?;
@@ -1617,7 +1660,7 @@ fn session_select_sql(suffix: &str) -> String {
         "SELECT id, game_id, seat_id, destination_address, runtime_host_id,
                 runtime_host_address, runtime_profile_json, state, grant_token,
                 grant_expires_unix_ms, media_udp_port, input_udp_port,
-                player_slots_json, preview_asset_path,
+                player_slots_json, preview_asset_path, preview_updated_unix_ms,
                 (
                     SELECT COUNT(*)
                     FROM spectator_grants sg
@@ -1862,6 +1905,7 @@ struct StoredSession {
     input_udp_port: i64,
     player_slots_json: String,
     preview_asset_path: Option<String>,
+    preview_updated_unix_ms: Option<i64>,
     active_spectator_count: i64,
     created_unix_ms: i64,
     updated_unix_ms: i64,
@@ -1885,10 +1929,11 @@ impl StoredSession {
             input_udp_port: row.get(11)?,
             player_slots_json: row.get(12)?,
             preview_asset_path: row.get(13)?,
-            active_spectator_count: row.get(14)?,
-            created_unix_ms: row.get(15)?,
-            updated_unix_ms: row.get(16)?,
-            failure_reason: row.get(17)?,
+            preview_updated_unix_ms: row.get(14)?,
+            active_spectator_count: row.get(15)?,
+            created_unix_ms: row.get(16)?,
+            updated_unix_ms: row.get(17)?,
+            failure_reason: row.get(18)?,
         })
     }
 
@@ -1950,6 +1995,10 @@ impl StoredSession {
             })?,
             preview_status: preview_status_for_state(state, self.preview_asset_path.as_deref()),
             preview_asset_path: self.preview_asset_path,
+            preview_updated_unix_ms: self
+                .preview_updated_unix_ms
+                .map(|value| from_sql_integer(value, "preview_updated_unix_ms"))
+                .transpose()?,
             updated_unix_ms: from_sql_integer(self.updated_unix_ms, "updated_unix_ms")?,
         })
     }

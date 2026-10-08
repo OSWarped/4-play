@@ -17,6 +17,7 @@ pub struct RuntimeAdapterConfig {
     pub preview_directory: PathBuf,
     pub preview_asset_prefix: String,
     pub preview_interval_ms: u64,
+    pub preview_enabled: bool,
 }
 
 impl RuntimeAdapterConfig {
@@ -46,6 +47,8 @@ impl RuntimeAdapterConfig {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(1_000);
+        let preview_enabled =
+            preview_enabled_value(std::env::var("FOURPLAY_PREVIEW_ENABLED").ok().as_deref());
         Self {
             session_runtime_path,
             mame_path: mame_path.into(),
@@ -54,6 +57,7 @@ impl RuntimeAdapterConfig {
             preview_directory,
             preview_asset_prefix,
             preview_interval_ms,
+            preview_enabled,
         }
     }
 }
@@ -76,7 +80,7 @@ struct ManagedRuntime {
     status_file: PathBuf,
     pid_file: PathBuf,
     spectator_ports_file: PathBuf,
-    preview_image_file: PathBuf,
+    preview_image_file: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -104,11 +108,16 @@ impl RuntimeSupervisor {
             return Ok(());
         }
         fs::create_dir_all(&self.config.state_directory)?;
-        fs::create_dir_all(&self.config.preview_directory)?;
+        if self.config.preview_enabled {
+            fs::create_dir_all(&self.config.preview_directory)?;
+        }
         let status_file = self.status_file(&assignment.session_id);
         let pid_file = self.pid_file(&assignment.session_id);
         let spectator_ports_file = self.spectator_ports_file(&assignment.session_id);
-        let preview_image_file = self.preview_image_file(&assignment.session_id);
+        let preview_image_file = self
+            .config
+            .preview_enabled
+            .then(|| self.preview_image_file(&assignment.session_id));
         write_spectator_ports(&spectator_ports_file, &assignment.spectator_media_ports)?;
         if let Some(pid) = read_live_pid(&pid_file, &assignment.session_id)? {
             self.processes.insert(
@@ -126,7 +135,9 @@ impl RuntimeSupervisor {
         }
         remove_if_present(&status_file)?;
         remove_if_present(&pid_file)?;
-        remove_if_present(&preview_image_file)?;
+        if let Some(preview_image_file) = preview_image_file.as_deref() {
+            remove_if_present(preview_image_file)?;
+        }
         let log_path = self
             .config
             .state_directory
@@ -169,13 +180,16 @@ impl RuntimeSupervisor {
             .arg(&self.config.mame_ini_path)
             .arg("--status-file")
             .arg(&status_file)
-            .arg("--preview-image-path")
-            .arg(&preview_image_file)
-            .arg("--preview-interval-ms")
-            .arg(self.config.preview_interval_ms.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
+        if let Some(preview_image_file) = preview_image_file.as_deref() {
+            command
+                .arg("--preview-image-path")
+                .arg(preview_image_file)
+                .arg("--preview-interval-ms")
+                .arg(self.config.preview_interval_ms.to_string());
+        }
         if assignment.runtime_profile.supports_save_state {
             command.arg("--autosave");
         }
@@ -241,6 +255,7 @@ impl RuntimeSupervisor {
         let process = self.processes.get(session_id)?;
         process
             .preview_image_file
+            .as_ref()?
             .is_file()
             .then(|| format!("{}/{}.bmp", self.config.preview_asset_prefix, session_id))
     }
@@ -320,6 +335,13 @@ fn input_debug_value_enabled(value: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+fn preview_enabled_value(value: Option<&str>) -> bool {
+    !matches!(
+        value,
+        Some("0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF")
+    )
+}
+
 fn normalize_preview_asset_prefix(value: &str) -> Option<String> {
     let trimmed = value.trim().trim_matches(['/', '\\']);
     let valid = !trimmed.is_empty()
@@ -354,7 +376,9 @@ fn cleanup_process_files(process: &ManagedRuntime) {
     let _ = remove_if_present(&process.pid_file);
     let _ = remove_if_present(&process.status_file);
     let _ = remove_if_present(&process.spectator_ports_file);
-    let _ = remove_if_present(&process.preview_image_file);
+    if let Some(preview_image_file) = process.preview_image_file.as_deref() {
+        let _ = remove_if_present(preview_image_file);
+    }
 }
 
 fn write_spectator_ports(path: &Path, ports: &[u16]) -> io::Result<()> {
@@ -440,7 +464,7 @@ fn format_exit_status(status: ExitStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{input_debug_value_enabled, normalize_preview_asset_prefix};
+    use super::{input_debug_value_enabled, normalize_preview_asset_prefix, preview_enabled_value};
 
     #[test]
     fn input_debug_accepts_common_truthy_values() {
@@ -473,5 +497,20 @@ mod tests {
         assert!(normalize_preview_asset_prefix("../previews").is_none());
         assert!(normalize_preview_asset_prefix("C:/previews").is_none());
         assert!(normalize_preview_asset_prefix("").is_none());
+    }
+
+    #[test]
+    fn preview_enabled_defaults_on_and_accepts_common_off_values() {
+        assert!(preview_enabled_value(None));
+        assert!(preview_enabled_value(Some("true")));
+        for value in [
+            Some("0"),
+            Some("false"),
+            Some("FALSE"),
+            Some("no"),
+            Some("off"),
+        ] {
+            assert!(!preview_enabled_value(value));
+        }
     }
 }
