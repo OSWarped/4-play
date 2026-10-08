@@ -33,23 +33,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let seat_api_token = required_secret("FOURPLAY_SEAT_API_TOKEN")?;
     let runtime_host_api_token = required_secret("FOURPLAY_RUNTIME_HOST_API_TOKEN")?;
     let port_pools = port_pool_config()?;
+    let asset_root = env::var("FOURPLAY_ASSET_ROOT").ok().map(PathBuf::from);
     let listener = TcpListener::bind(bind_address).await?;
-    let app = control_plane_server::app_with_database_tokens_and_ports(
+    let app = control_plane_server::app_with_database_tokens_ports_and_assets(
         &database_path,
         Duration::from_secs(offline_seconds),
         seat_api_token,
         runtime_host_api_token,
         port_pools,
+        asset_root.clone(),
     )
     .await?;
 
     println!(
-        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{}",
+        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={}",
         database_path.display(),
         port_pools.media_port_start,
         port_pools.media_port_count,
         port_pools.input_port_start,
-        port_pools.input_port_count
+        port_pools.input_port_count,
+        asset_root
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "disabled".to_owned())
     );
 
     axum::serve(listener, app)

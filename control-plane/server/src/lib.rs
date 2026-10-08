@@ -2,14 +2,15 @@ mod store;
 
 use std::{
     net::IpAddr,
-    path::Path,
+    path::{Component, Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path as AxumPath, State},
-    http::{HeaderMap, Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode, header::CONTENT_TYPE},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -54,6 +55,7 @@ pub struct AppState {
     port_pools: PortPoolConfig,
     seat_api_token: String,
     runtime_host_api_token: String,
+    asset_root: Option<PathBuf>,
 }
 
 impl AppState {
@@ -65,6 +67,7 @@ impl AppState {
             port_pools: PortPoolConfig::default(),
             seat_api_token: "test-seat-token".to_owned(),
             runtime_host_api_token: "test-runtime-host-token".to_owned(),
+            asset_root: None,
         })
     }
 
@@ -74,6 +77,7 @@ impl AppState {
         seat_api_token: String,
         runtime_host_api_token: String,
         port_pools: PortPoolConfig,
+        asset_root: Option<PathBuf>,
     ) -> Result<Self, StoreError> {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
@@ -82,6 +86,7 @@ impl AppState {
             port_pools,
             seat_api_token,
             runtime_host_api_token,
+            asset_root,
         })
     }
 }
@@ -103,6 +108,7 @@ pub async fn app_with_database(
             "test-seat-token".to_owned(),
             "test-runtime-host-token".to_owned(),
             PortPoolConfig::default(),
+            None,
         )
         .await?,
     ))
@@ -131,6 +137,25 @@ pub async fn app_with_database_tokens_and_ports(
     runtime_host_api_token: String,
     port_pools: PortPoolConfig,
 ) -> Result<Router, StoreError> {
+    app_with_database_tokens_ports_and_assets(
+        path,
+        offline_after,
+        seat_api_token,
+        runtime_host_api_token,
+        port_pools,
+        None,
+    )
+    .await
+}
+
+pub async fn app_with_database_tokens_ports_and_assets(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+    seat_api_token: String,
+    runtime_host_api_token: String,
+    port_pools: PortPoolConfig,
+    asset_root: Option<PathBuf>,
+) -> Result<Router, StoreError> {
     Ok(app_with_state(
         AppState::persistent(
             path,
@@ -138,6 +163,7 @@ pub async fn app_with_database_tokens_and_ports(
             seat_api_token,
             runtime_host_api_token,
             port_pools,
+            asset_root,
         )
         .await?,
     ))
@@ -152,6 +178,7 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/games/{game_id}/metadata",
             get(get_game_metadata).put(update_game_metadata),
         )
+        .route("/api/v1/assets/{*asset_path}", get(get_asset))
         .route(
             "/api/v1/active-sessions",
             get(list_active_session_summaries),
@@ -391,6 +418,41 @@ async fn update_game_metadata(
         .await
         .map(Json)
         .map_err(ApiError::store)
+}
+
+async fn get_asset(
+    State(state): State<AppState>,
+    AxumPath(asset_path): AxumPath<String>,
+) -> Result<Response, ApiError> {
+    let Some(asset_root) = state.asset_root.as_ref() else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "asset_root_not_configured",
+            "asset serving is not configured",
+        ));
+    };
+    let relative_path = safe_relative_asset_path(&asset_path)?;
+    let full_path = asset_root.join(&relative_path);
+    let bytes = tokio::fs::read(&full_path).await.map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "asset_not_found",
+                "asset was not found",
+            )
+        } else {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "asset_read_failed",
+                "asset could not be read",
+            )
+        }
+    })?;
+    Ok((
+        [(CONTENT_TYPE, content_type_for_asset(&relative_path))],
+        Body::from(bytes),
+    )
+        .into_response())
 }
 
 async fn create_session(
@@ -781,6 +843,7 @@ fn validate_asset_path(field: &str, value: &str) -> Result<(), ApiError> {
         || value.len() > 512
         || value.starts_with('/')
         || value.starts_with('\\')
+        || value.contains('\\')
         || value.contains("..")
         || value.contains(':')
         || value.chars().any(char::is_control);
@@ -791,6 +854,51 @@ fn validate_asset_path(field: &str, value: &str) -> Result<(), ApiError> {
         ));
     }
     Ok(())
+}
+
+fn safe_relative_asset_path(value: &str) -> Result<PathBuf, ApiError> {
+    validate_asset_path("asset_path", value)?;
+    let path = Path::new(value);
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(segment) => relative.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(ApiError::bad_request(
+                    "invalid_asset_path",
+                    "asset path must be relative and must not contain traversal",
+                ));
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_asset_path",
+            "asset path must not be empty",
+        ));
+    }
+    Ok(relative)
+}
+
+fn content_type_for_asset(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("gif") => "image/gif",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("json") => "application/json",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn unix_time_ms() -> u64 {
@@ -928,9 +1036,12 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::PathBuf, time::Duration};
 
-    use super::{PortPoolConfig, app, app_with_database, app_with_database_tokens_and_ports};
+    use super::{
+        PortPoolConfig, app, app_with_database, app_with_database_tokens_and_ports,
+        app_with_database_tokens_ports_and_assets,
+    };
     use axum::{
         body::Body,
         http::{Method, Request},
@@ -994,6 +1105,29 @@ mod tests {
         let status = response.status().as_u16();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    async fn request_bytes(
+        app: axum::Router,
+        method: Method,
+        path: &str,
+    ) -> (u16, Option<String>, Vec<u8>) {
+        let mut request = Request::builder().method(method).uri(path);
+        if path.starts_with("/api/v1/") {
+            request = request.header("authorization", "Bearer test-seat-token");
+        }
+        let response = app
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, content_type, body.to_vec())
     }
 
     async fn get_json(path: &str) -> (u16, Value) {
@@ -1354,6 +1488,69 @@ mod tests {
         .await;
         assert_eq!(status, 400);
         assert_eq!(error["code"], "invalid_asset_path");
+    }
+
+    #[tokio::test]
+    async fn asset_endpoint_serves_files_from_configured_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("control-plane.sqlite3");
+        let asset_root = directory.path().join("assets");
+        std::fs::create_dir_all(asset_root.join("media/tmnt")).unwrap();
+        std::fs::write(asset_root.join("media/tmnt/marquee.png"), b"fake-png").unwrap();
+        let service = app_with_database_tokens_ports_and_assets(
+            &database,
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            Some(asset_root),
+        )
+        .await
+        .unwrap();
+
+        let (status, content_type, body) = request_bytes(
+            service,
+            Method::GET,
+            "/api/v1/assets/media/tmnt/marquee.png",
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(content_type.as_deref(), Some("image/png"));
+        assert_eq!(body, b"fake-png");
+    }
+
+    #[tokio::test]
+    async fn asset_endpoint_rejects_traversal_and_reports_missing_root() {
+        let no_root = app().await.unwrap();
+        let (missing_root_status, _, _) = request_bytes(
+            no_root,
+            Method::GET,
+            "/api/v1/assets/media/tmnt/marquee.png",
+        )
+        .await;
+        assert_eq!(missing_root_status, 404);
+
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database_tokens_ports_and_assets(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            Some(PathBuf::from(directory.path())),
+        )
+        .await
+        .unwrap();
+
+        let (status, _, _) = request_bytes(
+            service,
+            Method::GET,
+            "/api/v1/assets/media/%2e%2e/secret.png",
+        )
+        .await;
+
+        assert_eq!(status, 400);
     }
 
     #[tokio::test]

@@ -64,11 +64,33 @@ paths, drive-qualified paths, and control characters are rejected. A
 player-count override updates the effective catalog profile and the number of
 player slots allocated for newly launched sessions.
 
+Runtime discovery and library presentation are intentionally separate. MAME
+`-listxml` remains the authoritative arcade identity/technical source, while
+scraped or hand-edited metadata is stored as a presentation layer that can later
+apply to MAME, RetroArch, or another runtime adapter. The intended scraper
+pipeline is:
+
+1. identify installed content through the runtime adapter, starting with MAME
+   XML for arcade ROMs;
+2. enrich the local catalog from provider sources such as ScreenScraper,
+   ArcadeDB, TheGamesDB, or IGDB where credentials/licensing permit;
+3. download artwork, marquees, screenshots, logos, manuals, and preview videos
+   into a local asset cache;
+4. store only relative asset paths in metadata;
+5. preserve manual overrides so administrators can fix mismatches or cabinet
+   preferences without fighting the scraper.
+
+The control plane can serve local cached assets from a configured asset root.
+Set `FOURPLAY_ASSET_ROOT` on the control-plane process and fetch assets through
+`GET /api/v1/assets/<relative-path>`. If no asset root is configured, asset
+serving remains disabled.
+
 Current endpoints:
 
 ```text
 GET /api/v1/games/{game_id}/metadata
 PUT /api/v1/games/{game_id}/metadata
+GET /api/v1/assets/<relative-path>
 ```
 
 Development admin workflow:

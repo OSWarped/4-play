@@ -131,6 +131,8 @@ Last updated: 2026-10-04
   backups through the control-plane API
 - the seat client browsing list now uses editable metadata for stable
   presentation order, genre/year/manufacturer/player details, and media badges
+- the control plane can serve a safe read-only local artwork/media cache from
+  `FOURPLAY_ASSET_ROOT` through authenticated asset URLs
 
 ## Not started
 
