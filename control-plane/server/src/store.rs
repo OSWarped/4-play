@@ -8,10 +8,10 @@ use std::{
 
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameMetadata,
-    GameRuntimeProfile, PlayerSlot, PlayerSlotState, PreviewStatus, RegisterRuntimeHost,
-    RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostHeartbeat,
-    RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState, SessionSummary,
-    SpectatorGrant,
+    GameRuntimeProfile, PlayerSlot, PlayerSlotPresentation, PlayerSlotState, PreviewStatus,
+    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState,
+    SessionSummary, SpectatorGrant,
 };
 use tokio_rusqlite::{Connection, params, rusqlite::OptionalExtension};
 
@@ -1617,6 +1617,7 @@ fn initial_player_slots(
                     state: PlayerSlotState::Occupied,
                     seat_id: Some(seat_id.to_owned()),
                     lease_expires_unix_ms: Some(lease_expires_unix_ms),
+                    presentation: default_player_slot_presentation(player_number),
                 }
             } else {
                 PlayerSlot {
@@ -1624,10 +1625,20 @@ fn initial_player_slots(
                     state: PlayerSlotState::Open,
                     seat_id: None,
                     lease_expires_unix_ms: None,
+                    presentation: default_player_slot_presentation(player_number),
                 }
             }
         })
         .collect()
+}
+
+fn default_player_slot_presentation(player_number: u32) -> PlayerSlotPresentation {
+    PlayerSlotPresentation {
+        label: format!("Player {player_number}"),
+        position: Some(format!("P{player_number}")),
+        character: None,
+        artwork_path: None,
+    }
 }
 
 fn expire_slot_leases(slots: &mut [PlayerSlot], now_unix_ms: u64) {

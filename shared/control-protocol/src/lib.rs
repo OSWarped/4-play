@@ -182,11 +182,32 @@ pub enum PlayerSlotState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerSlotPresentation {
+    pub label: String,
+    pub position: Option<String>,
+    pub character: Option<String>,
+    pub artwork_path: Option<String>,
+}
+
+impl Default for PlayerSlotPresentation {
+    fn default() -> Self {
+        Self {
+            label: "Player".to_owned(),
+            position: None,
+            character: None,
+            artwork_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerSlot {
     pub player_number: u32,
     pub state: PlayerSlotState,
     pub seat_id: Option<String>,
     pub lease_expires_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub presentation: PlayerSlotPresentation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,9 +338,10 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, GameMetadata, GameRuntimeProfile, PreviewStatus, RuntimeHost,
-        RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
-        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+        API_VERSION, ApiInfo, GameMetadata, GameRuntimeProfile, PlayerSlot, PlayerSlotPresentation,
+        PlayerSlotState, PreviewStatus, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus,
+        ServiceStatus, SessionState, SessionSummary, SpectatorGrant, StatusResponse,
+        UpdateGameMetadataRequest,
     };
 
     #[test]
@@ -401,6 +423,30 @@ mod tests {
         assert_eq!(value["state"], "active");
         assert_eq!(value["active_spectator_count"], 1);
         assert_eq!(value["preview_status"], "spectator_available");
+    }
+
+    #[test]
+    fn player_slot_payload_has_stable_presentation_fields() {
+        let slot = PlayerSlot {
+            player_number: 2,
+            state: PlayerSlotState::Open,
+            seat_id: None,
+            lease_expires_unix_ms: None,
+            presentation: PlayerSlotPresentation {
+                label: "Donatello".to_owned(),
+                position: Some("P2".to_owned()),
+                character: Some("Donatello".to_owned()),
+                artwork_path: Some("media/tmnt/p2.svg".to_owned()),
+            },
+        };
+
+        let value = serde_json::to_value(slot).unwrap();
+        assert_eq!(value["player_number"], 2);
+        assert_eq!(value["state"], "open");
+        assert_eq!(value["presentation"]["label"], "Donatello");
+        assert_eq!(value["presentation"]["position"], "P2");
+        assert_eq!(value["presentation"]["character"], "Donatello");
+        assert_eq!(value["presentation"]["artwork_path"], "media/tmnt/p2.svg");
     }
 
     #[test]

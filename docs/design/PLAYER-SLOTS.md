@@ -62,3 +62,20 @@ Packages declare one of:
 - `custom` — package provides explicit labels and behavior
 
 The UI should expose meaningful labels rather than assuming every game is simply Player 1 through Player 4.
+
+## Current implementation
+
+Session player slots now carry presentation metadata in addition to reservation
+state:
+
+- `label`
+- optional `position`
+- optional `character`
+- optional `artwork_path`
+
+New sessions receive safe generic defaults such as `Player 1` with position
+`P1`. The seat browser displays these labels when listing active sessions.
+The fields are part of the shared control protocol and default during
+deserialization, so older persisted slots remain readable. A later package or
+admin layer can replace the generic labels with cabinet-position or
+fixed-character values without changing the slot lifecycle APIs.

@@ -138,6 +138,9 @@ Last updated: 2026-10-04
   presentation order, genre/year/manufacturer/player details, and media badges
 - the control plane can serve a safe read-only local artwork/media cache from
   `FOURPLAY_ASSET_ROOT` through authenticated asset URLs
+- player slots now carry presentation metadata for labels, positions,
+  character hints, and optional artwork paths; new sessions default to
+  `Player N` / `PN` labels and the seat browser displays those labels
 
 ## Not started
 

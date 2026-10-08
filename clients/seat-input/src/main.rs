@@ -437,7 +437,7 @@ fn describe_player_slots(slots: &[PlayerSlot]) -> String {
     slots
         .iter()
         .map(|slot| {
-            let label = format!("P{}", slot.player_number);
+            let label = player_slot_label(slot);
             match slot.state {
                 PlayerSlotState::Open => format!("{label} open"),
                 PlayerSlotState::Reserved => describe_claimed_slot(&label, "reserved", slot),
@@ -449,6 +449,19 @@ fn describe_player_slots(slots: &[PlayerSlot]) -> String {
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+fn player_slot_label(slot: &PlayerSlot) -> String {
+    if slot.presentation.label.trim().is_empty() || slot.presentation.label == "Player" {
+        format!("P{}", slot.player_number)
+    } else if let Some(position) = slot.presentation.position.as_deref()
+        && !position.trim().is_empty()
+        && !slot.presentation.label.contains(position)
+    {
+        format!("{position} {}", slot.presentation.label)
+    } else {
+        slot.presentation.label.clone()
+    }
 }
 
 fn describe_claimed_slot(label: &str, state: &str, slot: &PlayerSlot) -> String {
@@ -1357,12 +1370,14 @@ mod tests {
                 state: PlayerSlotState::Occupied,
                 seat_id: Some("windows-seat-1".to_owned()),
                 lease_expires_unix_ms: Some(123),
+                presentation: control_protocol::PlayerSlotPresentation::default(),
             },
             PlayerSlot {
                 player_number: 2,
                 state: PlayerSlotState::Open,
                 seat_id: None,
                 lease_expires_unix_ms: None,
+                presentation: control_protocol::PlayerSlotPresentation::default(),
             },
         ];
 
@@ -1370,6 +1385,24 @@ mod tests {
             describe_player_slots(&slots),
             "P1 occupied by windows-seat-1; P2 open"
         );
+    }
+
+    #[test]
+    fn active_session_slots_use_presentation_labels_when_available() {
+        let slots = vec![PlayerSlot {
+            player_number: 2,
+            state: PlayerSlotState::Open,
+            seat_id: None,
+            lease_expires_unix_ms: None,
+            presentation: control_protocol::PlayerSlotPresentation {
+                label: "Donatello".to_owned(),
+                position: Some("P2".to_owned()),
+                character: Some("Donatello".to_owned()),
+                artwork_path: None,
+            },
+        }];
+
+        assert_eq!(describe_player_slots(&slots), "P2 Donatello open");
     }
 
     #[test]
@@ -1490,6 +1523,7 @@ mod tests {
             state: PlayerSlotState::Open,
             seat_id: None,
             lease_expires_unix_ms: None,
+            presentation: control_protocol::PlayerSlotPresentation::default(),
         };
 
         assert!(slot_is_joinable_by_seat(&slot, "windows-seat-2"));
@@ -1502,6 +1536,7 @@ mod tests {
             state: PlayerSlotState::Disconnected,
             seat_id: Some("windows-seat-2".to_owned()),
             lease_expires_unix_ms: Some(123),
+            presentation: control_protocol::PlayerSlotPresentation::default(),
         };
 
         assert!(slot_is_joinable_by_seat(&slot, "windows-seat-2"));
@@ -1515,6 +1550,7 @@ mod tests {
             state: PlayerSlotState::Occupied,
             seat_id: Some("windows-seat-1".to_owned()),
             lease_expires_unix_ms: Some(123),
+            presentation: control_protocol::PlayerSlotPresentation::default(),
         };
 
         assert!(!slot_is_joinable_by_seat(&slot, "windows-seat-2"));
@@ -1663,12 +1699,14 @@ mod tests {
                     state: PlayerSlotState::Occupied,
                     seat_id: Some("windows-seat-1".to_owned()),
                     lease_expires_unix_ms: Some(123),
+                    presentation: control_protocol::PlayerSlotPresentation::default(),
                 },
                 PlayerSlot {
                     player_number: 2,
                     state: PlayerSlotState::Open,
                     seat_id: None,
                     lease_expires_unix_ms: None,
+                    presentation: control_protocol::PlayerSlotPresentation::default(),
                 },
             ],
             active_spectator_count,
