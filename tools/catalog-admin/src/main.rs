@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf, process};
 
-use control_protocol::{CatalogGameList, GameMetadata, UpdateGameMetadataRequest};
+use control_protocol::{CatalogGame, CatalogGameList, GameMetadata, UpdateGameMetadataRequest};
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,11 @@ enum Command {
         input: PathBuf,
     },
     ValidateAssets,
+    SeedPlaceholders {
+        asset_root: PathBuf,
+        update_metadata: bool,
+        overwrite: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +77,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Export { output } => export_metadata(&client, &config.control_plane_url, output)?,
         Command::Import { input } => import_metadata(&client, &config.control_plane_url, input)?,
         Command::ValidateAssets => validate_assets(&client, &config.control_plane_url)?,
+        Command::SeedPlaceholders {
+            asset_root,
+            update_metadata,
+            overwrite,
+        } => seed_placeholders(
+            &client,
+            &config.control_plane_url,
+            asset_root,
+            update_metadata,
+            overwrite,
+        )?,
     }
     Ok(())
 }
@@ -251,6 +267,136 @@ fn validate_assets(
     }
 }
 
+fn seed_placeholders(
+    client: &Client,
+    control_plane_url: &str,
+    asset_root: PathBuf,
+    update_metadata: bool,
+    overwrite: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    let game_count = catalog.games.len();
+    let mut written = 0usize;
+    let mut skipped = 0usize;
+    let mut metadata_updates = 0usize;
+    for game in catalog.games {
+        let paths = conventional_asset_paths(&game.id);
+        let media_dir = asset_root.join("media").join(&game.id);
+        fs::create_dir_all(&media_dir)?;
+        for (kind, relative_path) in &paths {
+            let full_path = asset_root.join(relative_path);
+            if full_path.exists() && !overwrite {
+                skipped += 1;
+                continue;
+            }
+            let svg = placeholder_svg(&game, kind);
+            fs::write(&full_path, svg)?;
+            written += 1;
+        }
+        if update_metadata {
+            let mut metadata = game.metadata;
+            apply_placeholder_paths(&mut metadata, &paths, overwrite);
+            client
+                .put(format!(
+                    "{control_plane_url}/api/v1/games/{}/metadata",
+                    game.id
+                ))
+                .json(&UpdateGameMetadataRequest { metadata })
+                .send()?
+                .error_for_status()?;
+            metadata_updates += 1;
+        }
+    }
+    println!(
+        "Seeded placeholder assets for {game_count} game{} in {}: {written} written, {skipped} skipped.",
+        plural(game_count),
+        asset_root.display()
+    );
+    if update_metadata {
+        println!(
+            "Updated metadata paths for {metadata_updates} game{}.",
+            plural(metadata_updates)
+        );
+    } else {
+        println!(
+            "Metadata was not changed. Pass --update-metadata to point games at the placeholder assets."
+        );
+    }
+    Ok(())
+}
+
+fn conventional_asset_paths(game_id: &str) -> [(&'static str, String); 4] {
+    [
+        ("artwork", format!("media/{game_id}/artwork.svg")),
+        ("marquee", format!("media/{game_id}/marquee.svg")),
+        ("screenshot", format!("media/{game_id}/screenshot.svg")),
+        ("logo", format!("media/{game_id}/logo.svg")),
+    ]
+}
+
+fn apply_placeholder_paths(
+    metadata: &mut GameMetadata,
+    paths: &[(&'static str, String); 4],
+    overwrite: bool,
+) {
+    for (kind, path) in paths {
+        match *kind {
+            "artwork" if overwrite || metadata.artwork_path.is_none() => {
+                metadata.artwork_path = Some(path.clone())
+            }
+            "marquee" if overwrite || metadata.marquee_path.is_none() => {
+                metadata.marquee_path = Some(path.clone())
+            }
+            "screenshot" if overwrite || metadata.screenshot_path.is_none() => {
+                metadata.screenshot_path = Some(path.clone())
+            }
+            "logo" if overwrite || metadata.logo_path.is_none() => {
+                metadata.logo_path = Some(path.clone())
+            }
+            _ => {}
+        }
+    }
+}
+
+fn placeholder_svg(game: &CatalogGame, kind: &str) -> String {
+    let title = escape_xml(&game.display_name);
+    let game_id = escape_xml(&game.id);
+    let label = escape_xml(&kind.to_ascii_uppercase());
+    let (width, height, background) = match kind {
+        "marquee" => (640, 160, "#141827"),
+        "screenshot" => (640, 448, "#111827"),
+        "logo" => (512, 256, "#0f172a"),
+        _ => (512, 512, "#1f2937"),
+    };
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="{background}"/>
+  <rect x="16" y="16" width="{inner_width}" height="{inner_height}" rx="18" fill="none" stroke="#38bdf8" stroke-width="4"/>
+  <text x="50%" y="42%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="{title_size}" font-weight="700" fill="#f8fafc">{title}</text>
+  <text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="{label_size}" fill="#93c5fd">4-Play placeholder {label}</text>
+  <text x="50%" y="76%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#64748b">{game_id}</text>
+</svg>
+"##,
+        inner_width = width - 32,
+        inner_height = height - 32,
+        title_size = if width >= 640 { 36 } else { 30 },
+        label_size = if width >= 640 { 24 } else { 20 },
+    )
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 fn asset_references(metadata: &GameMetadata) -> Vec<(&'static str, &str)> {
     let mut references = Vec::new();
     if let Some(path) = metadata.artwork_path.as_deref() {
@@ -347,7 +493,8 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
         return Err(
-            "missing command: list, show, set, export, import, or validate-assets".to_owned(),
+            "missing command: list, show, set, export, import, validate-assets, or seed-placeholders"
+                .to_owned(),
         );
     };
     match command {
@@ -375,8 +522,34 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
             }
             Ok(Command::ValidateAssets)
         }
+        "seed-placeholders" => parse_seed_placeholders(&values[1..]),
         _ => Err(format!("unknown command: {command}")),
     }
+}
+
+fn parse_seed_placeholders(values: &[String]) -> Result<Command, String> {
+    let mut asset_root = None;
+    let mut update_metadata = false;
+    let mut overwrite = false;
+    let mut index = 0;
+    while index < values.len() {
+        match values[index].as_str() {
+            "--asset-root" => {
+                index += 1;
+                let path = values.get(index).ok_or("--asset-root requires a path")?;
+                asset_root = Some(PathBuf::from(path));
+            }
+            "--update-metadata" => update_metadata = true,
+            "--overwrite" => overwrite = true,
+            option => return Err(format!("unknown seed-placeholders option: {option}")),
+        }
+        index += 1;
+    }
+    Ok(Command::SeedPlaceholders {
+        asset_root: asset_root.ok_or("seed-placeholders requires --asset-root <path>")?,
+        update_metadata,
+        overwrite,
+    })
 }
 
 fn parse_export_output(values: &[String]) -> Result<Option<PathBuf>, String> {
@@ -501,6 +674,7 @@ fn usage() -> ! {
   catalog-admin --control-plane <url> [--api-token <token>] export [--output <path>]
   catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
   catalog-admin --control-plane <url> [--api-token <token>] validate-assets
+  catalog-admin --control-plane <url> [--api-token <token>] seed-placeholders --asset-root <path> [--update-metadata] [--overwrite]
 
 Metadata options:
   --sort-title <text>
@@ -615,6 +789,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_seed_placeholders_command() {
+        let command = parse_command(&[
+            "seed-placeholders".to_owned(),
+            "--asset-root".to_owned(),
+            "assets/cache".to_owned(),
+            "--update-metadata".to_owned(),
+            "--overwrite".to_owned(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::SeedPlaceholders {
+                asset_root,
+                update_metadata,
+                overwrite,
+            } => {
+                assert_eq!(asset_root, PathBuf::from("assets/cache"));
+                assert!(update_metadata);
+                assert!(overwrite);
+            }
+            _ => panic!("expected seed-placeholders command"),
+        }
+    }
+
+    #[test]
     fn asset_references_list_metadata_media_paths() {
         let metadata = GameMetadata {
             artwork_path: Some("media/tmnt/artwork.png".to_owned()),
@@ -632,6 +831,59 @@ mod tests {
                 ("logo_path", "media/tmnt/logo.png"),
             ]
         );
+    }
+
+    #[test]
+    fn conventional_asset_paths_use_game_id_directories() {
+        assert_eq!(
+            conventional_asset_paths("tmnt"),
+            [
+                ("artwork", "media/tmnt/artwork.svg".to_owned()),
+                ("marquee", "media/tmnt/marquee.svg".to_owned()),
+                ("screenshot", "media/tmnt/screenshot.svg".to_owned()),
+                ("logo", "media/tmnt/logo.svg".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn placeholder_paths_only_replace_existing_metadata_when_overwriting() {
+        let paths = conventional_asset_paths("tmnt");
+        let mut metadata = GameMetadata {
+            artwork_path: Some("custom/artwork.png".to_owned()),
+            ..GameMetadata::default()
+        };
+
+        apply_placeholder_paths(&mut metadata, &paths, false);
+
+        assert_eq!(metadata.artwork_path.as_deref(), Some("custom/artwork.png"));
+        assert_eq!(
+            metadata.marquee_path.as_deref(),
+            Some("media/tmnt/marquee.svg")
+        );
+
+        apply_placeholder_paths(&mut metadata, &paths, true);
+
+        assert_eq!(
+            metadata.artwork_path.as_deref(),
+            Some("media/tmnt/artwork.svg")
+        );
+    }
+
+    #[test]
+    fn placeholder_svg_escapes_game_titles() {
+        let game = CatalogGame {
+            id: "test".to_owned(),
+            display_name: "A&B <Game>".to_owned(),
+            rom_name: "test".to_owned(),
+            metadata: GameMetadata::default(),
+            availability: Vec::new(),
+        };
+
+        let svg = placeholder_svg(&game, "marquee");
+
+        assert!(svg.contains("A&amp;B &lt;Game&gt;"));
+        assert!(svg.contains("4-Play placeholder MARQUEE"));
     }
 
     #[test]

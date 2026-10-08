@@ -128,13 +128,24 @@ cargo run -p catalog-admin -- `
   --control-plane http://192.168.20.68:8080 `
   --api-token <admin-or-seat-api-token> `
   validate-assets
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  seed-placeholders `
+  --asset-root /opt/4play/assets `
+  --update-metadata
 ```
 
 This CLI is an interim admin module. Exported metadata files use a stable
 `games[]` JSON shape so administrators can back up metadata, bulk edit it, and
 eventually seed a graphical admin interface that uses the same metadata
 endpoints. `validate-assets` checks every artwork, marquee, screenshot, and
-logo path against the configured local asset endpoint.
+logo path against the configured local asset endpoint. `seed-placeholders`
+creates copyright-safe SVG placeholders under the asset root using the
+conventional `media/<game-id>/` layout, and can optionally update metadata to
+point at those files. Scrapers can later replace those placeholder files with
+provider-sourced media without changing the catalog schema.
 
 ## Validation
 

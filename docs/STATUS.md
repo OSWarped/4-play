@@ -131,6 +131,9 @@ Last updated: 2026-10-04
   backups through the control-plane API
 - `catalog-admin validate-assets` checks metadata artwork, marquee,
   screenshot, and logo paths against the configured local asset endpoint
+- `catalog-admin seed-placeholders` can initialize the local asset cache with
+  copyright-safe SVG placeholders and optional metadata links using the
+  `media/<game-id>/` convention
 - the seat client browsing list now uses editable metadata for stable
   presentation order, genre/year/manufacturer/player details, and media badges
 - the control plane can serve a safe read-only local artwork/media cache from
