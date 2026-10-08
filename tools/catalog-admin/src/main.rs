@@ -1,6 +1,8 @@
 use std::{env, fs, path::PathBuf, process};
 
-use control_protocol::{CatalogGame, CatalogGameList, GameMetadata, UpdateGameMetadataRequest};
+use control_protocol::{
+    CatalogGame, CatalogGameList, GameMetadata, GamePlayerSlotMetadata, UpdateGameMetadataRequest,
+};
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -13,6 +15,11 @@ enum Command {
     Set {
         game_id: String,
         edits: Vec<MetadataEdit>,
+    },
+    SetSlot {
+        game_id: String,
+        player_number: u32,
+        edits: Vec<PlayerSlotEdit>,
     },
     Export {
         output: Option<PathBuf>,
@@ -41,6 +48,15 @@ enum MetadataEdit {
     ScreenshotPath(Option<String>),
     LogoPath(Option<String>),
     ControlNotes(Option<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlayerSlotEdit {
+    Label(Option<String>),
+    Position(Option<String>),
+    Character(Option<String>),
+    ArtworkPath(Option<String>),
+    Remove,
 }
 
 struct Config {
@@ -74,6 +90,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Set { game_id, edits } => {
             update_metadata(&client, &config.control_plane_url, &game_id, &edits)?
         }
+        Command::SetSlot {
+            game_id,
+            player_number,
+            edits,
+        } => update_slot_metadata(
+            &client,
+            &config.control_plane_url,
+            &game_id,
+            player_number,
+            &edits,
+        )?,
         Command::Export { output } => export_metadata(&client, &config.control_plane_url, output)?,
         Command::Import { input } => import_metadata(&client, &config.control_plane_url, input)?,
         Command::ValidateAssets => validate_assets(&client, &config.control_plane_url)?,
@@ -140,6 +167,27 @@ fn update_metadata(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut metadata = fetch_metadata(client, control_plane_url, game_id)?;
     apply_edits(&mut metadata, edits);
+    let game = client
+        .put(format!(
+            "{control_plane_url}/api/v1/games/{game_id}/metadata"
+        ))
+        .json(&UpdateGameMetadataRequest { metadata })
+        .send()?
+        .error_for_status()?
+        .json::<serde_json::Value>()?;
+    println!("{}", serde_json::to_string_pretty(&game)?);
+    Ok(())
+}
+
+fn update_slot_metadata(
+    client: &Client,
+    control_plane_url: &str,
+    game_id: &str,
+    player_number: u32,
+    edits: &[PlayerSlotEdit],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut metadata = fetch_metadata(client, control_plane_url, game_id)?;
+    apply_slot_edits(&mut metadata, player_number, edits);
     let game = client
         .put(format!(
             "{control_plane_url}/api/v1/games/{game_id}/metadata"
@@ -411,6 +459,11 @@ fn asset_references(metadata: &GameMetadata) -> Vec<(&'static str, &str)> {
     if let Some(path) = metadata.logo_path.as_deref() {
         references.push(("logo_path", path));
     }
+    for slot in &metadata.player_slots {
+        if let Some(path) = slot.artwork_path.as_deref() {
+            references.push(("player_slot.artwork_path", path));
+        }
+    }
     references
 }
 
@@ -493,7 +546,7 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
         return Err(
-            "missing command: list, show, set, export, import, validate-assets, or seed-placeholders"
+            "missing command: list, show, set, set-slot, export, import, validate-assets, or seed-placeholders"
                 .to_owned(),
         );
     };
@@ -510,6 +563,26 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Set { game_id, edits })
         }
+        "set-slot" => {
+            let game_id = values
+                .get(1)
+                .cloned()
+                .ok_or("set-slot requires a game id")?;
+            let player_number = values
+                .get(2)
+                .ok_or("set-slot requires a player number")?
+                .parse::<u32>()
+                .map_err(|error| format!("invalid set-slot player number: {error}"))?;
+            let edits = parse_slot_edits(&values[3..])?;
+            if edits.is_empty() {
+                return Err("set-slot requires at least one slot option".to_owned());
+            }
+            Ok(Command::SetSlot {
+                game_id,
+                player_number,
+                edits,
+            })
+        }
         "export" => Ok(Command::Export {
             output: parse_export_output(&values[1..])?,
         }),
@@ -524,6 +597,52 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
         }
         "seed-placeholders" => parse_seed_placeholders(&values[1..]),
         _ => Err(format!("unknown command: {command}")),
+    }
+}
+
+fn parse_slot_edits(values: &[String]) -> Result<Vec<PlayerSlotEdit>, String> {
+    let mut edits = Vec::new();
+    let mut index = 0;
+    while index < values.len() {
+        let option = values[index].as_str();
+        if option == "--remove" {
+            edits.push(PlayerSlotEdit::Remove);
+            index += 1;
+            continue;
+        }
+        if option == "--clear" {
+            index += 1;
+            let field = values
+                .get(index)
+                .ok_or("--clear requires a slot field name")?;
+            edits.push(clear_slot_edit(field)?);
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let raw_value = values
+            .get(index)
+            .cloned()
+            .ok_or_else(|| format!("{option} requires a value"))?;
+        edits.push(match option {
+            "--label" => PlayerSlotEdit::Label(Some(raw_value)),
+            "--position" => PlayerSlotEdit::Position(Some(raw_value)),
+            "--character" => PlayerSlotEdit::Character(Some(raw_value)),
+            "--artwork-path" => PlayerSlotEdit::ArtworkPath(Some(raw_value)),
+            _ => return Err(format!("unknown set-slot option: {option}")),
+        });
+        index += 1;
+    }
+    Ok(edits)
+}
+
+fn clear_slot_edit(field: &str) -> Result<PlayerSlotEdit, String> {
+    match field {
+        "label" => Ok(PlayerSlotEdit::Label(None)),
+        "position" => Ok(PlayerSlotEdit::Position(None)),
+        "character" => Ok(PlayerSlotEdit::Character(None)),
+        "artwork-path" => Ok(PlayerSlotEdit::ArtworkPath(None)),
+        _ => Err(format!("unknown slot clear field: {field}")),
     }
 }
 
@@ -665,12 +784,52 @@ fn apply_edits(metadata: &mut GameMetadata, edits: &[MetadataEdit]) {
     }
 }
 
+fn apply_slot_edits(metadata: &mut GameMetadata, player_number: u32, edits: &[PlayerSlotEdit]) {
+    if edits
+        .iter()
+        .any(|edit| matches!(edit, PlayerSlotEdit::Remove))
+    {
+        metadata
+            .player_slots
+            .retain(|slot| slot.player_number != player_number);
+        return;
+    }
+    let index = metadata
+        .player_slots
+        .iter()
+        .position(|slot| slot.player_number == player_number);
+    if index.is_none() {
+        metadata.player_slots.push(GamePlayerSlotMetadata {
+            player_number,
+            label: None,
+            position: None,
+            character: None,
+            artwork_path: None,
+        });
+    }
+    let slot = metadata
+        .player_slots
+        .iter_mut()
+        .find(|slot| slot.player_number == player_number)
+        .expect("slot metadata was just inserted when missing");
+    for edit in edits {
+        match edit {
+            PlayerSlotEdit::Label(value) => slot.label = value.clone(),
+            PlayerSlotEdit::Position(value) => slot.position = value.clone(),
+            PlayerSlotEdit::Character(value) => slot.character = value.clone(),
+            PlayerSlotEdit::ArtworkPath(value) => slot.artwork_path = value.clone(),
+            PlayerSlotEdit::Remove => {}
+        }
+    }
+}
+
 fn usage() -> ! {
     eprintln!(
         "Usage:
   catalog-admin --control-plane <url> [--api-token <token>] list
   catalog-admin --control-plane <url> [--api-token <token>] show <game-id>
   catalog-admin --control-plane <url> [--api-token <token>] set <game-id> [metadata options]
+  catalog-admin --control-plane <url> [--api-token <token>] set-slot <game-id> <player-number> [slot options]
   catalog-admin --control-plane <url> [--api-token <token>] export [--output <path>]
   catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
   catalog-admin --control-plane <url> [--api-token <token>] validate-assets
@@ -689,6 +848,14 @@ Metadata options:
   --logo-path <relative-path>
   --control-notes <text>
   --clear <field-name>
+
+Slot options:
+  --label <text>
+  --position <text>
+  --character <text>
+  --artwork-path <relative-path>
+  --clear <label|position|character|artwork-path>
+  --remove
 
 Environment:
   FOURPLAY_CONTROL_PLANE_URL
@@ -789,6 +956,66 @@ mod tests {
     }
 
     #[test]
+    fn parses_set_slot_command() {
+        let command = parse_command(&[
+            "set-slot".to_owned(),
+            "tmnt".to_owned(),
+            "2".to_owned(),
+            "--label".to_owned(),
+            "Donatello".to_owned(),
+            "--position".to_owned(),
+            "P2".to_owned(),
+            "--artwork-path".to_owned(),
+            "media/tmnt/p2.svg".to_owned(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::SetSlot {
+                game_id,
+                player_number,
+                edits,
+            } => {
+                assert_eq!(game_id, "tmnt");
+                assert_eq!(player_number, 2);
+                assert_eq!(
+                    edits,
+                    vec![
+                        PlayerSlotEdit::Label(Some("Donatello".to_owned())),
+                        PlayerSlotEdit::Position(Some("P2".to_owned())),
+                        PlayerSlotEdit::ArtworkPath(Some("media/tmnt/p2.svg".to_owned())),
+                    ]
+                );
+            }
+            _ => panic!("expected set-slot command"),
+        }
+    }
+
+    #[test]
+    fn applies_slot_edits_and_removes_slot_metadata() {
+        let mut metadata = GameMetadata::default();
+
+        apply_slot_edits(
+            &mut metadata,
+            2,
+            &[
+                PlayerSlotEdit::Label(Some("Donatello".to_owned())),
+                PlayerSlotEdit::Position(Some("P2".to_owned())),
+                PlayerSlotEdit::Character(Some("Donatello".to_owned())),
+            ],
+        );
+
+        assert_eq!(metadata.player_slots.len(), 1);
+        assert_eq!(metadata.player_slots[0].player_number, 2);
+        assert_eq!(metadata.player_slots[0].label.as_deref(), Some("Donatello"));
+        assert_eq!(metadata.player_slots[0].position.as_deref(), Some("P2"));
+
+        apply_slot_edits(&mut metadata, 2, &[PlayerSlotEdit::Remove]);
+
+        assert!(metadata.player_slots.is_empty());
+    }
+
+    #[test]
     fn parses_seed_placeholders_command() {
         let command = parse_command(&[
             "seed-placeholders".to_owned(),
@@ -820,6 +1047,13 @@ mod tests {
             marquee_path: Some("media/tmnt/marquee.png".to_owned()),
             screenshot_path: None,
             logo_path: Some("media/tmnt/logo.png".to_owned()),
+            player_slots: vec![GamePlayerSlotMetadata {
+                player_number: 2,
+                label: Some("Donatello".to_owned()),
+                position: Some("P2".to_owned()),
+                character: Some("Donatello".to_owned()),
+                artwork_path: Some("media/tmnt/p2.svg".to_owned()),
+            }],
             ..GameMetadata::default()
         };
 
@@ -829,6 +1063,7 @@ mod tests {
                 ("artwork_path", "media/tmnt/artwork.png"),
                 ("marquee_path", "media/tmnt/marquee.png"),
                 ("logo_path", "media/tmnt/logo.png"),
+                ("player_slot.artwork_path", "media/tmnt/p2.svg"),
             ]
         );
     }

@@ -115,6 +115,17 @@ pub struct GameMetadata {
     pub screenshot_path: Option<String>,
     pub logo_path: Option<String>,
     pub control_notes: Option<String>,
+    #[serde(default)]
+    pub player_slots: Vec<GamePlayerSlotMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GamePlayerSlotMetadata {
+    pub player_number: u32,
+    pub label: Option<String>,
+    pub position: Option<String>,
+    pub character: Option<String>,
+    pub artwork_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -340,10 +351,10 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, GameMetadata, GameRuntimeProfile, PlayerSlot, PlayerSlotPresentation,
-        PlayerSlotState, PreviewStatus, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus,
-        ServiceStatus, SessionState, SessionSummary, SpectatorGrant, StatusResponse,
-        UpdateGameMetadataRequest,
+        API_VERSION, ApiInfo, GameMetadata, GamePlayerSlotMetadata, GameRuntimeProfile, PlayerSlot,
+        PlayerSlotPresentation, PlayerSlotState, PreviewStatus, RuntimeHost,
+        RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
+        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
     };
 
     #[test]
@@ -468,6 +479,13 @@ mod tests {
                 screenshot_path: Some("media/tmnt/screen.png".to_owned()),
                 logo_path: Some("media/tmnt/logo.png".to_owned()),
                 control_notes: Some("Jump and attack.".to_owned()),
+                player_slots: vec![GamePlayerSlotMetadata {
+                    player_number: 2,
+                    label: Some("Donatello".to_owned()),
+                    position: Some("P2".to_owned()),
+                    character: Some("Donatello".to_owned()),
+                    artwork_path: Some("media/tmnt/p2.svg".to_owned()),
+                }],
             },
         };
 
@@ -475,6 +493,8 @@ mod tests {
         assert_eq!(value["metadata"]["player_count"], 4);
         assert_eq!(value["metadata"]["marquee_path"], "media/tmnt/marquee.png");
         assert_eq!(value["metadata"]["release_year"], 1989);
+        assert_eq!(value["metadata"]["player_slots"][0]["player_number"], 2);
+        assert_eq!(value["metadata"]["player_slots"][0]["label"], "Donatello");
     }
 
     #[test]

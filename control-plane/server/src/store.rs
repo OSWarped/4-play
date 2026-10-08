@@ -639,6 +639,7 @@ impl RuntimeHostStore {
                     runtime_profile.max_players,
                     &request.seat_id,
                     grant_expires_unix_ms,
+                    &metadata,
                 )) {
                     Ok(value) => value,
                     Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
@@ -1607,17 +1608,19 @@ fn initial_player_slots(
     max_players: u32,
     seat_id: &str,
     lease_expires_unix_ms: u64,
+    metadata: &GameMetadata,
 ) -> Vec<PlayerSlot> {
     let slot_count = max_players.max(1);
     (1..=slot_count)
         .map(|player_number| {
+            let presentation = player_slot_presentation(player_number, metadata);
             if player_number == 1 {
                 PlayerSlot {
                     player_number,
                     state: PlayerSlotState::Occupied,
                     seat_id: Some(seat_id.to_owned()),
                     lease_expires_unix_ms: Some(lease_expires_unix_ms),
-                    presentation: default_player_slot_presentation(player_number),
+                    presentation,
                 }
             } else {
                 PlayerSlot {
@@ -1625,20 +1628,39 @@ fn initial_player_slots(
                     state: PlayerSlotState::Open,
                     seat_id: None,
                     lease_expires_unix_ms: None,
-                    presentation: default_player_slot_presentation(player_number),
+                    presentation,
                 }
             }
         })
         .collect()
 }
 
-fn default_player_slot_presentation(player_number: u32) -> PlayerSlotPresentation {
-    PlayerSlotPresentation {
+fn player_slot_presentation(player_number: u32, metadata: &GameMetadata) -> PlayerSlotPresentation {
+    let mut presentation = PlayerSlotPresentation {
         label: format!("Player {player_number}"),
         position: Some(format!("P{player_number}")),
         character: None,
         artwork_path: None,
+    };
+    if let Some(slot) = metadata
+        .player_slots
+        .iter()
+        .find(|slot| slot.player_number == player_number)
+    {
+        if let Some(label) = slot.label.as_deref() {
+            presentation.label = label.to_owned();
+        }
+        if slot.position.is_some() {
+            presentation.position = slot.position.clone();
+        }
+        if slot.character.is_some() {
+            presentation.character = slot.character.clone();
+        }
+        if slot.artwork_path.is_some() {
+            presentation.artwork_path = slot.artwork_path.clone();
+        }
     }
+    presentation
 }
 
 fn expire_slot_leases(slots: &mut [PlayerSlot], now_unix_ms: u64) {

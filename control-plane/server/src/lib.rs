@@ -863,6 +863,41 @@ fn validate_game_metadata(metadata: &GameMetadata) -> Result<(), ApiError> {
             validate_asset_path(field, value)?;
         }
     }
+    let mut seen_player_numbers = Vec::new();
+    for slot in &metadata.player_slots {
+        if slot.player_number == 0 || slot.player_number > 16 {
+            return Err(ApiError::bad_request(
+                "invalid_player_slot",
+                "player slot metadata player_number must be between 1 and 16",
+            ));
+        }
+        if seen_player_numbers.contains(&slot.player_number) {
+            return Err(ApiError::bad_request(
+                "duplicate_player_slot",
+                "player slot metadata must not contain duplicate player_number values",
+            ));
+        }
+        seen_player_numbers.push(slot.player_number);
+        for (field, value, max_len) in [
+            ("player_slot.label", slot.label.as_deref(), 128),
+            ("player_slot.position", slot.position.as_deref(), 64),
+            ("player_slot.character", slot.character.as_deref(), 128),
+        ] {
+            if let Some(value) = value
+                && (value.trim().is_empty()
+                    || value.len() > max_len
+                    || value.chars().any(char::is_control))
+            {
+                return Err(ApiError::bad_request(
+                    "invalid_player_slot",
+                    &format!("{field} must be nonempty text up to {max_len} bytes"),
+                ));
+            }
+        }
+        if let Some(path) = slot.artwork_path.as_deref() {
+            validate_asset_path("player_slot.artwork_path", path)?;
+        }
+    }
     Ok(())
 }
 
@@ -1532,6 +1567,79 @@ mod tests {
             summaries["sessions"][0]["preview_status"],
             "artwork_available"
         );
+    }
+
+    #[tokio::test]
+    async fn game_metadata_can_label_player_slots_for_new_sessions() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (update_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/games/tmnt/metadata",
+            Some(json!({
+                "metadata": {
+                    "player_count": 4,
+                    "player_slots": [
+                        {
+                            "player_number": 2,
+                            "label": "Donatello",
+                            "position": "P2",
+                            "character": "Donatello",
+                            "artwork_path": "media/tmnt/p2.svg"
+                        }
+                    ]
+                }
+            })),
+        )
+        .await;
+        assert_eq!(update_status, 200);
+
+        let (_, created) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+
+        assert_eq!(
+            created["player_slots"][1]["presentation"]["label"],
+            "Donatello"
+        );
+        assert_eq!(created["player_slots"][1]["presentation"]["position"], "P2");
+        assert_eq!(
+            created["player_slots"][1]["presentation"]["character"],
+            "Donatello"
+        );
+        assert_eq!(
+            created["player_slots"][1]["presentation"]["artwork_path"],
+            "media/tmnt/p2.svg"
+        );
+    }
+
+    #[tokio::test]
+    async fn game_metadata_rejects_invalid_player_slot_metadata() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+
+        let (status, error) = request_json(
+            service,
+            Method::PUT,
+            "/api/v1/games/tmnt/metadata",
+            Some(json!({
+                "metadata": {
+                    "player_slots": [
+                        { "player_number": 2, "label": "P2" },
+                        { "player_number": 2, "label": "Duplicate" }
+                    ]
+                }
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 400);
+        assert_eq!(error["code"], "duplicate_player_slot");
     }
 
     #[tokio::test]
