@@ -1,8 +1,9 @@
-use std::{env, process};
+use std::{env, fs, path::PathBuf, process};
 
 use control_protocol::{CatalogGameList, GameMetadata, UpdateGameMetadataRequest};
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
 
 enum Command {
     List,
@@ -12,6 +13,12 @@ enum Command {
     Set {
         game_id: String,
         edits: Vec<MetadataEdit>,
+    },
+    Export {
+        output: Option<PathBuf>,
+    },
+    Import {
+        input: PathBuf,
     },
 }
 
@@ -36,6 +43,19 @@ struct Config {
     command: Command,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MetadataExport {
+    games: Vec<MetadataExportGame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MetadataExportGame {
+    id: String,
+    display_name: Option<String>,
+    rom_name: Option<String>,
+    metadata: GameMetadata,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = parse_args(env::args().collect()).unwrap_or_else(|error| {
         eprintln!("Error: {error}\n");
@@ -48,6 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Set { game_id, edits } => {
             update_metadata(&client, &config.control_plane_url, &game_id, &edits)?
         }
+        Command::Export { output } => export_metadata(&client, &config.control_plane_url, output)?,
+        Command::Import { input } => import_metadata(&client, &config.control_plane_url, input)?,
     }
     Ok(())
 }
@@ -109,6 +131,70 @@ fn update_metadata(
         .error_for_status()?
         .json::<serde_json::Value>()?;
     println!("{}", serde_json::to_string_pretty(&game)?);
+    Ok(())
+}
+
+fn export_metadata(
+    client: &Client,
+    control_plane_url: &str,
+    output: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    let export = MetadataExport {
+        games: catalog
+            .games
+            .into_iter()
+            .map(|game| MetadataExportGame {
+                id: game.id,
+                display_name: Some(game.display_name),
+                rom_name: Some(game.rom_name),
+                metadata: game.metadata,
+            })
+            .collect(),
+    };
+    let json = serde_json::to_string_pretty(&export)?;
+    if let Some(path) = output {
+        fs::write(&path, format!("{json}\n"))?;
+        println!(
+            "Exported metadata for {} games to {}",
+            export.games.len(),
+            path.display()
+        );
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
+fn import_metadata(
+    client: &Client,
+    control_plane_url: &str,
+    input: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let raw = fs::read_to_string(&input)?;
+    let export: MetadataExport = serde_json::from_str(&raw)?;
+    let mut updated = 0usize;
+    for game in export.games {
+        client
+            .put(format!(
+                "{control_plane_url}/api/v1/games/{}/metadata",
+                game.id
+            ))
+            .json(&UpdateGameMetadataRequest {
+                metadata: game.metadata,
+            })
+            .send()?
+            .error_for_status()?;
+        updated += 1;
+    }
+    println!(
+        "Imported metadata for {updated} games from {}",
+        input.display()
+    );
     Ok(())
 }
 
@@ -174,7 +260,7 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
-        return Err("missing command: list, show, or set".to_owned());
+        return Err("missing command: list, show, set, export, or import".to_owned());
     };
     match command {
         "list" => Ok(Command::List),
@@ -189,8 +275,48 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Set { game_id, edits })
         }
+        "export" => Ok(Command::Export {
+            output: parse_export_output(&values[1..])?,
+        }),
+        "import" => Ok(Command::Import {
+            input: parse_import_input(&values[1..])?,
+        }),
         _ => Err(format!("unknown command: {command}")),
     }
+}
+
+fn parse_export_output(values: &[String]) -> Result<Option<PathBuf>, String> {
+    let mut output = None;
+    let mut index = 0;
+    while index < values.len() {
+        match values[index].as_str() {
+            "--output" => {
+                index += 1;
+                let path = values.get(index).ok_or("--output requires a path")?;
+                output = Some(PathBuf::from(path));
+            }
+            option => return Err(format!("unknown export option: {option}")),
+        }
+        index += 1;
+    }
+    Ok(output)
+}
+
+fn parse_import_input(values: &[String]) -> Result<PathBuf, String> {
+    let mut input = None;
+    let mut index = 0;
+    while index < values.len() {
+        match values[index].as_str() {
+            "--input" => {
+                index += 1;
+                let path = values.get(index).ok_or("--input requires a path")?;
+                input = Some(PathBuf::from(path));
+            }
+            option => return Err(format!("unknown import option: {option}")),
+        }
+        index += 1;
+    }
+    input.ok_or("import requires --input <path>".to_owned())
 }
 
 fn parse_edits(values: &[String]) -> Result<Vec<MetadataEdit>, String> {
@@ -278,6 +404,8 @@ fn usage() -> ! {
   catalog-admin --control-plane <url> [--api-token <token>] list
   catalog-admin --control-plane <url> [--api-token <token>] show <game-id>
   catalog-admin --control-plane <url> [--api-token <token>] set <game-id> [metadata options]
+  catalog-admin --control-plane <url> [--api-token <token>] export [--output <path>]
+  catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
 
 Metadata options:
   --sort-title <text>
@@ -345,5 +473,60 @@ mod tests {
             clear_edit("unknown").unwrap_err(),
             "unknown clear field: unknown"
         );
+    }
+
+    #[test]
+    fn parses_export_output_path() {
+        let command = parse_command(&[
+            "export".to_owned(),
+            "--output".to_owned(),
+            "metadata.json".to_owned(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::Export { output } => {
+                assert_eq!(output, Some(PathBuf::from("metadata.json")));
+            }
+            _ => panic!("expected export command"),
+        }
+    }
+
+    #[test]
+    fn parses_import_input_path() {
+        let command = parse_command(&[
+            "import".to_owned(),
+            "--input".to_owned(),
+            "metadata.json".to_owned(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::Import { input } => {
+                assert_eq!(input, PathBuf::from("metadata.json"));
+            }
+            _ => panic!("expected import command"),
+        }
+    }
+
+    #[test]
+    fn round_trips_metadata_export_payload() {
+        let export = MetadataExport {
+            games: vec![MetadataExportGame {
+                id: "tmnt".to_owned(),
+                display_name: Some("Teenage Mutant Ninja Turtles".to_owned()),
+                rom_name: Some("tmnt".to_owned()),
+                metadata: GameMetadata {
+                    genre: Some("Beat 'em up".to_owned()),
+                    player_count: Some(4),
+                    ..GameMetadata::default()
+                },
+            }],
+        };
+
+        let json = serde_json::to_string(&export).unwrap();
+        let parsed: MetadataExport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed, export);
     }
 }

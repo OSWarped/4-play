@@ -91,10 +91,22 @@ cargo run -p catalog-admin -- `
   --player-count 4 `
   --genre "Beat 'em up" `
   --marquee-path media/tmnt/marquee.png
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  export --output catalog-metadata.json
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  import --input catalog-metadata.json
 ```
 
-This CLI is an interim admin module. A later graphical admin interface can use
-the same metadata endpoints.
+This CLI is an interim admin module. Exported metadata files use a stable
+`games[]` JSON shape so administrators can back up metadata, bulk edit it, and
+eventually seed a graphical admin interface that uses the same metadata
+endpoints.
 
 ## Validation
 
