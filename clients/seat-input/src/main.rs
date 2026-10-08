@@ -415,12 +415,23 @@ fn active_session_lines(sessions: &[SessionSummary], games: &[CatalogGame]) -> V
                 }
             ));
         }
-        lines.push(format!(
-            "     preview: {}",
-            describe_preview_status(session.preview_status)
-        ));
+        lines.push(format!("     preview: {}", describe_preview(session)));
     }
     lines
+}
+
+fn describe_preview(session: &SessionSummary) -> String {
+    let mut description = describe_preview_status(session.preview_status).to_owned();
+    if let Some(path) = session.preview_asset_path.as_deref() {
+        description.push_str(" at ");
+        description.push_str(path);
+    }
+    if let Some(updated_unix_ms) = session.preview_updated_unix_ms {
+        description.push_str(" updated ");
+        description.push_str(&updated_unix_ms.to_string());
+        description.push_str(" ms");
+    }
+    description
 }
 
 fn describe_preview_status(status: PreviewStatus) -> &'static str {
@@ -1510,6 +1521,26 @@ mod tests {
                 "  1. aliens (aliens) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
                 "     preview: spectator available".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn active_session_lines_include_preview_asset_details_when_available() {
+        let mut session = sample_session("tmnt", 0);
+        session.preview_status = PreviewStatus::StillAvailable;
+        session.preview_asset_path = Some("previews/session-one.bmp".to_owned());
+        session.preview_updated_unix_ms = Some(123_456);
+
+        let lines = active_session_lines(&[session], &[]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  1. tmnt (tmnt) on reference-linux [Active]".to_owned(),
+                "     P1 occupied by windows-seat-1; P2 open".to_owned(),
+                "     preview: still preview available at previews/session-one.bmp updated 123456 ms"
+                    .to_owned(),
             ]
         );
     }
