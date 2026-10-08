@@ -129,6 +129,8 @@ Last updated: 2026-10-04
 - `catalog-admin` provides an interim command-line admin module for listing
   games, showing metadata, updating metadata, and importing/exporting metadata
   backups through the control-plane API
+- `catalog-admin validate-assets` checks metadata artwork, marquee,
+  screenshot, and logo paths against the configured local asset endpoint
 - the seat client browsing list now uses editable metadata for stable
   presentation order, genre/year/manufacturer/player details, and media badges
 - the control plane can serve a safe read-only local artwork/media cache from

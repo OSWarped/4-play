@@ -20,6 +20,7 @@ enum Command {
     Import {
         input: PathBuf,
     },
+    ValidateAssets,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Export { output } => export_metadata(&client, &config.control_plane_url, output)?,
         Command::Import { input } => import_metadata(&client, &config.control_plane_url, input)?,
+        Command::ValidateAssets => validate_assets(&client, &config.control_plane_url)?,
     }
     Ok(())
 }
@@ -198,6 +200,90 @@ fn import_metadata(
     Ok(())
 }
 
+fn validate_assets(
+    client: &Client,
+    control_plane_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    let mut checked = 0usize;
+    let mut missing = Vec::new();
+    for game in catalog.games {
+        for (field, asset_path) in asset_references(&game.metadata) {
+            checked += 1;
+            let url = format!(
+                "{control_plane_url}/api/v1/assets/{}",
+                percent_encode_asset_path(asset_path)
+            );
+            let response = client.get(url).send()?;
+            if response.status().is_success() {
+                println!("ok      {} {field} {asset_path}", game.id);
+            } else {
+                println!(
+                    "missing {} {field} {asset_path} ({})",
+                    game.id,
+                    response.status()
+                );
+                missing.push(format!("{} {field} {asset_path}", game.id));
+            }
+        }
+    }
+    if checked == 0 {
+        println!("No metadata asset paths to validate.");
+        return Ok(());
+    }
+    if missing.is_empty() {
+        println!(
+            "Validated {checked} metadata asset path{}.",
+            plural(checked)
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "{} of {checked} metadata asset path{} failed validation",
+            missing.len(),
+            plural(checked)
+        )
+        .into())
+    }
+}
+
+fn asset_references(metadata: &GameMetadata) -> Vec<(&'static str, &str)> {
+    let mut references = Vec::new();
+    if let Some(path) = metadata.artwork_path.as_deref() {
+        references.push(("artwork_path", path));
+    }
+    if let Some(path) = metadata.marquee_path.as_deref() {
+        references.push(("marquee_path", path));
+    }
+    if let Some(path) = metadata.screenshot_path.as_deref() {
+        references.push(("screenshot_path", path));
+    }
+    if let Some(path) = metadata.logo_path.as_deref() {
+        references.push(("logo_path", path));
+    }
+    references
+}
+
+fn percent_encode_asset_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~' | b'/') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
 fn fetch_metadata(
     client: &Client,
     control_plane_url: &str,
@@ -260,7 +346,9 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
-        return Err("missing command: list, show, set, export, or import".to_owned());
+        return Err(
+            "missing command: list, show, set, export, import, or validate-assets".to_owned(),
+        );
     };
     match command {
         "list" => Ok(Command::List),
@@ -281,6 +369,12 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
         "import" => Ok(Command::Import {
             input: parse_import_input(&values[1..])?,
         }),
+        "validate-assets" => {
+            if values.len() > 1 {
+                return Err("validate-assets does not accept options".to_owned());
+            }
+            Ok(Command::ValidateAssets)
+        }
         _ => Err(format!("unknown command: {command}")),
     }
 }
@@ -406,6 +500,7 @@ fn usage() -> ! {
   catalog-admin --control-plane <url> [--api-token <token>] set <game-id> [metadata options]
   catalog-admin --control-plane <url> [--api-token <token>] export [--output <path>]
   catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
+  catalog-admin --control-plane <url> [--api-token <token>] validate-assets
 
 Metadata options:
   --sort-title <text>
@@ -507,6 +602,44 @@ mod tests {
             }
             _ => panic!("expected import command"),
         }
+    }
+
+    #[test]
+    fn parses_validate_assets_command() {
+        let command = parse_command(&["validate-assets".to_owned()]).unwrap();
+
+        match command {
+            Command::ValidateAssets => {}
+            _ => panic!("expected validate-assets command"),
+        }
+    }
+
+    #[test]
+    fn asset_references_list_metadata_media_paths() {
+        let metadata = GameMetadata {
+            artwork_path: Some("media/tmnt/artwork.png".to_owned()),
+            marquee_path: Some("media/tmnt/marquee.png".to_owned()),
+            screenshot_path: None,
+            logo_path: Some("media/tmnt/logo.png".to_owned()),
+            ..GameMetadata::default()
+        };
+
+        assert_eq!(
+            asset_references(&metadata),
+            vec![
+                ("artwork_path", "media/tmnt/artwork.png"),
+                ("marquee_path", "media/tmnt/marquee.png"),
+                ("logo_path", "media/tmnt/logo.png"),
+            ]
+        );
+    }
+
+    #[test]
+    fn asset_paths_are_percent_encoded_for_urls() {
+        assert_eq!(
+            percent_encode_asset_path("media/TMNT marquee #1.png"),
+            "media/TMNT%20marquee%20%231.png"
+        );
     }
 
     #[test]

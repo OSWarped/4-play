@@ -123,12 +123,18 @@ cargo run -p catalog-admin -- `
   --control-plane http://192.168.20.68:8080 `
   --api-token <admin-or-seat-api-token> `
   import --input catalog-metadata.json
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  validate-assets
 ```
 
 This CLI is an interim admin module. Exported metadata files use a stable
 `games[]` JSON shape so administrators can back up metadata, bulk edit it, and
 eventually seed a graphical admin interface that uses the same metadata
-endpoints.
+endpoints. `validate-assets` checks every artwork, marquee, screenshot, and
+logo path against the configured local asset endpoint.
 
 ## Validation
 
