@@ -13,9 +13,73 @@ samples_directory="$results_directory/samples"
 strict_smoke_path="$results_directory/strict-smoke.txt"
 diagnostics_err_path="$results_directory/diagnostics.err"
 
-if [[ ! -f "$summary_path" ]]; then
-    printf 'summary.tsv not found in %s\n' "$results_directory" >&2
-    exit 2
+write_summary_from_samples() {
+    python3 - "$results_directory" "$summary_path" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+summary_path = pathlib.Path(sys.argv[2])
+samples = sorted((root / "samples").glob("*-sessions.json"))
+terminal_states = {"stopped", "allocation_failed", "launch_failed", "runtime_lost", "terminated"}
+
+with summary_path.open("w", encoding="utf-8") as output:
+    print("sample\tactive_sessions\tactive_states\tterminal_history\truntime_hosts", file=output)
+    for sessions_path in samples:
+        sample_id = sessions_path.name.split("-", 1)[0]
+        hosts_path = sessions_path.with_name(f"{sample_id}-runtime-hosts.json")
+        active_count = 0
+        active_states = "none"
+        terminal_history = "none"
+        try:
+            sessions = json.loads(sessions_path.read_text(encoding="utf-8")).get("sessions", [])
+        except Exception as error:
+            active_states = f"sessions_error:{error}"
+        else:
+            active = [
+                session for session in sessions
+                if session.get("state") not in terminal_states
+            ]
+            active_count = len(active)
+            active_state_counts = {}
+            terminal_state_counts = {}
+            for session in active:
+                state = session.get("state", "unknown")
+                active_state_counts[state] = active_state_counts.get(state, 0) + 1
+            for session in sessions:
+                state = session.get("state", "unknown")
+                if state in terminal_states:
+                    terminal_state_counts[state] = terminal_state_counts.get(state, 0) + 1
+            active_states = ",".join(
+                f"{state}:{count}" for state, count in sorted(active_state_counts.items())
+            ) or "none"
+            terminal_history = ",".join(
+                f"{state}:{count}" for state, count in sorted(terminal_state_counts.items())
+            ) or "none"
+        try:
+            host_payload = json.loads(hosts_path.read_text(encoding="utf-8"))
+            hosts = host_payload.get("hosts", host_payload.get("runtime_hosts", []))
+        except Exception as error:
+            host_summary = f"hosts_error:{error}"
+        else:
+            host_summary = ",".join(
+                f"{host.get('id')}:{host.get('status')}" for host in hosts
+            ) or "none"
+        print(
+            f"{sample_id}\t{active_count}\t{active_states}\t{terminal_history}\t{host_summary}",
+            file=output,
+        )
+PY
+}
+
+if [[ ! -f "$summary_path" ]] || [[ "$(wc -l <"$summary_path")" -le 1 ]]; then
+    if [[ -d "$samples_directory" ]]; then
+        write_summary_from_samples
+    else
+        printf 'summary.tsv and samples directory not found in %s\n' "$results_directory" >&2
+        exit 2
+    fi
 fi
 
 printf 'Phase 3 soak report: %s\n' "$results_directory"
