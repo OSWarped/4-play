@@ -96,6 +96,7 @@ run sh -c "ps -ef | grep -E 'control-plane-server|runtime-host-agent|session-run
 
 section "recent service journal"
 run journalctl \
+    -q \
     -u 4play-control-plane.service \
     -u 4play-runtime-host-agent.service \
     --no-pager \
