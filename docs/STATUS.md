@@ -168,6 +168,8 @@ Last updated: 2026-10-04
   manual testing
 - available-game listings now expose the selected primary image asset and
   authenticated asset URL when catalog metadata includes media paths
+- available-game listings now also show compact description and control-note
+  summaries from editable catalog metadata
 
 ## Not started
 

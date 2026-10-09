@@ -627,6 +627,12 @@ fn available_game_lines(games: &[CatalogGame], control_plane_url: &str) -> Vec<S
         if !details.is_empty() {
             lines.push(format!("     {}", details.join(" • ")));
         }
+        if let Some(description) = game_summary_line(game.metadata.description.as_deref()) {
+            lines.push(format!("     about: {description}"));
+        }
+        if let Some(control_notes) = game_summary_line(game.metadata.control_notes.as_deref()) {
+            lines.push(format!("     controls: {control_notes}"));
+        }
         let media = game_media_badges(&game.metadata);
         if !media.is_empty() {
             lines.push(format!("     media: {}", media.join(", ")));
@@ -661,6 +667,24 @@ fn game_detail_parts(game: &CatalogGame) -> Vec<String> {
         ));
     }
     details
+}
+
+fn game_summary_line(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut summary = value.replace(['\r', '\n', '\t'], " ");
+    while summary.contains("  ") {
+        summary = summary.replace("  ", " ");
+    }
+    const MAX_CHARS: usize = 120;
+    if summary.chars().count() <= MAX_CHARS {
+        return Some(summary);
+    }
+    let mut truncated: String = summary.chars().take(MAX_CHARS - 1).collect();
+    truncated.push('…');
+    Some(truncated)
 }
 
 fn effective_player_count(game: &CatalogGame) -> Option<u32> {
@@ -1515,6 +1539,8 @@ mod tests {
             release_year: Some(1989),
             manufacturer: Some("Konami".to_owned()),
             player_count: Some(4),
+            description: Some("Four-player arcade beat 'em up.".to_owned()),
+            control_notes: Some("Jump and attack together for special moves.".to_owned()),
             marquee_path: Some("media/tmnt/marquee.png".to_owned()),
             screenshot_path: Some("media/tmnt/screenshot.png".to_owned()),
             ..GameMetadata::default()
@@ -1527,6 +1553,8 @@ mod tests {
             vec![
                 "  1. Teenage Mutant Ninja Turtles (tmnt)".to_owned(),
                 "     Beat 'em up • 1989 • Konami • 4 players".to_owned(),
+                "     about: Four-player arcade beat 'em up.".to_owned(),
+                "     controls: Jump and attack together for special moves.".to_owned(),
                 "     media: marquee, screenshot".to_owned(),
                 "     primary image: media/tmnt/screenshot.png (http://control.test/api/v1/assets/media/tmnt/screenshot.png)"
                     .to_owned(),
@@ -1566,6 +1594,19 @@ mod tests {
             primary_game_asset_path(&metadata),
             Some("media/tmnt/screenshot.png")
         );
+    }
+
+    #[test]
+    fn game_summary_lines_are_single_line_and_truncated() {
+        let summary = game_summary_line(Some(
+            "First line.\nSecond line with\tspacing that should be normalized before truncation because this description is intentionally long.",
+        ))
+        .unwrap();
+
+        assert!(!summary.contains('\n'));
+        assert!(!summary.contains('\t'));
+        assert!(summary.ends_with('…'));
+        assert_eq!(summary.chars().count(), 120);
     }
 
     #[test]
