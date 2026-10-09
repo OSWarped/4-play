@@ -33,16 +33,16 @@ section "repository and binaries"
 run git -C "$repository_root" rev-parse --short HEAD
 run git -C "$repository_root" status --short
 if [[ -x "$repository_root/target/release/control-plane-server" ]]; then
-    run "$repository_root/target/release/control-plane-server" --version
+    run ls -lh "$repository_root/target/release/control-plane-server"
 fi
 if [[ -x "$repository_root/target/release/runtime-host-agent" ]]; then
-    run "$repository_root/target/release/runtime-host-agent" --version
+    run ls -lh "$repository_root/target/release/runtime-host-agent"
 fi
 if [[ -x "$repository_root/target/release/session-runtime" ]]; then
-    run "$repository_root/target/release/session-runtime" --version
+    run ls -lh "$repository_root/target/release/session-runtime"
 fi
 if [[ -x "$repository_root/target/release/seat-input" ]]; then
-    run "$repository_root/target/release/seat-input" --version
+    run ls -lh "$repository_root/target/release/seat-input"
 fi
 
 section "reference environment"
