@@ -11,7 +11,7 @@ function Get-4PlaySetting {
     [Parameter(Mandatory = $true)]
     [string] $Name,
 
-    [Parameter(Mandatory = $true)]
+    [AllowEmptyString()]
     [string] $Default
   )
 
