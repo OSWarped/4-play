@@ -667,6 +667,91 @@ fn known_metadata_defaults(game_id: &str) -> Option<&'static KnownMetadataDefaul
             control_notes: "Move with the stick; use attack and jump buttons.",
             player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
         }),
+        "altbeast" => Some(&KnownMetadataDefaults {
+            game_id: "altbeast",
+            sort_title: "Altered Beast",
+            description: "Side-scrolling mythological beat 'em up where warriors power up into beasts.",
+            genre: "Beat 'em up",
+            release_year: 1988,
+            manufacturer: "Sega",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack and jump actions as mapped.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "avspu" => Some(&KnownMetadataDefaults {
+            game_id: "avspu",
+            sort_title: "Alien vs. Predator",
+            description: "Capcom arcade beat 'em up featuring marines and predators battling xenomorphs.",
+            genre: "Beat 'em up",
+            release_year: 1994,
+            manufacturer: "Capcom",
+            player_count: 3,
+            control_notes: "Move with the stick; use attack, jump, and special actions as mapped.",
+            player_slots: &[
+                (1, "Player 1", "P1", None),
+                (2, "Player 2", "P2", None),
+                (3, "Player 3", "P3", None),
+            ],
+        }),
+        "dino" => Some(&KnownMetadataDefaults {
+            game_id: "dino",
+            sort_title: "Cadillacs and Dinosaurs",
+            description: "Three-player Capcom beat 'em up with brawling, vehicles, and dinosaurs.",
+            genre: "Beat 'em up",
+            release_year: 1993,
+            manufacturer: "Capcom",
+            player_count: 3,
+            control_notes: "Move with the stick; use attack, jump, and special actions as mapped.",
+            player_slots: &[
+                (1, "Player 1", "P1", None),
+                (2, "Player 2", "P2", None),
+                (3, "Player 3", "P3", None),
+            ],
+        }),
+        "dkong" => Some(&KnownMetadataDefaults {
+            game_id: "dkong",
+            sort_title: "Donkey Kong",
+            description: "Classic Nintendo platform game where Mario climbs construction stages to rescue Pauline.",
+            genre: "Platform",
+            release_year: 1981,
+            manufacturer: "Nintendo",
+            player_count: 2,
+            control_notes: "Move with the stick; use jump to clear barrels and hazards.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "dkong3" => Some(&KnownMetadataDefaults {
+            game_id: "dkong3",
+            sort_title: "Donkey Kong 3",
+            description: "Arcade action game where Stanley protects plants by spraying Donkey Kong and insects.",
+            genre: "Shooter",
+            release_year: 1983,
+            manufacturer: "Nintendo",
+            player_count: 2,
+            control_notes: "Move with the stick; use the spray/fire button to attack.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "ffightuc" => Some(&KnownMetadataDefaults {
+            game_id: "ffightuc",
+            sort_title: "Final Fight",
+            description: "Capcom side-scrolling beat 'em up set in Metro City.",
+            genre: "Beat 'em up",
+            release_year: 1989,
+            manufacturer: "Capcom",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack and jump, including combined special attacks.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "goldnaxeud" => Some(&KnownMetadataDefaults {
+            game_id: "goldnaxeud",
+            sort_title: "Golden Axe",
+            description: "Fantasy beat 'em up where warriors battle Death Adder's forces.",
+            genre: "Beat 'em up",
+            release_year: 1989,
+            manufacturer: "Sega",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack, jump, and magic actions as mapped.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
         "kinst" => Some(&KnownMetadataDefaults {
             game_id: "kinst",
             sort_title: "Killer Instinct",
@@ -678,12 +763,55 @@ fn known_metadata_defaults(game_id: &str) -> Option<&'static KnownMetadataDefaul
             control_notes: "Six attack buttons: quick, medium, and fierce punches and kicks.",
             player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
         }),
+        "punisheru" => Some(&KnownMetadataDefaults {
+            game_id: "punisheru",
+            sort_title: "The Punisher",
+            description: "Two-player Capcom beat 'em up starring the Punisher and Nick Fury.",
+            genre: "Beat 'em up",
+            release_year: 1993,
+            manufacturer: "Capcom",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack, jump, and special actions as mapped.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "simpsons" => Some(&KnownMetadataDefaults {
+            game_id: "simpsons",
+            sort_title: "The Simpsons",
+            description: "Four-player Konami arcade beat 'em up starring the Simpson family.",
+            genre: "Beat 'em up",
+            release_year: 1991,
+            manufacturer: "Konami",
+            player_count: 4,
+            control_notes: "Move with the stick; use jump and attack, including team-up moves.",
+            player_slots: &[
+                (1, "Homer", "P1", Some("Homer")),
+                (2, "Marge", "P2", Some("Marge")),
+                (3, "Bart", "P3", Some("Bart")),
+                (4, "Lisa", "P4", Some("Lisa")),
+            ],
+        }),
         "tmnt" => Some(&KnownMetadataDefaults {
             game_id: "tmnt",
             sort_title: "Teenage Mutant Ninja Turtles",
             description: "Four-player arcade beat 'em up featuring the Ninja Turtles.",
             genre: "Beat 'em up",
             release_year: 1989,
+            manufacturer: "Konami",
+            player_count: 4,
+            control_notes: "Move with the stick; jump and attack can be pressed together for special moves.",
+            player_slots: &[
+                (1, "Leonardo", "P1", Some("Leonardo")),
+                (2, "Michelangelo", "P2", Some("Michelangelo")),
+                (3, "Donatello", "P3", Some("Donatello")),
+                (4, "Raphael", "P4", Some("Raphael")),
+            ],
+        }),
+        "tmnt2" => Some(&KnownMetadataDefaults {
+            game_id: "tmnt2",
+            sort_title: "Teenage Mutant Ninja Turtles: Turtles in Time",
+            description: "Four-player Konami beat 'em up sequel that sends the Turtles through time.",
+            genre: "Beat 'em up",
+            release_year: 1991,
             manufacturer: "Konami",
             player_count: 4,
             control_notes: "Move with the stick; jump and attack can be pressed together for special moves.",
@@ -1615,6 +1743,37 @@ mod tests {
         assert_eq!(metadata.player_slots.len(), 4);
         assert_eq!(metadata.player_slots[0].label.as_deref(), Some("Leonardo"));
         assert_eq!(metadata.artwork_path, None);
+    }
+
+    #[test]
+    fn known_metadata_defaults_cover_phase3_reference_catalog() {
+        let game_ids = [
+            "aliens",
+            "altbeast",
+            "avspu",
+            "dino",
+            "dkong",
+            "dkong3",
+            "ffightuc",
+            "goldnaxeud",
+            "kinst",
+            "punisheru",
+            "simpsons",
+            "tmnt",
+            "tmnt2",
+            "wwfmania",
+        ];
+
+        for game_id in game_ids {
+            let defaults = known_metadata_defaults(game_id)
+                .unwrap_or_else(|| panic!("missing known metadata defaults for {game_id}"));
+            assert_eq!(defaults.game_id, game_id);
+            assert!(!defaults.sort_title.trim().is_empty());
+            assert!(!defaults.description.trim().is_empty());
+            assert!(!defaults.genre.trim().is_empty());
+            assert!(!defaults.manufacturer.trim().is_empty());
+            assert_eq!(defaults.player_slots.len(), defaults.player_count as usize);
+        }
     }
 
     #[test]
