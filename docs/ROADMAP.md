@@ -151,6 +151,8 @@ see [the Phase 2 validation record](testing/PHASE-2-SHARED-SESSION-VALIDATION.md
 
 ## Phase 3 — Four-Seat Reference Table
 
+Status: **in progress**.
+
 - four independent seat clients
 - independent and shared play
 - kiosk startup and recovery
@@ -160,6 +162,9 @@ see [the Phase 2 validation record](testing/PHASE-2-SHARED-SESSION-VALIDATION.md
 - soak and abuse testing
 
 **Exit:** the reference table operates for an extended session with predictable recovery.
+
+Initial operations guidance lives in
+[Phase 3 Reference Table Operations](operations/PHASE-3-REFERENCE-TABLE.md).
 
 ## Phase 4 — Multiple Runtime Hosts and Emulators
 

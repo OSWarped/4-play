@@ -1,0 +1,19 @@
+[Unit]
+Description=4-Play control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blake
+Group=blake
+WorkingDirectory=/home/blake/src/4-play
+EnvironmentFile=/etc/4play/4play.env
+ExecStart=/home/blake/src/4-play/target/release/control-plane-server
+Restart=on-failure
+RestartSec=2
+StateDirectory=4play
+
+[Install]
+WantedBy=multi-user.target
+

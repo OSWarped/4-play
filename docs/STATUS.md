@@ -179,10 +179,12 @@ Last updated: 2026-10-09
 - Windows manual validation confirmed seat 1 start, seat 2 join, independent
   player controls, active-session browser rendering, spectator mode, and normal
   browsing recovery after stop
+- Phase 3 reference-table work has begun with initial operations guidance,
+  systemd unit templates, a shared server environment template, four Windows
+  seat launchers, and a Linux diagnostics script
 
 ## Not started
 
-- Phase 3 four-seat reference-table hardening
 - lower-bitrate preview streams distinct from full-quality spectator media
 
 ## Next milestone

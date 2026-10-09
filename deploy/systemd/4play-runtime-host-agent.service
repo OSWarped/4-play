@@ -1,0 +1,19 @@
+[Unit]
+Description=4-Play runtime host agent
+After=network-online.target 4play-control-plane.service
+Wants=network-online.target
+Requires=4play-control-plane.service
+
+[Service]
+Type=simple
+User=blake
+Group=blake
+WorkingDirectory=/home/blake/src/4-play
+EnvironmentFile=/etc/4play/4play.env
+ExecStart=/home/blake/src/4-play/target/release/runtime-host-agent
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+
