@@ -107,25 +107,35 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 samples = sorted((root / "samples").glob("*-sessions.json"))
-print("sample\tactive_sessions\tsession_states\truntime_hosts")
+terminal_states = {"stopped", "allocation_failed", "launch_failed", "runtime_lost", "terminated"}
+print("sample\tactive_sessions\tactive_states\tterminal_history\truntime_hosts")
 for sessions_path in samples:
     sample_id = sessions_path.name.split("-", 1)[0]
     hosts_path = sessions_path.with_name(f"{sample_id}-runtime-hosts.json")
     active_count = 0
+    active_states = "none"
+    terminal_history = "none"
     try:
         sessions = json.loads(sessions_path.read_text(encoding="utf-8")).get("sessions", [])
     except Exception as error:
-        session_states = f"sessions_error:{error}"
+        active_states = f"sessions_error:{error}"
     else:
         active = [
             session for session in sessions
-            if session.get("state") not in {"stopped", "allocation_failed", "launch_failed", "runtime_lost", "terminated"}
+            if session.get("state") not in terminal_states
         ]
         active_count = len(active)
-        state_counts = {}
+        active_state_counts = {}
+        terminal_state_counts = {}
+        for session in active:
+            state = session.get("state", "unknown")
+            active_state_counts[state] = active_state_counts.get(state, 0) + 1
         for session in sessions:
-            state_counts[session.get("state", "unknown")] = state_counts.get(session.get("state", "unknown"), 0) + 1
-        session_states = ",".join(f"{state}:{count}" for state, count in sorted(state_counts.items())) or "none"
+            state = session.get("state", "unknown")
+            if state in terminal_states:
+                terminal_state_counts[state] = terminal_state_counts.get(state, 0) + 1
+        active_states = ",".join(f"{state}:{count}" for state, count in sorted(active_state_counts.items())) or "none"
+        terminal_history = ",".join(f"{state}:{count}" for state, count in sorted(terminal_state_counts.items())) or "none"
     try:
         host_payload = json.loads(hosts_path.read_text(encoding="utf-8"))
         hosts = host_payload.get("hosts", host_payload.get("runtime_hosts", []))
@@ -133,7 +143,7 @@ for sessions_path in samples:
         host_summary = f"hosts_error:{error}"
     else:
         host_summary = ",".join(f"{host.get('id')}:{host.get('status')}" for host in hosts) or "none"
-    print(f"{sample_id}\t{active_count}\t{session_states}\t{host_summary}")
+    print(f"{sample_id}\t{active_count}\t{active_states}\t{terminal_history}\t{host_summary}")
 PY
 }
 
