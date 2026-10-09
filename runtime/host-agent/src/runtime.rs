@@ -18,6 +18,7 @@ pub struct RuntimeAdapterConfig {
     pub preview_asset_prefix: String,
     pub preview_interval_ms: u64,
     pub preview_enabled: bool,
+    pub startup_media_timeout_seconds: u64,
 }
 
 impl RuntimeAdapterConfig {
@@ -49,6 +50,11 @@ impl RuntimeAdapterConfig {
             .unwrap_or(1_000);
         let preview_enabled =
             preview_enabled_value(std::env::var("FOURPLAY_PREVIEW_ENABLED").ok().as_deref());
+        let startup_media_timeout_seconds = std::env::var("FOURPLAY_STARTUP_MEDIA_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|seconds| (1..=300).contains(seconds))
+            .unwrap_or(30);
         Self {
             session_runtime_path,
             mame_path: mame_path.into(),
@@ -58,6 +64,7 @@ impl RuntimeAdapterConfig {
             preview_asset_prefix,
             preview_interval_ms,
             preview_enabled,
+            startup_media_timeout_seconds,
         }
     }
 }
@@ -178,6 +185,8 @@ impl RuntimeSupervisor {
             .arg(&self.config.mame_path)
             .arg("--mame-ini-path")
             .arg(&self.config.mame_ini_path)
+            .arg("--startup-media-timeout-seconds")
+            .arg(self.config.startup_media_timeout_seconds.to_string())
             .arg("--status-file")
             .arg(&status_file)
             .stdin(Stdio::null())

@@ -74,6 +74,14 @@ site-specific catalog has been created:
 FOURPLAY_CATALOG_PATH=/home/blake/src/4-play/catalog/test-catalog.json
 ```
 
+Some arcade titles perform longer self-tests or show startup warnings before
+raw media begins flowing. Keep the startup media watchdog long enough for the
+expanded catalog:
+
+```text
+FOURPLAY_STARTUP_MEDIA_TIMEOUT_SECONDS=30
+```
+
 ## Windows seat startup target
 
 Windows launchers are provided in `deploy/windows/`:

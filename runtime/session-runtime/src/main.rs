@@ -48,6 +48,7 @@ struct RuntimeArgs {
     audio_codec: AudioCodec,
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
+    startup_media_timeout_seconds: u64,
     preview_image_path: Option<PathBuf>,
     preview_interval_ms: u64,
     mame_path: PathBuf,
@@ -95,6 +96,7 @@ fn print_usage(program: &str) {
     [--audio-codec <aac|opus>] \
     [--audio-block-ms <milliseconds>] \
     [--audio-thread-queue-size <packets>] \
+    [--startup-media-timeout-seconds <seconds>] \
     [--preview-image-path <path>] \
     [--preview-interval-ms <milliseconds>] \
     [--mame-path <path>] \
@@ -155,6 +157,7 @@ fn parse_args() -> RuntimeArgs {
     let mut audio_codec = AudioCodec::Aac;
     let mut audio_block_ms = 20;
     let mut audio_thread_queue_size = 64;
+    let mut startup_media_timeout_seconds = 30;
     let mut preview_image_path = None;
     let mut preview_interval_ms = 1_000;
     let mut mame_path = PathBuf::from("/home/blake/src/mame-4play/mame");
@@ -245,6 +248,12 @@ fn parse_args() -> RuntimeArgs {
                     "--audio-thread-queue-size",
                 );
             }
+            "--startup-media-timeout-seconds" => {
+                startup_media_timeout_seconds = parse_value(
+                    require_value(&mut args, "--startup-media-timeout-seconds"),
+                    "--startup-media-timeout-seconds",
+                );
+            }
             "--preview-image-path" => {
                 preview_image_path = Some(PathBuf::from(require_value(
                     &mut args,
@@ -297,6 +306,7 @@ fn parse_args() -> RuntimeArgs {
         audio_codec,
         audio_block_ms,
         audio_thread_queue_size,
+        startup_media_timeout_seconds,
         preview_image_path,
         preview_interval_ms,
         mame_path,
@@ -329,6 +339,11 @@ fn parse_args() -> RuntimeArgs {
 
     if !(1..=100).contains(&parsed.audio_block_ms) {
         eprintln!("--audio-block-ms must be between 1 and 100.");
+        process::exit(2);
+    }
+
+    if !(1..=300).contains(&parsed.startup_media_timeout_seconds) {
+        eprintln!("--startup-media-timeout-seconds must be between 1 and 300.");
         process::exit(2);
     }
 
@@ -437,7 +452,12 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     session.state = session::SessionState::LaunchingEmulator;
     let mut mame = MameProcess::spawn(&mame_config)?;
     session.state = session::SessionState::Running;
-    wait_for_runtime_ready(&bridge, &mut mame, &mut encoder)?;
+    wait_for_runtime_ready(
+        &bridge,
+        &mut mame,
+        &mut encoder,
+        Duration::from_secs(args.startup_media_timeout_seconds),
+    )?;
     write_runtime_status(runtime_status_file.as_deref(), "active")?;
     let mut child_failure = None;
 
@@ -511,6 +531,7 @@ fn wait_for_runtime_ready(
     bridge: &MediaBridge,
     mame: &mut MameProcess,
     encoder: &mut EncoderProcess,
+    timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     while !bridge.is_ready() {
@@ -526,10 +547,13 @@ fn wait_for_runtime_ready(
             ))
             .into());
         }
-        if started.elapsed() >= Duration::from_secs(10) {
+        if started.elapsed() >= timeout {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "session runtime did not receive video and audio within 10 seconds",
+                format!(
+                    "session runtime did not receive video and audio within {} seconds",
+                    timeout.as_secs()
+                ),
             )
             .into());
         }
