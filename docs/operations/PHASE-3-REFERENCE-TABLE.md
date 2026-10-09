@@ -98,6 +98,16 @@ cd ~/src/4-play
 tools/phase-3-systemd-smoke.sh
 ```
 
+By default, the smoke check warns rather than fails when sessions are currently
+active or when the expanded catalog has incomplete presentation metadata. For a
+clean-idle gate, use:
+
+```bash
+FOURPLAY_PHASE3_STRICT_IDLE=1 \
+FOURPLAY_PHASE3_STRICT_METADATA=1 \
+tools/phase-3-systemd-smoke.sh
+```
+
 Run this on the Linux server:
 
 ```bash

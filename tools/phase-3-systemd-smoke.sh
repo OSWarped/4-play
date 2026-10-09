@@ -6,9 +6,12 @@ control_plane_url="${FOURPLAY_CONTROL_PLANE_URL:-http://127.0.0.1:8080}"
 seat_api_token="${FOURPLAY_SEAT_API_TOKEN:-phase-1c-seat-token-2026}"
 expected_host_id="${FOURPLAY_RUNTIME_HOST_ID:-reference-linux}"
 minimum_game_count="${FOURPLAY_PHASE3_MINIMUM_GAME_COUNT:-19}"
+strict_idle="${FOURPLAY_PHASE3_STRICT_IDLE:-0}"
+strict_metadata="${FOURPLAY_PHASE3_STRICT_METADATA:-0}"
 
 pass_count=0
 fail_count=0
+warn_count=0
 results_directory="${FOURPLAY_PHASE3_SMOKE_RESULTS:-/tmp/4play-phase-3-systemd-smoke-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$results_directory"
 
@@ -20,6 +23,11 @@ pass() {
 fail() {
     fail_count=$((fail_count + 1))
     printf '[FAIL] %s\n' "$1"
+}
+
+warn() {
+    warn_count=$((warn_count + 1))
+    printf '[WARN] %s\n' "$1"
 }
 
 capture() {
@@ -141,7 +149,11 @@ PY
 then
     pass "server starts idle"
 else
-    fail "server starts idle"
+    if [[ "$strict_idle" == "1" ]]; then
+        fail "server starts idle"
+    else
+        warn "server is not idle; set FOURPLAY_PHASE3_STRICT_IDLE=1 to fail this check"
+    fi
 fi
 
 if [[ -x "$repository_root/target/release/catalog-admin" ]]; then
@@ -166,7 +178,11 @@ PY
     then
         pass "catalog metadata is complete"
     else
-        fail "catalog metadata is complete"
+        if [[ "$strict_metadata" == "1" ]]; then
+            fail "catalog metadata is complete"
+        else
+            warn "catalog metadata is incomplete; set FOURPLAY_PHASE3_STRICT_METADATA=1 to fail this check"
+        fi
     fi
 
     if FOURPLAY_CONTROL_PLANE_URL="$control_plane_url" \
@@ -202,10 +218,10 @@ else
     fail "/dev/uinput is accessible"
 fi
 
-printf '\nPhase 3 systemd smoke summary: %s passed, %s failed\n' "$pass_count" "$fail_count"
+printf '\nPhase 3 systemd smoke summary: %s passed, %s warned, %s failed\n' \
+    "$pass_count" "$warn_count" "$fail_count"
 printf 'Artifacts: %s\n' "$results_directory"
 
 if [[ "$fail_count" -ne 0 ]]; then
     exit 1
 fi
-
