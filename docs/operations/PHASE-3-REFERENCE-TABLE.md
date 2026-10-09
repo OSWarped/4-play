@@ -193,6 +193,14 @@ generates a soak report into one artifact directory. It also writes
 `acceptance-summary.json` so later runs can be compared without scraping the
 terminal output.
 
+To compare two acceptance runs:
+
+```bash
+tools/phase-3-compare-acceptance.py \
+  /tmp/4play-phase-3-acceptance-baseline/acceptance-summary.json \
+  /tmp/4play-phase-3-acceptance-candidate/acceptance-summary.json
+```
+
 Run this on the Linux server:
 
 ```bash
