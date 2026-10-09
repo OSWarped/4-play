@@ -170,6 +170,8 @@ Last updated: 2026-10-04
   authenticated asset URL when catalog metadata includes media paths
 - available-game listings now also show compact description and control-note
   summaries from editable catalog metadata
+- `seat-input --list-only` renders the current active-session and game browser
+  once, then exits for automated validation and kiosk diagnostics
 
 ## Not started
 

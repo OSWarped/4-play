@@ -9,6 +9,7 @@ control_plane_binary="$repository_root/target/release/control-plane-server"
 agent_binary="$repository_root/target/release/runtime-host-agent"
 session_runtime_binary="$repository_root/target/release/session-runtime"
 catalog_admin_binary="$repository_root/target/release/catalog-admin"
+seat_input_binary="$repository_root/target/release/seat-input"
 bind_address="${FOURPLAY_PHASE2_SMOKE_BIND:-127.0.0.1:41820}"
 base_url="http://$bind_address"
 host_id="phase-2-smoke"
@@ -161,7 +162,7 @@ delete_json() {
     curl -fsS -X DELETE -H 'content-type: application/json' --data "$body" "$base_url$path" >"$output_path"
 }
 
-for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary" "$catalog_admin_binary"; do
+for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary" "$catalog_admin_binary" "$seat_input_binary"; do
     if [[ -x "$binary" ]]; then
         pass "release binary exists: $(basename "$binary")"
     else
@@ -283,6 +284,23 @@ if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
     pass "catalog-admin reports complete browser metadata after seeding"
 else
     fail "catalog-admin reports complete browser metadata after seeding"
+fi
+
+seat_browser_output="$results_directory/seat-browser-list.txt"
+if "$seat_input_binary" \
+    --control-plane "$base_url" \
+    --api-token "$seat_api_token" \
+    --seat-id phase-2-browser-seat \
+    --destination-ip 127.0.0.1 \
+    --list-only >"$seat_browser_output" \
+    && grep -Fq 'Available games:' "$seat_browser_output" \
+    && grep -Fq 'about: Four-player arcade beat' "$seat_browser_output" \
+    && grep -Fq 'controls: Move with the stick; jump and attack can be pressed together for special moves.' "$seat_browser_output" \
+    && grep -Fq 'media: artwork, marquee, screenshot, logo' "$seat_browser_output" \
+    && grep -Fq 'primary image: media/tmnt/screenshot.svg' "$seat_browser_output"; then
+    pass "seat browser renders seeded catalog metadata without launching a game"
+else
+    fail "seat browser renders seeded catalog metadata without launching a game"
 fi
 
 create_json="$results_directory/create-session.json"

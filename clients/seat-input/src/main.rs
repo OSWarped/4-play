@@ -39,6 +39,7 @@ struct SeatConfig {
     ffplay_path: String,
     no_media: bool,
     joined_media: bool,
+    list_only: bool,
     play_for: Option<Duration>,
     api_token: String,
     debug_input: bool,
@@ -144,6 +145,10 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
     loop {
         let games = fetch_available_games(&client, &config.control_plane_url)?;
         let sessions = fetch_active_sessions(&client, &config.control_plane_url)?;
+        if config.list_only {
+            print_browse_catalog(&sessions, &games, &config.control_plane_url);
+            return Ok(());
+        }
         let target = if let Some(game_id) = selected_game.take() {
             let game_id = validate_requested_game(&games, game_id)?;
             let session = create_session(&client, &config, &game_id)?;
@@ -548,11 +553,7 @@ fn select_browse_action(
         return Err("no games are currently available on an online runtime host".into());
     }
 
-    print_active_sessions(sessions, games, control_plane_url);
-    println!("\nAvailable games:");
-    for line in available_game_lines(games, control_plane_url) {
-        println!("{line}");
-    }
+    print_browse_catalog(sessions, games, control_plane_url);
     print!("Choose a game number, j<session>.<player>, s<session>, or q to quit: ");
     io::stdout().flush()?;
     let mut selection = String::new();
@@ -596,6 +597,18 @@ fn select_browse_action(
         .get(index.saturating_sub(1))
         .map(|game| BrowseSelection::StartGame(game.id.clone()))
         .ok_or_else(|| "game selection is outside the displayed range".into())
+}
+
+fn print_browse_catalog(
+    sessions: &[SessionSummary],
+    games: &[CatalogGame],
+    control_plane_url: &str,
+) {
+    print_active_sessions(sessions, games, control_plane_url);
+    println!("\nAvailable games:");
+    for line in available_game_lines(games, control_plane_url) {
+        println!("{line}");
+    }
 }
 
 fn sort_games_for_browsing(games: &mut [CatalogGame]) {
@@ -1199,6 +1212,7 @@ fn parse_mode_from(
         .unwrap_or_else(|| "ffplay".to_owned());
     let mut no_media = false;
     let mut joined_media = false;
+    let mut list_only = false;
     let mut play_for = None;
     let mut api_token = environment.api_token;
     let mut debug_input = false;
@@ -1220,6 +1234,7 @@ fn parse_mode_from(
             "--ffplay-path" => ffplay_path = value(&mut index, option)?,
             "--no-media" => no_media = true,
             "--joined-media" => joined_media = true,
+            "--list-only" => list_only = true,
             "--debug-input" => debug_input = true,
             "--api-token" => api_token = Some(value(&mut index, option)?),
             "--play-for-ms" => {
@@ -1271,6 +1286,12 @@ fn parse_mode_from(
             "seat API token must contain at least 16 characters",
         ));
     }
+    if list_only && game_id.is_some() {
+        return Err(ModeError::new(
+            &program,
+            "--list-only cannot be combined with --game",
+        ));
+    }
     Ok(Mode::Orchestrated(SeatConfig {
         control_plane_url: control_plane_url.trim_end_matches('/').to_owned(),
         seat_id,
@@ -1279,6 +1300,7 @@ fn parse_mode_from(
         ffplay_path,
         no_media,
         joined_media,
+        list_only,
         play_for,
         api_token,
         debug_input,
@@ -1292,7 +1314,7 @@ fn usage(program: &str) -> ! {
 
 fn usage_text(program: &str) -> String {
     format!(
-        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--debug-input] [--play-for-ms <milliseconds>]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token; replaces --api-token.\n  FOURPLAY_SEAT_ID            Default seat identity; replaces --seat-id.\n  FOURPLAY_SEAT_ADDRESS       Default seat media destination IP; replaces --destination-ip.\n  FOURPLAY_FFPLAY_PATH        FFplay executable path; replaces --ffplay-path."
+        "Usage:\n  {program} <runtime-address:input-port>\n  {program} --control-plane <url> --destination-ip <seat-ip> [--seat-id <id>] [--api-token <token>] [--game <id>] [--ffplay-path <path>] [--no-media] [--joined-media] [--list-only] [--debug-input] [--play-for-ms <milliseconds>]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token; replaces --api-token.\n  FOURPLAY_SEAT_ID            Default seat identity; replaces --seat-id.\n  FOURPLAY_SEAT_ADDRESS       Default seat media destination IP; replaces --destination-ip.\n  FOURPLAY_FFPLAY_PATH        FFplay executable path; replaces --ffplay-path."
     )
 }
 
@@ -1857,12 +1879,61 @@ mod tests {
         assert_eq!(config.destination_address, IpAddr::from([192, 0, 2, 10]));
         assert_eq!(config.ffplay_path, "ffplay-custom");
         assert_eq!(config.api_token, "phase-1c-seat-token-2026");
+        assert!(!config.list_only);
+    }
+
+    #[test]
+    fn orchestrated_mode_accepts_list_only() {
+        let mode = parse_mode_from(
+            "seat-input".to_owned(),
+            vec![
+                "--control-plane".to_owned(),
+                "http://127.0.0.1:8080".to_owned(),
+                "--destination-ip".to_owned(),
+                "192.0.2.10".to_owned(),
+                "--api-token".to_owned(),
+                "phase-1c-seat-token-2026".to_owned(),
+                "--list-only".to_owned(),
+            ],
+            SeatEnvironment::default(),
+        )
+        .unwrap();
+
+        let Mode::Orchestrated(config) = mode else {
+            panic!("expected orchestrated mode");
+        };
+        assert!(config.list_only);
+    }
+
+    #[test]
+    fn orchestrated_mode_rejects_list_only_with_game() {
+        let error = match parse_mode_from(
+            "seat-input".to_owned(),
+            vec![
+                "--control-plane".to_owned(),
+                "http://127.0.0.1:8080".to_owned(),
+                "--destination-ip".to_owned(),
+                "192.0.2.10".to_owned(),
+                "--api-token".to_owned(),
+                "phase-1c-seat-token-2026".to_owned(),
+                "--list-only".to_owned(),
+                "--game".to_owned(),
+                "tmnt".to_owned(),
+            ],
+            SeatEnvironment::default(),
+        ) {
+            Ok(_) => panic!("expected list-only conflict error"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.message, "--list-only cannot be combined with --game");
     }
 
     #[test]
     fn usage_text_lists_orchestrated_environment_variables() {
         let text = usage_text("seat-input");
 
+        assert!(text.contains("--list-only"));
         assert!(text.contains("FOURPLAY_SEAT_API_TOKEN"));
         assert!(text.contains("FOURPLAY_SEAT_ID"));
         assert!(text.contains("FOURPLAY_SEAT_ADDRESS"));
