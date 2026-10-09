@@ -178,6 +178,19 @@ FOURPLAY_TRUSTED_SOURCE=192.168.20.0/24 \
 tools/phase-3-firewall-plan.sh
 ```
 
+For a compact automated acceptance gate, run:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+tools/phase-3-acceptance-check.sh \
+  --soak-results /tmp/4play-phase-3-soak-20261009-175455-manual
+```
+
+The acceptance check runs strict smoke and, when a soak directory is supplied,
+generates a soak report into one artifact directory.
+
 Run this on the Linux server:
 
 ```bash
