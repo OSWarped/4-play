@@ -154,7 +154,12 @@ fn run_orchestrated(config: SeatConfig) -> Result<(), Box<dyn std::error::Error>
                 stop_session_on_exit: true,
             }
         } else {
-            match select_browse_action(&sessions, &games, &config.seat_id)? {
+            match select_browse_action(
+                &sessions,
+                &games,
+                &config.seat_id,
+                &config.control_plane_url,
+            )? {
                 BrowseSelection::StartGame(game_id) => {
                     let session = create_session(&client, &config, &game_id)?;
                     println!("Session requested: {}", session.id);
@@ -367,13 +372,17 @@ fn fetch_active_sessions(
     Ok(sessions.sessions)
 }
 
-fn print_active_sessions(sessions: &[SessionSummary], games: &[CatalogGame]) {
+fn print_active_sessions(
+    sessions: &[SessionSummary],
+    games: &[CatalogGame],
+    control_plane_url: &str,
+) {
     if sessions.is_empty() {
         return;
     }
 
     println!("\nActive sessions:");
-    for line in active_session_lines(sessions, games) {
+    for line in active_session_lines(sessions, games, control_plane_url) {
         println!("{line}");
     }
     println!(
@@ -384,7 +393,11 @@ fn print_active_sessions(sessions: &[SessionSummary], games: &[CatalogGame]) {
     );
 }
 
-fn active_session_lines(sessions: &[SessionSummary], games: &[CatalogGame]) -> Vec<String> {
+fn active_session_lines(
+    sessions: &[SessionSummary],
+    games: &[CatalogGame],
+    control_plane_url: &str,
+) -> Vec<String> {
     let mut lines = Vec::new();
     for (index, session) in sessions.iter().enumerate() {
         let game_name = games
@@ -415,16 +428,22 @@ fn active_session_lines(sessions: &[SessionSummary], games: &[CatalogGame]) -> V
                 }
             ));
         }
-        lines.push(format!("     preview: {}", describe_preview(session)));
+        lines.push(format!(
+            "     preview: {}",
+            describe_preview(session, control_plane_url)
+        ));
     }
     lines
 }
 
-fn describe_preview(session: &SessionSummary) -> String {
+fn describe_preview(session: &SessionSummary, control_plane_url: &str) -> String {
     let mut description = describe_preview_status(session.preview_status).to_owned();
     if let Some(path) = session.preview_asset_path.as_deref() {
         description.push_str(" at ");
         description.push_str(path);
+        description.push_str(" (");
+        description.push_str(&asset_url(control_plane_url, path));
+        description.push(')');
     }
     if let Some(updated_unix_ms) = session.preview_updated_unix_ms {
         description.push_str(" updated ");
@@ -432,6 +451,26 @@ fn describe_preview(session: &SessionSummary) -> String {
         description.push_str(" ms");
     }
     description
+}
+
+fn asset_url(control_plane_url: &str, asset_path: &str) -> String {
+    format!(
+        "{}/api/v1/assets/{}",
+        control_plane_url.trim_end_matches('/'),
+        percent_encode_asset_path(asset_path)
+    )
+}
+
+fn percent_encode_asset_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn describe_preview_status(status: PreviewStatus) -> &'static str {
@@ -489,12 +528,13 @@ fn select_browse_action(
     sessions: &[SessionSummary],
     games: &[CatalogGame],
     seat_id: &str,
+    control_plane_url: &str,
 ) -> Result<BrowseSelection, Box<dyn std::error::Error>> {
     if games.is_empty() {
         return Err("no games are currently available on an online runtime host".into());
     }
 
-    print_active_sessions(sessions, games);
+    print_active_sessions(sessions, games, control_plane_url);
     println!("\nAvailable games:");
     for line in available_game_lines(games) {
         println!("{line}");
@@ -1424,7 +1464,7 @@ mod tests {
         let session = sample_session("tmnt", 1);
         let games = vec![sample_catalog_game("tmnt", "Teenage Mutant Ninja Turtles")];
 
-        let lines = active_session_lines(&[session], &games);
+        let lines = active_session_lines(&[session], &games, "http://control.test");
 
         assert_eq!(
             lines,
@@ -1496,7 +1536,7 @@ mod tests {
     fn active_session_lines_pluralize_spectator_counts() {
         let session = sample_session("aliens", 2);
 
-        let lines = active_session_lines(&[session], &[]);
+        let lines = active_session_lines(&[session], &[], "http://control.test");
 
         assert_eq!(
             lines,
@@ -1513,7 +1553,7 @@ mod tests {
     fn active_session_lines_omit_zero_spectator_counts() {
         let session = sample_session("aliens", 0);
 
-        let lines = active_session_lines(&[session], &[]);
+        let lines = active_session_lines(&[session], &[], "http://control.test");
 
         assert_eq!(
             lines,
@@ -1532,16 +1572,24 @@ mod tests {
         session.preview_asset_path = Some("previews/session-one.bmp".to_owned());
         session.preview_updated_unix_ms = Some(123_456);
 
-        let lines = active_session_lines(&[session], &[]);
+        let lines = active_session_lines(&[session], &[], "http://control.test");
 
         assert_eq!(
             lines,
             vec![
                 "  1. tmnt (tmnt) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
-                "     preview: still preview available at previews/session-one.bmp updated 123456 ms"
+                "     preview: still preview available at previews/session-one.bmp (http://control.test/api/v1/assets/previews/session-one.bmp) updated 123456 ms"
                     .to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn asset_urls_percent_encode_paths() {
+        assert_eq!(
+            asset_url("http://control.test/", "media/TMNT marquee #1.png"),
+            "http://control.test/api/v1/assets/media/TMNT%20marquee%20%231.png"
         );
     }
 

@@ -157,8 +157,9 @@ Last updated: 2026-10-04
 - `tools/phase-2-shared-session-smoke.sh` provides a repeatable isolated
   shared-session smoke harness for start, join, reconnect, spectate, previews,
   and clean stop
-- the terminal seat browser now shows active-session preview asset paths and
-  preview update timestamps when the control plane provides them
+- the terminal seat browser now shows active-session preview asset paths,
+  authenticated asset URLs, and preview update timestamps when the control
+  plane provides them
 
 ## Not started
 
