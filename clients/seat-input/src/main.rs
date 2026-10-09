@@ -550,7 +550,7 @@ fn select_browse_action(
 
     print_active_sessions(sessions, games, control_plane_url);
     println!("\nAvailable games:");
-    for line in available_game_lines(games) {
+    for line in available_game_lines(games, control_plane_url) {
         println!("{line}");
     }
     print!("Choose a game number, j<session>.<player>, s<session>, or q to quit: ");
@@ -614,7 +614,7 @@ fn game_sort_key(game: &CatalogGame) -> String {
         .to_lowercase()
 }
 
-fn available_game_lines(games: &[CatalogGame]) -> Vec<String> {
+fn available_game_lines(games: &[CatalogGame], control_plane_url: &str) -> Vec<String> {
     let mut lines = Vec::new();
     for (index, game) in games.iter().enumerate() {
         lines.push(format!(
@@ -630,6 +630,13 @@ fn available_game_lines(games: &[CatalogGame]) -> Vec<String> {
         let media = game_media_badges(&game.metadata);
         if !media.is_empty() {
             lines.push(format!("     media: {}", media.join(", ")));
+        }
+        if let Some(primary_asset) = primary_game_asset_path(&game.metadata) {
+            lines.push(format!(
+                "     primary image: {} ({})",
+                primary_asset,
+                asset_url(control_plane_url, primary_asset)
+            ));
         }
     }
     lines
@@ -681,6 +688,15 @@ fn game_media_badges(metadata: &GameMetadata) -> Vec<&'static str> {
         media.push("logo");
     }
     media
+}
+
+fn primary_game_asset_path(metadata: &GameMetadata) -> Option<&str> {
+    metadata
+        .screenshot_path
+        .as_deref()
+        .or(metadata.artwork_path.as_deref())
+        .or(metadata.marquee_path.as_deref())
+        .or(metadata.logo_path.as_deref())
 }
 
 fn slot_is_joinable_by_seat(slot: &PlayerSlot, seat_id: &str) -> bool {
@@ -1504,7 +1520,7 @@ mod tests {
             ..GameMetadata::default()
         };
 
-        let lines = available_game_lines(&[game]);
+        let lines = available_game_lines(&[game], "http://control.test");
 
         assert_eq!(
             lines,
@@ -1512,6 +1528,8 @@ mod tests {
                 "  1. Teenage Mutant Ninja Turtles (tmnt)".to_owned(),
                 "     Beat 'em up • 1989 • Konami • 4 players".to_owned(),
                 "     media: marquee, screenshot".to_owned(),
+                "     primary image: media/tmnt/screenshot.png (http://control.test/api/v1/assets/media/tmnt/screenshot.png)"
+                    .to_owned(),
             ]
         );
     }
@@ -1520,7 +1538,7 @@ mod tests {
     fn available_game_lines_fall_back_to_runtime_player_count() {
         let game = sample_catalog_game("aliens", "Aliens");
 
-        let lines = available_game_lines(&[game]);
+        let lines = available_game_lines(&[game], "http://control.test");
 
         assert_eq!(
             lines,
@@ -1528,6 +1546,25 @@ mod tests {
                 "  1. Aliens (aliens)".to_owned(),
                 "     2 players".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn primary_game_asset_prefers_screenshot_then_artwork() {
+        let mut metadata = GameMetadata {
+            artwork_path: Some("media/tmnt/artwork.png".to_owned()),
+            marquee_path: Some("media/tmnt/marquee.png".to_owned()),
+            ..GameMetadata::default()
+        };
+        assert_eq!(
+            primary_game_asset_path(&metadata),
+            Some("media/tmnt/artwork.png")
+        );
+
+        metadata.screenshot_path = Some("media/tmnt/screenshot.png".to_owned());
+        assert_eq!(
+            primary_game_asset_path(&metadata),
+            Some("media/tmnt/screenshot.png")
         );
     }
 

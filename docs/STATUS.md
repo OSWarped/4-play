@@ -161,6 +161,8 @@ Last updated: 2026-10-04
   authenticated asset URLs, and preview update timestamps when the control
   plane provides them; preview timestamps render as human-readable ages for
   manual testing
+- available-game listings now expose the selected primary image asset and
+  authenticated asset URL when catalog metadata includes media paths
 
 ## Not started
 
