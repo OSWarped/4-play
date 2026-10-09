@@ -199,6 +199,9 @@ Last updated: 2026-10-09
 - Phase 3 soak support now includes `tools/phase-3-soak-monitor.sh`, which
   captures periodic API, process, listener, diagnostics, cleanup, and strict
   smoke artifacts during a manual extended play session
+- a short Phase 3 manual soak rehearsal completed with 19 monitor samples, the
+  reference host online throughout, no sample/diagnostic errors, clean cleanup,
+  and final strict smoke passing with 15 checks
 
 ## Not started
 

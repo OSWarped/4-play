@@ -71,3 +71,37 @@ The remaining Phase 3 checks need physical/runtime observation:
 - physical control panel ergonomics
 - audio routing and isolation at the table
 - recovery behavior during active family/party use
+
+## Manual soak rehearsal
+
+Date: 2026-10-09
+
+Status: **accepted as a short manual soak rehearsal**.
+
+Artifact directory on the Linux server:
+
+```text
+/tmp/4play-phase-3-soak-20261009-175455-manual
+```
+
+Soak report:
+
+```text
+samples=19
+max_active_sessions=1
+host_statuses=reference-linux:online:19
+active_state_samples=active:1:15
+sample_error_files=0
+diagnostics_errors=none
+```
+
+Post-run cleanup found no non-terminal sessions, and final strict Phase 3 smoke
+passed:
+
+```text
+Phase 3 systemd smoke summary: 15 passed, 0 warned, 0 failed
+```
+
+This rehearsal validates the monitor/report/cleanup path around a real manual
+session. A longer family/party session is still useful before declaring the
+physical-table soak complete.
