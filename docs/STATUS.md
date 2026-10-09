@@ -193,6 +193,9 @@ Last updated: 2026-10-09
 - the current reference catalog publishes 14 launchable games with complete
   presentation metadata and placeholder assets; strict server smoke currently
   passes with 15 checks, 0 warnings, and 0 failures
+- Phase 3 Windows launchers were manually validated for the four-seat
+  start/join/spectate flow on the reference setup; see
+  `docs/testing/PHASE-3-REFERENCE-TABLE-VALIDATION.md`
 
 ## Not started
 
@@ -200,6 +203,6 @@ Last updated: 2026-10-09
 
 ## Next milestone
 
-Continue Phase 3 with physical-table validation: exercise four real seats,
-confirm physical controls and audio isolation, test recovery during active play,
-and run a longer family/party soak session.
+Continue Phase 3 with a longer physical-table soak: confirm physical controls
+and audio isolation over extended active play, then record recovery behavior
+during normal family/party use.

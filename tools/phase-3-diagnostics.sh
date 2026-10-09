@@ -4,6 +4,8 @@ set -u
 control_plane_url="${FOURPLAY_CONTROL_PLANE_URL:-http://127.0.0.1:8080}"
 seat_api_token="${FOURPLAY_SEAT_API_TOKEN:-phase-1c-seat-token-2026}"
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${FOURPLAY_ENV_FILE:-/etc/4play/4play.env}"
+trusted_source="${FOURPLAY_TRUSTED_SOURCE:-192.168.20.0/24}"
 
 section() {
     printf '\n== %s ==\n' "$1"
@@ -26,6 +28,39 @@ curl_json() {
 section "4-Play Phase 3 diagnostics"
 printf 'repository=%s\n' "$repository_root"
 printf 'control_plane_url=%s\n' "$control_plane_url"
+
+section "repository and binaries"
+run git -C "$repository_root" rev-parse --short HEAD
+run git -C "$repository_root" status --short
+if [[ -x "$repository_root/target/release/control-plane-server" ]]; then
+    run "$repository_root/target/release/control-plane-server" --version
+fi
+if [[ -x "$repository_root/target/release/runtime-host-agent" ]]; then
+    run "$repository_root/target/release/runtime-host-agent" --version
+fi
+if [[ -x "$repository_root/target/release/session-runtime" ]]; then
+    run "$repository_root/target/release/session-runtime" --version
+fi
+if [[ -x "$repository_root/target/release/seat-input" ]]; then
+    run "$repository_root/target/release/seat-input" --version
+fi
+
+section "reference environment"
+printf 'env_file=%s\n' "$env_file"
+if [[ -f "$env_file" ]]; then
+    sed -E 's/(TOKEN|PASSWORD|SECRET)=.*/\1=<redacted>/' "$env_file" || true
+else
+    printf 'environment file not found\n'
+fi
+
+section "firewall plan"
+if [[ -x "$repository_root/tools/phase-3-firewall-plan.sh" ]]; then
+    FOURPLAY_ENV_FILE="$env_file" \
+    FOURPLAY_TRUSTED_SOURCE="$trusted_source" \
+        "$repository_root/tools/phase-3-firewall-plan.sh" || true
+else
+    printf 'firewall planner not found at %s\n' "$repository_root/tools/phase-3-firewall-plan.sh"
+fi
 
 section "systemd services"
 run systemctl --no-pager --full status 4play-control-plane.service

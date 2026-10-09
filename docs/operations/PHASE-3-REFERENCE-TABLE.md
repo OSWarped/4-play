@@ -228,6 +228,13 @@ As of the Phase 3 metadata seeding pass, the strict idle smoke target is:
 Phase 3 systemd smoke summary: 15 passed, 0 warned, 0 failed
 ```
 
+The four-seat Windows launcher and join/spectate flow has been manually
+validated on the reference setup. The validation record is in
+[Phase 3 Reference Table Validation](../testing/PHASE-3-REFERENCE-TABLE-VALIDATION.md).
+
+Use [Phase 3 Soak Runbook](../testing/PHASE-3-SOAK-RUNBOOK.md) for the longer
+family/party validation run that remains before Phase 3 exit.
+
 ## Acceptance target
 
 Phase 3 exits when the reference table can:
