@@ -30,7 +30,9 @@ enum Command {
     Import {
         input: PathBuf,
     },
-    ValidateAssets,
+    ValidateAssets {
+        json: bool,
+    },
     SeedPlaceholders {
         asset_root: PathBuf,
         update_metadata: bool,
@@ -85,6 +87,22 @@ struct MetadataExportGame {
     metadata: GameMetadata,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AssetValidationReport {
+    checked_count: usize,
+    missing_count: usize,
+    assets: Vec<AssetValidationResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AssetValidationResult {
+    game_id: String,
+    field: String,
+    asset_path: String,
+    status: Option<u16>,
+    ok: bool,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = parse_args(env::args().collect()).unwrap_or_else(|error| {
         eprintln!("Error: {error}\n");
@@ -111,7 +129,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?,
         Command::Export { output } => export_metadata(&client, &config.control_plane_url, output)?,
         Command::Import { input } => import_metadata(&client, &config.control_plane_url, input)?,
-        Command::ValidateAssets => validate_assets(&client, &config.control_plane_url)?,
+        Command::ValidateAssets { json } => {
+            validate_assets(&client, &config.control_plane_url, json)?
+        }
         Command::SeedPlaceholders {
             asset_root,
             update_metadata,
@@ -438,51 +458,80 @@ fn import_metadata(
 fn validate_assets(
     client: &Client,
     control_plane_url: &str,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let catalog = client
         .get(format!("{control_plane_url}/api/v1/games"))
         .send()?
         .error_for_status()?
         .json::<CatalogGameList>()?;
-    let mut checked = 0usize;
-    let mut missing = Vec::new();
+    let mut assets = Vec::new();
     for game in catalog.games {
         for (field, asset_path) in asset_references(&game.metadata) {
-            checked += 1;
             let url = format!(
                 "{control_plane_url}/api/v1/assets/{}",
                 percent_encode_asset_path(asset_path)
             );
             let response = client.get(url).send()?;
-            if response.status().is_success() {
+            let status = response.status();
+            let ok = status.is_success();
+            if ok && !json {
                 println!("ok      {} {field} {asset_path}", game.id);
-            } else {
-                println!(
-                    "missing {} {field} {asset_path} ({})",
-                    game.id,
-                    response.status()
-                );
-                missing.push(format!("{} {field} {asset_path}", game.id));
+            } else if !json {
+                println!("missing {} {field} {asset_path} ({})", game.id, status);
             }
+            assets.push(AssetValidationResult {
+                game_id: game.id.clone(),
+                field: field.to_owned(),
+                asset_path: asset_path.to_owned(),
+                status: Some(status.as_u16()),
+                ok,
+            });
         }
     }
-    if checked == 0 {
+    let report = asset_validation_report(assets);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        if report.missing_count == 0 {
+            return Ok(());
+        }
+        return Err(format!(
+            "{} of {checked} metadata asset path{} failed validation",
+            report.missing_count,
+            plural(report.checked_count),
+            checked = report.checked_count
+        )
+        .into());
+    }
+    if report.checked_count == 0 {
         println!("No metadata asset paths to validate.");
         return Ok(());
     }
-    if missing.is_empty() {
+    if report.missing_count == 0 {
         println!(
             "Validated {checked} metadata asset path{}.",
-            plural(checked)
+            plural(report.checked_count),
+            checked = report.checked_count
         );
         Ok(())
     } else {
         Err(format!(
             "{} of {checked} metadata asset path{} failed validation",
-            missing.len(),
-            plural(checked)
+            report.missing_count,
+            plural(report.checked_count),
+            checked = report.checked_count
         )
         .into())
+    }
+}
+
+fn asset_validation_report(assets: Vec<AssetValidationResult>) -> AssetValidationReport {
+    let checked_count = assets.len();
+    let missing_count = assets.iter().filter(|asset| !asset.ok).count();
+    AssetValidationReport {
+        checked_count,
+        missing_count,
+        assets,
     }
 }
 
@@ -944,12 +993,7 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
         "import" => Ok(Command::Import {
             input: parse_import_input(&values[1..])?,
         }),
-        "validate-assets" => {
-            if values.len() > 1 {
-                return Err("validate-assets does not accept options".to_owned());
-            }
-            Ok(Command::ValidateAssets)
-        }
+        "validate-assets" => parse_validate_assets(&values[1..]),
         "seed-placeholders" => parse_seed_placeholders(&values[1..]),
         "seed-known-metadata" => parse_seed_known_metadata(&values[1..]),
         _ => Err(format!("unknown command: {command}")),
@@ -1001,6 +1045,17 @@ fn parse_report(values: &[String]) -> Result<Command, String> {
         }
     }
     Ok(Command::Report { json })
+}
+
+fn parse_validate_assets(values: &[String]) -> Result<Command, String> {
+    let mut json = false;
+    for value in values {
+        match value.as_str() {
+            "--json" => json = true,
+            option => return Err(format!("unknown validate-assets option: {option}")),
+        }
+    }
+    Ok(Command::ValidateAssets { json })
 }
 
 fn clear_slot_edit(field: &str) -> Result<PlayerSlotEdit, String> {
@@ -1216,7 +1271,7 @@ fn usage() -> ! {
   catalog-admin --control-plane <url> [--api-token <token>] set-slot <game-id> <player-number> [slot options]
   catalog-admin --control-plane <url> [--api-token <token>] export [--output <path>]
   catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
-  catalog-admin --control-plane <url> [--api-token <token>] validate-assets
+  catalog-admin --control-plane <url> [--api-token <token>] validate-assets [--json]
   catalog-admin --control-plane <url> [--api-token <token>] seed-placeholders --asset-root <path> [--update-metadata] [--overwrite]
   catalog-admin --control-plane <url> [--api-token <token>] seed-known-metadata [--asset-paths] [--overwrite]
 
@@ -1335,7 +1390,17 @@ mod tests {
         let command = parse_command(&["validate-assets".to_owned()]).unwrap();
 
         match command {
-            Command::ValidateAssets => {}
+            Command::ValidateAssets { json } => assert!(!json),
+            _ => panic!("expected validate-assets command"),
+        }
+    }
+
+    #[test]
+    fn parses_json_validate_assets_command() {
+        let command = parse_command(&["validate-assets".to_owned(), "--json".to_owned()]).unwrap();
+
+        match command {
+            Command::ValidateAssets { json } => assert!(json),
             _ => panic!("expected validate-assets command"),
         }
     }
@@ -1596,6 +1661,32 @@ mod tests {
             percent_encode_asset_path("media/TMNT marquee #1.png"),
             "media/TMNT%20marquee%20%231.png"
         );
+    }
+
+    #[test]
+    fn asset_validation_report_counts_missing_assets() {
+        let report = asset_validation_report(vec![
+            AssetValidationResult {
+                game_id: "tmnt".to_owned(),
+                field: "artwork_path".to_owned(),
+                asset_path: "media/tmnt/artwork.svg".to_owned(),
+                status: Some(200),
+                ok: true,
+            },
+            AssetValidationResult {
+                game_id: "tmnt".to_owned(),
+                field: "logo_path".to_owned(),
+                asset_path: "media/tmnt/logo.svg".to_owned(),
+                status: Some(404),
+                ok: false,
+            },
+        ]);
+        let json = serde_json::to_value(&report).unwrap();
+
+        assert_eq!(report.checked_count, 2);
+        assert_eq!(report.missing_count, 1);
+        assert_eq!(json["missing_count"], 1);
+        assert_eq!(json["assets"][1]["status"], 404);
     }
 
     #[test]

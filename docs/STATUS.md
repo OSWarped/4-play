@@ -134,7 +134,8 @@ Last updated: 2026-10-04
   exposes the report in a stable machine-readable shape for validation and
   future admin UI work
 - `catalog-admin validate-assets` checks metadata artwork, marquee,
-  screenshot, and logo paths against the configured local asset endpoint
+  screenshot, and logo paths against the configured local asset endpoint; `--json`
+  returns per-asset validation results for automation and future admin UI work
 - `catalog-admin seed-placeholders` can initialize the local asset cache with
   copyright-safe SVG placeholders and optional metadata links using the
   `media/<game-id>/` convention

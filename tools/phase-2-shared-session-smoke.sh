@@ -270,7 +270,9 @@ fi
 
 if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
     FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
-    "$catalog_admin_binary" validate-assets >"$results_directory/validate-assets.txt"; then
+    "$catalog_admin_binary" validate-assets --json >"$results_directory/validate-assets.json" \
+    && [[ "$(json_expr "$results_directory/validate-assets.json" 'data["checked_count"]')" == "16" ]] \
+    && [[ "$(json_expr "$results_directory/validate-assets.json" 'data["missing_count"]')" == "0" ]]; then
     pass "catalog-admin validates placeholder assets through the asset endpoint"
 else
     fail "catalog-admin validates placeholder assets through the asset endpoint"

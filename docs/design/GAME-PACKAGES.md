@@ -151,6 +151,11 @@ cargo run -p catalog-admin -- `
 cargo run -p catalog-admin -- `
   --control-plane http://192.168.20.68:8080 `
   --api-token <admin-or-seat-api-token> `
+  validate-assets --json
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
   seed-placeholders `
   --asset-root /opt/4play/assets `
   --update-metadata
@@ -171,7 +176,8 @@ metadata, bulk edit it, and eventually seed a graphical admin interface that
 uses the same metadata endpoints. `set-slot`
 edits per-game player slot labels, positions, character hints, and slot artwork
 paths. `validate-assets` checks every artwork, marquee, screenshot, logo, and
-slot artwork path against the configured local asset endpoint.
+slot artwork path against the configured local asset endpoint, with `--json`
+available for automation and future admin interfaces.
 `seed-placeholders` creates copyright-safe SVG placeholders under the asset root
 using the conventional `media/<game-id>/` layout, and can optionally update
 metadata to point at those files. `seed-known-metadata` fills conservative

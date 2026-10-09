@@ -60,7 +60,7 @@ It verifies the current Phase 2 product flow:
 The accepted automated run produced 42 passing assertions:
 
 ```text
-Results: /tmp/4play-phase-2-shared-session-smoke-20261009-083040
+Results: /tmp/4play-phase-2-shared-session-smoke-20261009-083322
 OVERALL  PASS
 ```
 
