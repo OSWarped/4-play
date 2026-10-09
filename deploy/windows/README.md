@@ -6,8 +6,10 @@ They assume:
 - the repo is checked out at `C:\Users\blake\source\repos\4-play`
 - `target\release\seat-input.exe` has been built
 - FFplay is installed or discoverable through the current setup
-- the Linux server is reachable at `http://192.168.20.68:8080`
-- the seat media destination address is currently `192.168.20.10`
+- the Linux server is reachable at `http://192.168.20.68:8080` unless
+  overridden with `FOURPLAY_CONTROL_PLANE_URL`
+- the seat media destination address is currently `192.168.20.10` unless
+  overridden with `FOURPLAY_SEAT_ADDRESS`
 
 ## Build the client
 
@@ -33,6 +35,20 @@ For the current single-PC development setup, every launcher uses the same media
 destination IP but a different `seat-id`. That is enough to test independent
 player-slot ownership, joining, leaving, reconnecting, and spectating.
 
+The seat launchers share `Invoke-4PlaySeat.ps1`. They use the reference values
+by default, but these environment variables can override them for another
+machine or network:
+
+```powershell
+$env:FOURPLAY_CONTROL_PLANE_URL = "http://192.168.20.68:8080"
+$env:FOURPLAY_SEAT_API_TOKEN = "phase-1c-seat-token-2026"
+$env:FOURPLAY_SEAT_ADDRESS = "192.168.20.10"
+$env:FOURPLAY_FFPLAY_PATH = "C:\Users\blake\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0-full_build\bin\ffplay.exe"
+```
+
+Leave `FOURPLAY_SEAT_ID` unset when launching several seats from one machine;
+the numbered launchers assign `windows-seat-1` through `windows-seat-4`.
+
 ## Recommended Phase 3 manual test
 
 1. Start seat 1 and launch TMNT.
@@ -56,4 +72,3 @@ Use strict idle mode only after all sessions have been stopped:
 ```bash
 FOURPLAY_PHASE3_STRICT_IDLE=1 tools/phase-3-systemd-smoke.sh
 ```
-
