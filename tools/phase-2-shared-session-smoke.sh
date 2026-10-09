@@ -8,6 +8,7 @@ repository_root="$(cd "$script_directory/.." && pwd)"
 control_plane_binary="$repository_root/target/release/control-plane-server"
 agent_binary="$repository_root/target/release/runtime-host-agent"
 session_runtime_binary="$repository_root/target/release/session-runtime"
+catalog_admin_binary="$repository_root/target/release/catalog-admin"
 bind_address="${FOURPLAY_PHASE2_SMOKE_BIND:-127.0.0.1:41820}"
 base_url="http://$bind_address"
 host_id="phase-2-smoke"
@@ -160,7 +161,7 @@ delete_json() {
     curl -fsS -X DELETE -H 'content-type: application/json' --data "$body" "$base_url$path" >"$output_path"
 }
 
-for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary"; do
+for binary in "$control_plane_binary" "$agent_binary" "$session_runtime_binary" "$catalog_admin_binary"; do
     if [[ -x "$binary" ]]; then
         pass "release binary exists: $(basename "$binary")"
     else
@@ -237,6 +238,51 @@ if wait_for_url "$base_url/api/v1/games/tmnt"; then
     pass "seat can browse the TMNT catalog entry"
 else
     fail "seat can browse the TMNT catalog entry"
+fi
+
+admin_report_before="$results_directory/catalog-report-before.txt"
+if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+    FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+    "$catalog_admin_binary" report >"$admin_report_before"; then
+    pass "catalog-admin can report isolated library metadata completeness"
+else
+    fail "catalog-admin can report isolated library metadata completeness"
+fi
+
+if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+    FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+    "$catalog_admin_binary" seed-known-metadata >"$results_directory/seed-known-metadata.txt"; then
+    pass "catalog-admin seeds known catalog presentation metadata"
+else
+    fail "catalog-admin seeds known catalog presentation metadata"
+fi
+
+if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+    FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+    "$catalog_admin_binary" seed-placeholders --asset-root "$asset_root" --update-metadata \
+    >"$results_directory/seed-placeholders.txt"; then
+    pass "catalog-admin seeds placeholder assets in the isolated asset root"
+else
+    fail "catalog-admin seeds placeholder assets in the isolated asset root"
+fi
+
+if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+    FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+    "$catalog_admin_binary" validate-assets >"$results_directory/validate-assets.txt"; then
+    pass "catalog-admin validates placeholder assets through the asset endpoint"
+else
+    fail "catalog-admin validates placeholder assets through the asset endpoint"
+fi
+
+admin_report_after="$results_directory/catalog-report-after.txt"
+if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
+    FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
+    "$catalog_admin_binary" report >"$admin_report_after" \
+    && grep -Fq 'complete: 4' "$admin_report_after" \
+    && grep -Fq 'incomplete: 0' "$admin_report_after"; then
+    pass "catalog-admin reports complete browser metadata after seeding"
+else
+    fail "catalog-admin reports complete browser metadata after seeding"
 fi
 
 create_json="$results_directory/create-session.json"

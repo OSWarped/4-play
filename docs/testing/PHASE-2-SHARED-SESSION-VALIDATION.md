@@ -1,6 +1,6 @@
 # Phase 2 Shared-Session Validation
 
-Date: 2026-10-08
+Date: 2026-10-09
 
 Status: **automated smoke PASS on the reference host; manual multi-seat play
 validation still required before Phase 2 exit.**
@@ -35,25 +35,27 @@ It verifies the current Phase 2 product flow:
 1. release binaries and `/dev/uinput` access
 2. isolated control-plane readiness
 3. legal catalog browsing
-4. seat 1 starts a TMNT session
-5. runtime host launches the session and reports it active
-6. active-session discovery exposes a fresh still preview
-7. the preview BMP is served through the authenticated asset endpoint
-8. old still previews are labeled `stale_available`
-9. seat 2 reserves player 2 atomically
-10. seat 2 connects, disconnects into a reconnectable lease, reconnects, and
+4. catalog-admin metadata report, known-metadata seeding, placeholder asset
+   seeding, authenticated asset validation, and complete browser metadata report
+5. seat 1 starts a TMNT session
+6. runtime host launches the session and reports it active
+7. active-session discovery exposes a fresh still preview
+8. the preview BMP is served through the authenticated asset endpoint
+9. old still previews are labeled `stale_available`
+10. seat 2 reserves player 2 atomically
+11. seat 2 connects, disconnects into a reconnectable lease, reconnects, and
     releases player 2 back to open
-11. a spectator receives a distinct media-port grant
-12. active-session discovery reports spectator count
-13. runtime assignments expose spectator media ports for the running session
-14. the spectator grant releases without affecting player slots
-15. the shared session stops cleanly and reaps its runtime process
-16. the agent and control plane exit cleanly
+12. a spectator receives a distinct media-port grant
+13. active-session discovery reports spectator count
+14. runtime assignments expose spectator media ports for the running session
+15. the spectator grant releases without affecting player slots
+16. the shared session stops cleanly and reaps its runtime process
+17. the agent and control plane exit cleanly
 
-The accepted automated run produced 33 passing assertions:
+The accepted automated run produced 39 passing assertions:
 
 ```text
-Results: /tmp/4play-phase-2-shared-session-smoke-20261008-144444
+Results: /tmp/4play-phase-2-shared-session-smoke-20261009-080747
 OVERALL  PASS
 ```
 
