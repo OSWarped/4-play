@@ -189,7 +189,9 @@ tools/phase-3-acceptance-check.sh \
 ```
 
 The acceptance check runs strict smoke and, when a soak directory is supplied,
-generates a soak report into one artifact directory.
+generates a soak report into one artifact directory. It also writes
+`acceptance-summary.json` so later runs can be compared without scraping the
+terminal output.
 
 Run this on the Linux server:
 

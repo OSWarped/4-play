@@ -47,6 +47,9 @@ done
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$results_directory"
+summary_json="$results_directory/acceptance-summary.json"
+started_at="$(date --iso-8601=seconds)"
+git_commit="$(git -C "$repository_root" rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
 
 pass_count=0
 fail_count=0
@@ -62,6 +65,8 @@ fail() {
 }
 
 printf 'Phase 3 acceptance results: %s\n' "$results_directory"
+printf 'started_at=%s\n' "$started_at"
+printf 'git_commit=%s\n' "$git_commit"
 
 if FOURPLAY_CONTROL_PLANE_URL="$control_plane_url" \
     FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
@@ -87,8 +92,64 @@ else
     printf '[INFO] soak report skipped; pass --soak-results <directory> to include it\n'
 fi
 
+python3 - "$summary_json" "$started_at" "$(date --iso-8601=seconds)" "$git_commit" \
+    "$control_plane_url" "$soak_results" "$results_directory/strict-smoke.txt" \
+    "$results_directory/soak-report.txt" "$pass_count" "$fail_count" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+(
+    output_path,
+    started_at,
+    finished_at,
+    git_commit,
+    control_plane_url,
+    soak_results,
+    strict_smoke_path,
+    soak_report_path,
+    pass_count,
+    fail_count,
+) = sys.argv[1:]
+
+strict_smoke_summary = None
+strict_smoke_text = pathlib.Path(strict_smoke_path)
+if strict_smoke_text.exists():
+    for line in strict_smoke_text.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("Phase 3 systemd smoke summary:"):
+            strict_smoke_summary = line
+
+soak_report = {}
+soak_report_text = pathlib.Path(soak_report_path)
+if soak_report_text.exists():
+    for line in soak_report_text.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "=" in line and not line.startswith("Phase 3 "):
+            key, value = line.split("=", 1)
+            if re.fullmatch(r"[a-zA-Z0-9_]+", key):
+                soak_report[key] = value
+
+payload = {
+    "started_at": started_at,
+    "finished_at": finished_at,
+    "git_commit": git_commit,
+    "control_plane_url": control_plane_url,
+    "soak_results": soak_results or None,
+    "pass_count": int(pass_count),
+    "fail_count": int(fail_count),
+    "strict_smoke_summary": strict_smoke_summary,
+    "soak_report": soak_report,
+}
+
+pathlib.Path(output_path).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+
 printf '\nPhase 3 acceptance summary: %s passed, %s failed\n' "$pass_count" "$fail_count"
 printf 'Artifacts: %s\n' "$results_directory"
+printf 'Summary: %s\n' "$summary_json"
 
 if [[ "$fail_count" -ne 0 ]]; then
     exit 1
