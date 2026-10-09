@@ -168,6 +168,16 @@ Override it when testing a larger import batch:
 FOURPLAY_PHASE3_MINIMUM_GAME_COUNT=19 tools/phase-3-systemd-smoke.sh
 ```
 
+To print firewall commands derived from the configured control-plane and UDP
+port pools:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_ENV_FILE=/etc/4play/4play.env \
+FOURPLAY_TRUSTED_SOURCE=192.168.20.0/24 \
+tools/phase-3-firewall-plan.sh
+```
+
 Run this on the Linux server:
 
 ```bash

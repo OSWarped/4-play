@@ -85,7 +85,16 @@ FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
 
 ## Firewall
 
-Allow the reference control and data-plane ports from trusted LAN clients:
+Generate the firewall plan from the same environment file used by systemd:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_ENV_FILE=/etc/4play/4play.env \
+FOURPLAY_TRUSTED_SOURCE=192.168.20.0/24 \
+tools/phase-3-firewall-plan.sh
+```
+
+For the default reference ranges, this prints:
 
 ```bash
 sudo ufw allow from 192.168.20.0/24 to any port 8080 proto tcp
@@ -94,3 +103,4 @@ sudo ufw allow from 192.168.20.0/24 to any port 42000:42099 proto udp
 ```
 
 If the host does not use `ufw`, apply equivalent rules for the active firewall.
+The planner also prints nftables-style equivalents.
