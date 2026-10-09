@@ -91,6 +91,13 @@ stable, they can be registered as Windows startup tasks.
 
 ## Diagnostics
 
+For a pass/fail readiness check of the systemd-managed reference server, run:
+
+```bash
+cd ~/src/4-play
+tools/phase-3-systemd-smoke.sh
+```
+
 Run this on the Linux server:
 
 ```bash

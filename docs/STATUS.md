@@ -182,6 +182,11 @@ Last updated: 2026-10-09
 - Phase 3 reference-table work has begun with initial operations guidance,
   systemd unit templates, a shared server environment template, four Windows
   seat launchers, and a Linux diagnostics script
+- the Linux reference server can run the control plane and runtime host as
+  systemd services; the service-managed runtime host publishes the curated
+  reference catalog and accepts heartbeats
+- the reference catalog has been curated to one preferred visible variant per
+  title using a US-first, World-second selection rule
 
 ## Not started
 
