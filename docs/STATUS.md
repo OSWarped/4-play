@@ -196,6 +196,9 @@ Last updated: 2026-10-09
 - Phase 3 Windows launchers were manually validated for the four-seat
   start/join/spectate flow on the reference setup; see
   `docs/testing/PHASE-3-REFERENCE-TABLE-VALIDATION.md`
+- Phase 3 soak support now includes `tools/phase-3-soak-monitor.sh`, which
+  captures periodic API, process, listener, diagnostics, cleanup, and strict
+  smoke artifacts during a manual extended play session
 
 ## Not started
 
