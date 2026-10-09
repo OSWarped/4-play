@@ -29,6 +29,23 @@ Also require a successful 4-Play headless launch before keeping a set visible.
 Some verified MAME sets stop before raw media starts and must remain quarantined
 until the runtime can handle their startup condition.
 
+The current validated reference catalog contains 14 visible games:
+
+- `aliens`
+- `altbeast`
+- `avspu`
+- `dino`
+- `dkong`
+- `dkong3`
+- `ffightuc`
+- `goldnaxeud`
+- `kinst`
+- `punisheru`
+- `simpsons`
+- `tmnt`
+- `tmnt2`
+- `wwfmania`
+
 ## Standard ports
 
 The reference host should reserve a broad enough port pool for several sessions,
@@ -134,8 +151,9 @@ tools/phase-3-systemd-smoke.sh
 ```
 
 By default, the smoke check warns rather than fails when sessions are currently
-active or when the expanded catalog has incomplete presentation metadata. For a
-clean-idle gate, use:
+active or when the expanded catalog has incomplete presentation metadata. The
+validated Phase 3 reference state should pass the strict gate with 14 complete
+catalog entries and 56 present catalog assets:
 
 ```bash
 FOURPLAY_PHASE3_STRICT_IDLE=1 \
@@ -192,6 +210,12 @@ FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
 ./target/release/catalog-admin seed-placeholders \
   --asset-root /home/blake/src/4-play/data/assets \
   --update-metadata
+```
+
+As of the Phase 3 metadata seeding pass, the strict idle smoke target is:
+
+```text
+Phase 3 systemd smoke summary: 15 passed, 0 warned, 0 failed
 ```
 
 ## Acceptance target
