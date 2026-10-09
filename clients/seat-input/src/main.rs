@@ -382,7 +382,7 @@ fn print_active_sessions(
     }
 
     println!("\nActive sessions:");
-    for line in active_session_lines(sessions, games, control_plane_url) {
+    for line in active_session_lines(sessions, games, control_plane_url, unix_time_ms()) {
         println!("{line}");
     }
     println!(
@@ -397,6 +397,7 @@ fn active_session_lines(
     sessions: &[SessionSummary],
     games: &[CatalogGame],
     control_plane_url: &str,
+    now_unix_ms: u64,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     for (index, session) in sessions.iter().enumerate() {
@@ -430,13 +431,13 @@ fn active_session_lines(
         }
         lines.push(format!(
             "     preview: {}",
-            describe_preview(session, control_plane_url)
+            describe_preview(session, control_plane_url, now_unix_ms)
         ));
     }
     lines
 }
 
-fn describe_preview(session: &SessionSummary, control_plane_url: &str) -> String {
+fn describe_preview(session: &SessionSummary, control_plane_url: &str, now_unix_ms: u64) -> String {
     let mut description = describe_preview_status(session.preview_status).to_owned();
     if let Some(path) = session.preview_asset_path.as_deref() {
         description.push_str(" at ");
@@ -447,10 +448,23 @@ fn describe_preview(session: &SessionSummary, control_plane_url: &str) -> String
     }
     if let Some(updated_unix_ms) = session.preview_updated_unix_ms {
         description.push_str(" updated ");
-        description.push_str(&updated_unix_ms.to_string());
-        description.push_str(" ms");
+        description.push_str(&describe_preview_age(now_unix_ms, updated_unix_ms));
+        description.push_str(" ago");
     }
     description
+}
+
+fn describe_preview_age(now_unix_ms: u64, updated_unix_ms: u64) -> String {
+    let age_ms = now_unix_ms.saturating_sub(updated_unix_ms);
+    if age_ms < 1_000 {
+        format!("{age_ms}ms")
+    } else if age_ms < 60_000 {
+        format!("{}s", age_ms / 1_000)
+    } else if age_ms < 3_600_000 {
+        format!("{}m", age_ms / 60_000)
+    } else {
+        format!("{}h", age_ms / 3_600_000)
+    }
 }
 
 fn asset_url(control_plane_url: &str, asset_path: &str) -> String {
@@ -1464,7 +1478,7 @@ mod tests {
         let session = sample_session("tmnt", 1);
         let games = vec![sample_catalog_game("tmnt", "Teenage Mutant Ninja Turtles")];
 
-        let lines = active_session_lines(&[session], &games, "http://control.test");
+        let lines = active_session_lines(&[session], &games, "http://control.test", 200_000);
 
         assert_eq!(
             lines,
@@ -1536,7 +1550,7 @@ mod tests {
     fn active_session_lines_pluralize_spectator_counts() {
         let session = sample_session("aliens", 2);
 
-        let lines = active_session_lines(&[session], &[], "http://control.test");
+        let lines = active_session_lines(&[session], &[], "http://control.test", 200_000);
 
         assert_eq!(
             lines,
@@ -1553,7 +1567,7 @@ mod tests {
     fn active_session_lines_omit_zero_spectator_counts() {
         let session = sample_session("aliens", 0);
 
-        let lines = active_session_lines(&[session], &[], "http://control.test");
+        let lines = active_session_lines(&[session], &[], "http://control.test", 200_000);
 
         assert_eq!(
             lines,
@@ -1572,17 +1586,26 @@ mod tests {
         session.preview_asset_path = Some("previews/session-one.bmp".to_owned());
         session.preview_updated_unix_ms = Some(123_456);
 
-        let lines = active_session_lines(&[session], &[], "http://control.test");
+        let lines = active_session_lines(&[session], &[], "http://control.test", 125_456);
 
         assert_eq!(
             lines,
             vec![
                 "  1. tmnt (tmnt) on reference-linux [Active]".to_owned(),
                 "     P1 occupied by windows-seat-1; P2 open".to_owned(),
-                "     preview: still preview available at previews/session-one.bmp (http://control.test/api/v1/assets/previews/session-one.bmp) updated 123456 ms"
+                "     preview: still preview available at previews/session-one.bmp (http://control.test/api/v1/assets/previews/session-one.bmp) updated 2s ago"
                     .to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn preview_age_is_human_readable() {
+        assert_eq!(describe_preview_age(1_500, 1_000), "500ms");
+        assert_eq!(describe_preview_age(12_500, 1_000), "11s");
+        assert_eq!(describe_preview_age(181_000, 1_000), "3m");
+        assert_eq!(describe_preview_age(7_201_000, 1_000), "2h");
+        assert_eq!(describe_preview_age(1_000, 2_000), "0ms");
     }
 
     #[test]

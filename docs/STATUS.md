@@ -159,7 +159,8 @@ Last updated: 2026-10-04
   and clean stop
 - the terminal seat browser now shows active-session preview asset paths,
   authenticated asset URLs, and preview update timestamps when the control
-  plane provides them
+  plane provides them; preview timestamps render as human-readable ages for
+  manual testing
 
 ## Not started
 
