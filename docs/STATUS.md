@@ -130,7 +130,9 @@ Last updated: 2026-10-04
   games, showing metadata, updating metadata, and importing/exporting metadata
   backups through the control-plane API
 - `catalog-admin report` gives operators a read-only completeness summary for
-  cabinet-browser presentation metadata and player-slot labels
+  cabinet-browser presentation metadata and player-slot labels; `--json`
+  exposes the report in a stable machine-readable shape for validation and
+  future admin UI work
 - `catalog-admin validate-assets` checks metadata artwork, marquee,
   screenshot, and logo paths against the configured local asset endpoint
 - `catalog-admin seed-placeholders` can initialize the local asset cache with

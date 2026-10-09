@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 enum Command {
     List,
-    Report,
+    Report {
+        json: bool,
+    },
     Show {
         game_id: String,
     },
@@ -91,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = client(&config.api_token)?;
     match config.command {
         Command::List => list_games(&client, &config.control_plane_url)?,
-        Command::Report => report_library(&client, &config.control_plane_url)?,
+        Command::Report { json } => report_library(&client, &config.control_plane_url, json)?,
         Command::Show { game_id } => show_metadata(&client, &config.control_plane_url, &game_id)?,
         Command::Set { game_id, edits } => {
             update_metadata(&client, &config.control_plane_url, &game_id, &edits)?
@@ -129,7 +131,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LibraryMetadataReport {
+    game_count: usize,
+    complete_count: usize,
+    incomplete_count: usize,
+    games: Vec<MetadataReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MetadataReport {
     game_id: String,
     display_name: String,
@@ -171,26 +181,27 @@ fn list_games(client: &Client, control_plane_url: &str) -> Result<(), Box<dyn st
 fn report_library(
     client: &Client,
     control_plane_url: &str,
+    json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let catalog = client
         .get(format!("{control_plane_url}/api/v1/games"))
         .send()?
         .error_for_status()?
         .json::<CatalogGameList>()?;
-    let reports: Vec<_> = catalog.games.iter().map(metadata_report).collect();
-    let complete = reports
-        .iter()
-        .filter(|report| report.missing.is_empty())
-        .count();
+    let report = library_metadata_report(&catalog.games);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     println!("Library metadata report");
-    println!("  games: {}", reports.len());
-    println!("  complete: {complete}");
-    println!("  incomplete: {}", reports.len().saturating_sub(complete));
-    if reports.is_empty() {
+    println!("  games: {}", report.game_count);
+    println!("  complete: {}", report.complete_count);
+    println!("  incomplete: {}", report.incomplete_count);
+    if report.games.is_empty() {
         return Ok(());
     }
     println!();
-    for report in reports {
+    for report in report.games {
         println!(
             "{} - {}: {}/{}",
             report.game_id, report.display_name, report.present, report.total
@@ -202,6 +213,20 @@ fn report_library(
         }
     }
     Ok(())
+}
+
+fn library_metadata_report(games: &[CatalogGame]) -> LibraryMetadataReport {
+    let reports: Vec<_> = games.iter().map(metadata_report).collect();
+    let complete_count = reports
+        .iter()
+        .filter(|report| report.missing.is_empty())
+        .count();
+    LibraryMetadataReport {
+        game_count: reports.len(),
+        complete_count,
+        incomplete_count: reports.len().saturating_sub(complete_count),
+        games: reports,
+    }
 }
 
 fn metadata_report(game: &CatalogGame) -> MetadataReport {
@@ -881,12 +906,7 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
     };
     match command {
         "list" => Ok(Command::List),
-        "report" => {
-            if values.len() > 1 {
-                return Err("report does not accept options".to_owned());
-            }
-            Ok(Command::Report)
-        }
+        "report" => parse_report(&values[1..]),
         "show" => Ok(Command::Show {
             game_id: values.get(1).cloned().ok_or("show requires a game id")?,
         }),
@@ -970,6 +990,17 @@ fn parse_slot_edits(values: &[String]) -> Result<Vec<PlayerSlotEdit>, String> {
         index += 1;
     }
     Ok(edits)
+}
+
+fn parse_report(values: &[String]) -> Result<Command, String> {
+    let mut json = false;
+    for value in values {
+        match value.as_str() {
+            "--json" => json = true,
+            option => return Err(format!("unknown report option: {option}")),
+        }
+    }
+    Ok(Command::Report { json })
 }
 
 fn clear_slot_edit(field: &str) -> Result<PlayerSlotEdit, String> {
@@ -1179,7 +1210,7 @@ fn usage() -> ! {
     eprintln!(
         "Usage:
   catalog-admin --control-plane <url> [--api-token <token>] list
-  catalog-admin --control-plane <url> [--api-token <token>] report
+  catalog-admin --control-plane <url> [--api-token <token>] report [--json]
   catalog-admin --control-plane <url> [--api-token <token>] show <game-id>
   catalog-admin --control-plane <url> [--api-token <token>] set <game-id> [metadata options]
   catalog-admin --control-plane <url> [--api-token <token>] set-slot <game-id> <player-number> [slot options]
@@ -1314,7 +1345,17 @@ mod tests {
         let command = parse_command(&["report".to_owned()]).unwrap();
 
         match command {
-            Command::Report => {}
+            Command::Report { json } => assert!(!json),
+            _ => panic!("expected report command"),
+        }
+    }
+
+    #[test]
+    fn parses_json_report_command() {
+        let command = parse_command(&["report".to_owned(), "--json".to_owned()]).unwrap();
+
+        match command {
+            Command::Report { json } => assert!(json),
             _ => panic!("expected report command"),
         }
     }
@@ -1640,6 +1681,46 @@ mod tests {
 
         assert_eq!(report.present, report.total);
         assert!(report.missing.is_empty());
+    }
+
+    #[test]
+    fn library_metadata_report_counts_complete_and_incomplete_games() {
+        let incomplete = CatalogGame {
+            id: "tmnt".to_owned(),
+            display_name: "Teenage Mutant Ninja Turtles".to_owned(),
+            rom_name: "tmnt".to_owned(),
+            metadata: GameMetadata::default(),
+            availability: Vec::new(),
+        };
+        let complete = CatalogGame {
+            id: "aliens".to_owned(),
+            display_name: "Aliens".to_owned(),
+            rom_name: "aliens".to_owned(),
+            metadata: GameMetadata {
+                sort_title: Some("Aliens".to_owned()),
+                description: Some("Arcade action.".to_owned()),
+                genre: Some("Run and gun".to_owned()),
+                release_year: Some(1990),
+                manufacturer: Some("Konami".to_owned()),
+                player_count: Some(1),
+                artwork_path: Some("media/aliens/artwork.svg".to_owned()),
+                marquee_path: Some("media/aliens/marquee.svg".to_owned()),
+                screenshot_path: Some("media/aliens/screenshot.svg".to_owned()),
+                logo_path: Some("media/aliens/logo.svg".to_owned()),
+                control_notes: Some("Move and attack.".to_owned()),
+                player_slots: Vec::new(),
+            },
+            availability: Vec::new(),
+        };
+
+        let report = library_metadata_report(&[incomplete, complete]);
+        let json = serde_json::to_value(&report).unwrap();
+
+        assert_eq!(report.game_count, 2);
+        assert_eq!(report.complete_count, 1);
+        assert_eq!(report.incomplete_count, 1);
+        assert_eq!(json["complete_count"], 1);
+        assert_eq!(json["games"][0]["game_id"], "tmnt");
     }
 
     #[test]

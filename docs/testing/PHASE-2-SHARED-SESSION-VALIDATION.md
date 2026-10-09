@@ -35,8 +35,9 @@ It verifies the current Phase 2 product flow:
 1. release binaries and `/dev/uinput` access
 2. isolated control-plane readiness
 3. legal catalog browsing
-4. catalog-admin metadata report, known-metadata seeding, placeholder asset
-   seeding, authenticated asset validation, and complete browser metadata report
+4. catalog-admin JSON metadata report, known-metadata seeding, placeholder
+   asset seeding, authenticated asset validation, and complete browser metadata
+   report
 5. the seat browser renders seeded descriptions, control notes, media badges,
    and primary image URLs without launching a game
 6. seat 1 starts a TMNT session
@@ -59,7 +60,7 @@ It verifies the current Phase 2 product flow:
 The accepted automated run produced 42 passing assertions:
 
 ```text
-Results: /tmp/4play-phase-2-shared-session-smoke-20261009-082759
+Results: /tmp/4play-phase-2-shared-session-smoke-20261009-083040
 OVERALL  PASS
 ```
 

@@ -241,10 +241,11 @@ else
     fail "seat can browse the TMNT catalog entry"
 fi
 
-admin_report_before="$results_directory/catalog-report-before.txt"
+admin_report_before="$results_directory/catalog-report-before.json"
 if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
     FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
-    "$catalog_admin_binary" report >"$admin_report_before"; then
+    "$catalog_admin_binary" report --json >"$admin_report_before" \
+    && [[ "$(json_expr "$admin_report_before" 'data["game_count"]')" == "4" ]]; then
     pass "catalog-admin can report isolated library metadata completeness"
 else
     fail "catalog-admin can report isolated library metadata completeness"
@@ -275,12 +276,12 @@ else
     fail "catalog-admin validates placeholder assets through the asset endpoint"
 fi
 
-admin_report_after="$results_directory/catalog-report-after.txt"
+admin_report_after="$results_directory/catalog-report-after.json"
 if FOURPLAY_CONTROL_PLANE_URL="$base_url" \
     FOURPLAY_SEAT_API_TOKEN="$seat_api_token" \
-    "$catalog_admin_binary" report >"$admin_report_after" \
-    && grep -Fq 'complete: 4' "$admin_report_after" \
-    && grep -Fq 'incomplete: 0' "$admin_report_after"; then
+    "$catalog_admin_binary" report --json >"$admin_report_after" \
+    && [[ "$(json_expr "$admin_report_after" 'data["complete_count"]')" == "4" ]] \
+    && [[ "$(json_expr "$admin_report_after" 'data["incomplete_count"]')" == "0" ]]; then
     pass "catalog-admin reports complete browser metadata after seeding"
 else
     fail "catalog-admin reports complete browser metadata after seeding"
