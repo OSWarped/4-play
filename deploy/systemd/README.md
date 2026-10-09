@@ -26,6 +26,13 @@ Review the environment file before starting services:
 sudo nano /etc/4play/4play.env
 ```
 
+The reference deployment should use the checked-in test catalog unless a
+site-specific catalog has been created:
+
+```text
+FOURPLAY_CATALOG_PATH=/home/blake/src/4-play/catalog/test-catalog.json
+```
+
 Then enable and start:
 
 ```bash
@@ -57,4 +64,3 @@ sudo ufw allow from 192.168.20.0/24 to any port 42000:42099 proto udp
 ```
 
 If the host does not use `ufw`, apply equivalent rules for the active firewall.
-

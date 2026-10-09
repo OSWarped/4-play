@@ -62,6 +62,13 @@ sudo systemctl enable --now 4play-control-plane.service
 sudo systemctl enable --now 4play-runtime-host-agent.service
 ```
 
+The reference environment should point at the checked-in test catalog unless a
+site-specific catalog has been created:
+
+```text
+FOURPLAY_CATALOG_PATH=/home/blake/src/4-play/catalog/test-catalog.json
+```
+
 ## Windows seat startup target
 
 Windows launchers are provided in `deploy/windows/`:
