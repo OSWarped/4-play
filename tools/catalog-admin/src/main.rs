@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 enum Command {
     List,
+    Report,
     Show {
         game_id: String,
     },
@@ -86,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = client(&config.api_token)?;
     match config.command {
         Command::List => list_games(&client, &config.control_plane_url)?,
+        Command::Report => report_library(&client, &config.control_plane_url)?,
         Command::Show { game_id } => show_metadata(&client, &config.control_plane_url, &game_id)?,
         Command::Set { game_id, edits } => {
             update_metadata(&client, &config.control_plane_url, &game_id, &edits)?
@@ -119,6 +121,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetadataReport {
+    game_id: String,
+    display_name: String,
+    present: usize,
+    total: usize,
+    missing: Vec<String>,
+}
+
 fn client(api_token: &str) -> Result<Client, Box<dyn std::error::Error>> {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -147,6 +158,133 @@ fn list_games(client: &Client, control_plane_url: &str) -> Result<(), Box<dyn st
         }
     }
     Ok(())
+}
+
+fn report_library(
+    client: &Client,
+    control_plane_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    let reports: Vec<_> = catalog.games.iter().map(metadata_report).collect();
+    let complete = reports
+        .iter()
+        .filter(|report| report.missing.is_empty())
+        .count();
+    println!("Library metadata report");
+    println!("  games: {}", reports.len());
+    println!("  complete: {complete}");
+    println!("  incomplete: {}", reports.len().saturating_sub(complete));
+    if reports.is_empty() {
+        return Ok(());
+    }
+    println!();
+    for report in reports {
+        println!(
+            "{} - {}: {}/{}",
+            report.game_id, report.display_name, report.present, report.total
+        );
+        if report.missing.is_empty() {
+            println!("  complete");
+        } else {
+            println!("  missing: {}", report.missing.join(", "));
+        }
+    }
+    Ok(())
+}
+
+fn metadata_report(game: &CatalogGame) -> MetadataReport {
+    let mut items = vec![
+        ("sort_title".to_owned(), has_text(&game.metadata.sort_title)),
+        (
+            "description".to_owned(),
+            has_text(&game.metadata.description),
+        ),
+        ("genre".to_owned(), has_text(&game.metadata.genre)),
+        (
+            "release_year".to_owned(),
+            game.metadata.release_year.is_some(),
+        ),
+        (
+            "manufacturer".to_owned(),
+            has_text(&game.metadata.manufacturer),
+        ),
+        (
+            "player_count".to_owned(),
+            effective_player_count(game).is_some(),
+        ),
+        (
+            "artwork_path".to_owned(),
+            has_text(&game.metadata.artwork_path),
+        ),
+        (
+            "marquee_path".to_owned(),
+            has_text(&game.metadata.marquee_path),
+        ),
+        (
+            "screenshot_path".to_owned(),
+            has_text(&game.metadata.screenshot_path),
+        ),
+        ("logo_path".to_owned(), has_text(&game.metadata.logo_path)),
+        (
+            "control_notes".to_owned(),
+            has_text(&game.metadata.control_notes),
+        ),
+    ];
+    if effective_player_count(game).is_some_and(|count| count > 1) {
+        items.push((
+            "player_slot_labels".to_owned(),
+            player_slot_labels_complete(game),
+        ));
+    }
+
+    let total = items.len();
+    let present = items.iter().filter(|(_, present)| *present).count();
+    let missing = items
+        .into_iter()
+        .filter_map(|(field, present)| (!present).then_some(field))
+        .collect();
+
+    MetadataReport {
+        game_id: game.id.clone(),
+        display_name: game.display_name.clone(),
+        present,
+        total,
+        missing,
+    }
+}
+
+fn has_text(value: &Option<String>) -> bool {
+    value
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn effective_player_count(game: &CatalogGame) -> Option<u32> {
+    game.metadata.player_count.or_else(|| {
+        game.availability
+            .iter()
+            .map(|availability| availability.profile.max_players)
+            .max()
+    })
+}
+
+fn player_slot_labels_complete(game: &CatalogGame) -> bool {
+    let Some(player_count) = effective_player_count(game) else {
+        return false;
+    };
+    (1..=player_count).all(|player_number| {
+        game.metadata.player_slots.iter().any(|slot| {
+            slot.player_number == player_number
+                && slot
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| !label.trim().is_empty())
+        })
+    })
 }
 
 fn show_metadata(
@@ -546,12 +684,18 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
         return Err(
-            "missing command: list, show, set, set-slot, export, import, validate-assets, or seed-placeholders"
+            "missing command: list, report, show, set, set-slot, export, import, validate-assets, or seed-placeholders"
                 .to_owned(),
         );
     };
     match command {
         "list" => Ok(Command::List),
+        "report" => {
+            if values.len() > 1 {
+                return Err("report does not accept options".to_owned());
+            }
+            Ok(Command::Report)
+        }
         "show" => Ok(Command::Show {
             game_id: values.get(1).cloned().ok_or("show requires a game id")?,
         }),
@@ -827,6 +971,7 @@ fn usage() -> ! {
     eprintln!(
         "Usage:
   catalog-admin --control-plane <url> [--api-token <token>] list
+  catalog-admin --control-plane <url> [--api-token <token>] report
   catalog-admin --control-plane <url> [--api-token <token>] show <game-id>
   catalog-admin --control-plane <url> [--api-token <token>] set <game-id> [metadata options]
   catalog-admin --control-plane <url> [--api-token <token>] set-slot <game-id> <player-number> [slot options]
@@ -952,6 +1097,16 @@ mod tests {
         match command {
             Command::ValidateAssets => {}
             _ => panic!("expected validate-assets command"),
+        }
+    }
+
+    #[test]
+    fn parses_report_command() {
+        let command = parse_command(&["report".to_owned()]).unwrap();
+
+        match command {
+            Command::Report => {}
+            _ => panic!("expected report command"),
         }
     }
 
@@ -1127,6 +1282,91 @@ mod tests {
             percent_encode_asset_path("media/TMNT marquee #1.png"),
             "media/TMNT%20marquee%20%231.png"
         );
+    }
+
+    #[test]
+    fn metadata_report_lists_missing_browser_presentation_fields() {
+        let game = CatalogGame {
+            id: "tmnt".to_owned(),
+            display_name: "Teenage Mutant Ninja Turtles".to_owned(),
+            rom_name: "tmnt".to_owned(),
+            metadata: GameMetadata {
+                genre: Some("Beat 'em up".to_owned()),
+                player_slots: vec![GamePlayerSlotMetadata {
+                    player_number: 1,
+                    label: Some("Leonardo".to_owned()),
+                    position: None,
+                    character: None,
+                    artwork_path: None,
+                }],
+                ..GameMetadata::default()
+            },
+            availability: vec![control_protocol::GameAvailability {
+                runtime_host_id: "reference-linux".to_owned(),
+                runtime_host_status: control_protocol::RuntimeHostStatus::Online,
+                profile: control_protocol::GameRuntimeProfile {
+                    width: 320,
+                    height: 224,
+                    refresh_hz: 60.0,
+                    rotation_degrees: 0,
+                    max_players: 4,
+                    buttons_per_player: 2,
+                    supports_save_state: true,
+                },
+            }],
+        };
+
+        let report = metadata_report(&game);
+
+        assert_eq!(report.present, 2);
+        assert_eq!(report.total, 12);
+        assert!(report.missing.contains(&"description".to_owned()));
+        assert!(report.missing.contains(&"player_slot_labels".to_owned()));
+        assert!(!report.missing.contains(&"player_count".to_owned()));
+    }
+
+    #[test]
+    fn metadata_report_accepts_complete_browser_presentation_fields() {
+        let game = CatalogGame {
+            id: "aliens".to_owned(),
+            display_name: "Aliens".to_owned(),
+            rom_name: "aliens".to_owned(),
+            metadata: GameMetadata {
+                sort_title: Some("Aliens".to_owned()),
+                description: Some("Arcade action.".to_owned()),
+                genre: Some("Run and gun".to_owned()),
+                release_year: Some(1990),
+                manufacturer: Some("Konami".to_owned()),
+                player_count: Some(2),
+                artwork_path: Some("media/aliens/artwork.svg".to_owned()),
+                marquee_path: Some("media/aliens/marquee.svg".to_owned()),
+                screenshot_path: Some("media/aliens/screenshot.svg".to_owned()),
+                logo_path: Some("media/aliens/logo.svg".to_owned()),
+                control_notes: Some("Move, shoot, jump.".to_owned()),
+                player_slots: vec![
+                    GamePlayerSlotMetadata {
+                        player_number: 1,
+                        label: Some("P1".to_owned()),
+                        position: None,
+                        character: None,
+                        artwork_path: None,
+                    },
+                    GamePlayerSlotMetadata {
+                        player_number: 2,
+                        label: Some("P2".to_owned()),
+                        position: None,
+                        character: None,
+                        artwork_path: None,
+                    },
+                ],
+            },
+            availability: Vec::new(),
+        };
+
+        let report = metadata_report(&game);
+
+        assert_eq!(report.present, report.total);
+        assert!(report.missing.is_empty());
     }
 
     #[test]

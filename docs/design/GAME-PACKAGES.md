@@ -104,6 +104,11 @@ cargo run -p catalog-admin -- `
 cargo run -p catalog-admin -- `
   --control-plane http://192.168.20.68:8080 `
   --api-token <admin-or-seat-api-token> `
+  report
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
   show tmnt
 
 cargo run -p catalog-admin -- `
@@ -146,17 +151,18 @@ cargo run -p catalog-admin -- `
   --update-metadata
 ```
 
-This CLI is an interim admin module. Exported metadata files use a stable
-`games[]` JSON shape so administrators can back up metadata, bulk edit it, and
-eventually seed a graphical admin interface that uses the same metadata
-endpoints. `set-slot` edits per-game player slot labels, positions, character
-hints, and slot artwork paths. `validate-assets` checks every artwork, marquee,
-screenshot, logo, and slot artwork path against the configured local asset
-endpoint. `seed-placeholders` creates copyright-safe SVG placeholders under the
-asset root using the conventional `media/<game-id>/` layout, and can optionally
-update metadata to point at those files. Scrapers can later replace those
-placeholder files with provider-sourced media without changing the catalog
-schema.
+This CLI is an interim admin module. `report` summarizes how complete each
+game's browser presentation metadata is before a future graphical admin UI
+exists. Exported metadata files use a stable `games[]` JSON shape so
+administrators can back up metadata, bulk edit it, and eventually seed a
+graphical admin interface that uses the same metadata endpoints. `set-slot`
+edits per-game player slot labels, positions, character hints, and slot artwork
+paths. `validate-assets` checks every artwork, marquee, screenshot, logo, and
+slot artwork path against the configured local asset endpoint.
+`seed-placeholders` creates copyright-safe SVG placeholders under the asset root
+using the conventional `media/<game-id>/` layout, and can optionally update
+metadata to point at those files. Scrapers can later replace those placeholder
+files with provider-sourced media without changing the catalog schema.
 
 ## Validation
 
