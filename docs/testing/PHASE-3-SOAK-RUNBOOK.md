@@ -90,6 +90,12 @@ If you ran the soak monitor, keep the printed artifact directory. It contains
 per-sample API snapshots, process/listener snapshots, a summary table, and a
 full diagnostics capture.
 
+Generate a compact report from the artifact directory:
+
+```bash
+tools/phase-3-soak-report.sh /tmp/4play-phase-3-soak-YYYYMMDD-HHMMSS
+```
+
 Clean up sessions:
 
 ```bash
