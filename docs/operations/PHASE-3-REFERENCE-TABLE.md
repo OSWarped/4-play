@@ -25,6 +25,10 @@ clone or regional variant to the player-facing catalog; prefer one entry per
 game using the US-first, World-second rule in
 [Catalog Curation](../design/CATALOG-CURATION.md).
 
+Also require a successful 4-Play headless launch before keeping a set visible.
+Some verified MAME sets stop before raw media starts and must remain quarantined
+until the runtime can handle their startup condition.
+
 ## Standard ports
 
 The reference host should reserve a broad enough port pool for several sessions,
