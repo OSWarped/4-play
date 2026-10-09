@@ -187,6 +187,12 @@ Last updated: 2026-10-09
   reference catalog and accepts heartbeats
 - the reference catalog has been curated to one preferred visible variant per
   title using a US-first, World-second selection rule
+- Phase 3 now includes stale-session cleanup, strict systemd smoke validation,
+  generated firewall guidance from the configured port pools, and environment
+  configurable Windows launchers for four seats
+- the current reference catalog publishes 14 launchable games with complete
+  presentation metadata and placeholder assets; strict server smoke currently
+  passes with 15 checks, 0 warnings, and 0 failures
 
 ## Not started
 
@@ -194,6 +200,6 @@ Last updated: 2026-10-09
 
 ## Next milestone
 
-Begin Phase 3 four-seat reference-table work: startup/recovery scripts, stable
-service configuration, firewall/port guidance, kiosk diagnostics, and longer
-four-seat soak validation.
+Continue Phase 3 with physical-table validation: exercise four real seats,
+confirm physical controls and audio isolation, test recovery during active play,
+and run a longer family/party soak session.

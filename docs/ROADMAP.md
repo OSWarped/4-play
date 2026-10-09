@@ -153,13 +153,15 @@ see [the Phase 2 validation record](testing/PHASE-2-SHARED-SESSION-VALIDATION.md
 
 Status: **in progress**.
 
-- four independent seat clients
-- independent and shared play
-- kiosk startup and recovery
-- physical controls and audio isolation
-- installer/runtime-host firewall guidance derived from configured port pools
-- table ergonomics and service access
-- soak and abuse testing
+- four independent seat clients — **implemented with numbered Windows launchers**
+- independent and shared play — **implemented and manually validated**
+- kiosk startup and recovery — **partially implemented with systemd services,
+  launcher defaults, diagnostics, and stale-session cleanup**
+- physical controls and audio isolation — **pending physical-table validation**
+- installer/runtime-host firewall guidance derived from configured port pools —
+  **implemented with `tools/phase-3-firewall-plan.sh`**
+- table ergonomics and service access — **pending physical-table validation**
+- soak and abuse testing — **pending extended manual run**
 
 **Exit:** the reference table operates for an extended session with predictable recovery.
 
