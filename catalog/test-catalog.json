@@ -18,20 +18,8 @@
       "rom_name": "avspu"
     },
     {
-      "id": "captaven",
-      "rom_name": "captaven"
-    },
-    {
       "id": "captavenu",
       "rom_name": "captavenu"
-    },
-    {
-      "id": "captavenuu",
-      "rom_name": "captavenuu"
-    },
-    {
-      "id": "ddragon2",
-      "rom_name": "ddragon2"
     },
     {
       "id": "ddragon2u",
@@ -50,24 +38,12 @@
       "rom_name": "dkong3"
     },
     {
-      "id": "ffight",
-      "rom_name": "ffight"
-    },
-    {
       "id": "ffightuc",
       "rom_name": "ffightuc"
     },
     {
       "id": "ga2u",
       "rom_name": "ga2u"
-    },
-    {
-      "id": "goldnaxeb1",
-      "rom_name": "goldnaxeb1"
-    },
-    {
-      "id": "goldnaxeb2",
-      "rom_name": "goldnaxeb2"
     },
     {
       "id": "goldnaxeud",
@@ -84,10 +60,6 @@
     {
       "id": "simpsons",
       "rom_name": "simpsons"
-    },
-    {
-      "id": "simpsons4pe2",
-      "rom_name": "simpsons4pe2"
     },
     {
       "id": "ssriders",

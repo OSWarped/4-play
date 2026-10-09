@@ -20,6 +20,11 @@ The current reference deployment is:
 Phase 3 assumes wired LAN play. If a seat's IP changes, update the matching
 launcher or set `FOURPLAY_SEAT_ADDRESS` before starting the client.
 
+The visible game list is intentionally curated. Do not add every verified MAME
+clone or regional variant to the player-facing catalog; prefer one entry per
+game using the US-first, World-second rule in
+[Catalog Curation](../design/CATALOG-CURATION.md).
+
 ## Standard ports
 
 The reference host should reserve a broad enough port pool for several sessions,
