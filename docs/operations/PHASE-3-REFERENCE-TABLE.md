@@ -113,6 +113,19 @@ See `deploy/windows/README.md` for the current four-seat manual test flow.
 
 ## Diagnostics
 
+To clean up stale active sessions before a strict validation run:
+
+```bash
+cd ~/src/4-play
+tools/phase-3-cleanup-sessions.sh
+```
+
+To clean up and immediately run the strict idle smoke check:
+
+```bash
+tools/phase-3-cleanup-sessions.sh --smoke
+```
+
 For a pass/fail readiness check of the systemd-managed reference server, run:
 
 ```bash
