@@ -50,13 +50,13 @@ session runtime did not receive video and audio
 then remove it from the visible catalog until a runtime compatibility fix or a
 better variant is available.
 
-Sets under retest after enabling `skip_warnings` in the reference MAME UI
-configuration:
+Currently quarantined after Phase 3 manual retest with `skip_warnings` and
+`skip_gameinfo` enabled:
 
 | Set | Reason |
 | --- | --- |
-| `avengrgs` | verifies, previously produced no frames before warning bypass |
-| `captavenu` | verifies, previously failed before media |
-| `ddragon2u` | verifies/best available with redump warning, previously produced no frames |
-| `ga2u` | verifies, previously produced no frames before warning bypass |
-| `ssriders` | verifies, previously produced no frames before warning bypass |
+| `avengrgs` | verifies, but 4-Play launch produced no frames before the startup watchdog |
+| `captavenu` | verifies, but 4-Play launch produced no frames before the startup watchdog |
+| `ddragon2u` | verifies/best available with redump warning, but 4-Play launch produced no frames before the startup watchdog |
+| `ga2u` | verifies, but 4-Play launch produced no frames before the startup watchdog |
+| `ssriders` | verifies, but 4-Play launch produced no frames before the startup watchdog |

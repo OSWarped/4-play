@@ -10,20 +10,8 @@
       "rom_name": "altbeast"
     },
     {
-      "id": "avengrgs",
-      "rom_name": "avengrgs"
-    },
-    {
       "id": "avspu",
       "rom_name": "avspu"
-    },
-    {
-      "id": "captavenu",
-      "rom_name": "captavenu"
-    },
-    {
-      "id": "ddragon2u",
-      "rom_name": "ddragon2u"
     },
     {
       "id": "dino",
@@ -42,10 +30,6 @@
       "rom_name": "ffightuc"
     },
     {
-      "id": "ga2u",
-      "rom_name": "ga2u"
-    },
-    {
       "id": "goldnaxeud",
       "rom_name": "goldnaxeud"
     },
@@ -60,10 +44,6 @@
     {
       "id": "simpsons",
       "rom_name": "simpsons"
-    },
-    {
-      "id": "ssriders",
-      "rom_name": "ssriders"
     },
     {
       "id": "tmnt",

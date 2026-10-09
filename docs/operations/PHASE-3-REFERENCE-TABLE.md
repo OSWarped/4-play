@@ -109,6 +109,8 @@ control plane, the seat token, and the local media destination address.
 The scripts are intentionally manual first. After the four-seat behavior is
 stable, they can be registered as Windows startup tasks.
 
+See `deploy/windows/README.md` for the current four-seat manual test flow.
+
 ## Diagnostics
 
 For a pass/fail readiness check of the systemd-managed reference server, run:
