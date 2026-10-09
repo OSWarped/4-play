@@ -5,7 +5,7 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 control_plane_url="${FOURPLAY_CONTROL_PLANE_URL:-http://127.0.0.1:8080}"
 seat_api_token="${FOURPLAY_SEAT_API_TOKEN:-phase-1c-seat-token-2026}"
 expected_host_id="${FOURPLAY_RUNTIME_HOST_ID:-reference-linux}"
-minimum_game_count="${FOURPLAY_PHASE3_MINIMUM_GAME_COUNT:-19}"
+minimum_game_count="${FOURPLAY_PHASE3_MINIMUM_GAME_COUNT:-14}"
 strict_idle="${FOURPLAY_PHASE3_STRICT_IDLE:-0}"
 strict_metadata="${FOURPLAY_PHASE3_STRICT_METADATA:-0}"
 

@@ -130,6 +130,13 @@ FOURPLAY_PHASE3_STRICT_METADATA=1 \
 tools/phase-3-systemd-smoke.sh
 ```
 
+The default minimum visible catalog count is the current curated 14-game set.
+Override it when testing a larger import batch:
+
+```bash
+FOURPLAY_PHASE3_MINIMUM_GAME_COUNT=19 tools/phase-3-systemd-smoke.sh
+```
+
 Run this on the Linux server:
 
 ```bash
