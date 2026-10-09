@@ -40,6 +40,16 @@ sudo systemctl enable --now 4play-control-plane.service
 sudo systemctl enable --now 4play-runtime-host-agent.service
 ```
 
+For the reference headless MAME runtime, skip startup warnings and game-info
+screens so games can begin producing raw media without local UI
+acknowledgement:
+
+```bash
+sudo sed -i 's/^skip_warnings .*/skip_warnings             1/' /opt/4play/config/mame/ui.ini
+sudo sed -i 's/^skip_gameinfo .*/skip_gameinfo             1/' /opt/4play/config/mame/mame.ini
+sudo systemctl restart 4play-runtime-host-agent.service
+```
+
 Check status:
 
 ```bash

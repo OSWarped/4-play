@@ -86,6 +86,14 @@ expanded catalog:
 FOURPLAY_STARTUP_MEDIA_TIMEOUT_SECONDS=30
 ```
 
+The reference MAME UI config should also skip startup warnings for headless
+cabinet operation:
+
+```bash
+sudo sed -i 's/^skip_warnings .*/skip_warnings             1/' /opt/4play/config/mame/ui.ini
+sudo sed -i 's/^skip_gameinfo .*/skip_gameinfo             1/' /opt/4play/config/mame/mame.ini
+```
+
 ## Windows seat startup target
 
 Windows launchers are provided in `deploy/windows/`:

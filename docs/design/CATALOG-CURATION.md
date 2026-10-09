@@ -50,12 +50,13 @@ session runtime did not receive video and audio
 then remove it from the visible catalog until a runtime compatibility fix or a
 better variant is available.
 
-Currently quarantined after Phase 3 manual launch testing:
+Sets under retest after enabling `skip_warnings` in the reference MAME UI
+configuration:
 
 | Set | Reason |
 | --- | --- |
-| `avengrgs` | verifies, but headless raw-media launch produced no frames |
-| `captavenu` | verifies, but manual Phase 3 launch failed before media |
-| `ddragon2u` | verifies/best available with redump warning, but produced no frames |
-| `ga2u` | verifies, but headless raw-media launch produced no frames |
-| `ssriders` | verifies, but headless raw-media launch produced no frames |
+| `avengrgs` | verifies, previously produced no frames before warning bypass |
+| `captavenu` | verifies, previously failed before media |
+| `ddragon2u` | verifies/best available with redump warning, previously produced no frames |
+| `ga2u` | verifies, previously produced no frames before warning bypass |
+| `ssriders` | verifies, previously produced no frames before warning bypass |
