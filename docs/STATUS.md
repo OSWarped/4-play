@@ -136,6 +136,9 @@ Last updated: 2026-10-04
 - `catalog-admin seed-placeholders` can initialize the local asset cache with
   copyright-safe SVG placeholders and optional metadata links using the
   `media/<game-id>/` convention
+- `catalog-admin seed-known-metadata` can populate conservative presentation
+  defaults and player-slot labels for the current reference catalog while
+  preserving manual admin edits by default
 - the seat client browsing list now uses editable metadata for stable
   presentation order, genre/year/manufacturer/player details, and media badges
 - the control plane can serve a safe read-only local artwork/media cache from

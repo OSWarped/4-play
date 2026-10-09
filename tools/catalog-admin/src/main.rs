@@ -34,6 +34,10 @@ enum Command {
         update_metadata: bool,
         overwrite: bool,
     },
+    SeedKnownMetadata {
+        overwrite: bool,
+        asset_paths: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +121,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             update_metadata,
             overwrite,
         )?,
+        Command::SeedKnownMetadata {
+            overwrite,
+            asset_paths,
+        } => seed_known_metadata(&client, &config.control_plane_url, overwrite, asset_paths)?,
     }
     Ok(())
 }
@@ -515,6 +523,189 @@ fn seed_placeholders(
     Ok(())
 }
 
+fn seed_known_metadata(
+    client: &Client,
+    control_plane_url: &str,
+    overwrite: bool,
+    asset_paths: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let catalog = client
+        .get(format!("{control_plane_url}/api/v1/games"))
+        .send()?
+        .error_for_status()?
+        .json::<CatalogGameList>()?;
+    let mut updated = 0usize;
+    let mut skipped = 0usize;
+    for game in catalog.games {
+        let Some(defaults) = known_metadata_defaults(&game.id) else {
+            println!("skipped {} - no known metadata defaults", game.id);
+            skipped += 1;
+            continue;
+        };
+        let mut metadata = game.metadata;
+        apply_known_metadata(&mut metadata, defaults, overwrite, asset_paths);
+        client
+            .put(format!(
+                "{control_plane_url}/api/v1/games/{}/metadata",
+                game.id
+            ))
+            .json(&UpdateGameMetadataRequest { metadata })
+            .send()?
+            .error_for_status()?;
+        println!("updated {} - {}", game.id, game.display_name);
+        updated += 1;
+    }
+    println!(
+        "Seeded known metadata for {updated} game{}; {skipped} skipped.",
+        plural(updated)
+    );
+    if !asset_paths {
+        println!(
+            "Asset paths were not changed. Pass --asset-paths after seeding placeholder or real assets."
+        );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KnownMetadataDefaults {
+    game_id: &'static str,
+    sort_title: &'static str,
+    description: &'static str,
+    genre: &'static str,
+    release_year: u16,
+    manufacturer: &'static str,
+    player_count: u32,
+    control_notes: &'static str,
+    player_slots: &'static [(u32, &'static str, &'static str, Option<&'static str>)],
+}
+
+fn known_metadata_defaults(game_id: &str) -> Option<&'static KnownMetadataDefaults> {
+    match game_id {
+        "aliens" => Some(&KnownMetadataDefaults {
+            game_id: "aliens",
+            sort_title: "Aliens",
+            description: "Side-scrolling arcade action game for up to two players.",
+            genre: "Run and gun",
+            release_year: 1990,
+            manufacturer: "Konami",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack and jump buttons.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "kinst" => Some(&KnownMetadataDefaults {
+            game_id: "kinst",
+            sort_title: "Killer Instinct",
+            description: "Head-to-head arcade fighting game for two players.",
+            genre: "Fighting",
+            release_year: 1994,
+            manufacturer: "Rare / Midway",
+            player_count: 2,
+            control_notes: "Six attack buttons: quick, medium, and fierce punches and kicks.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        "tmnt" => Some(&KnownMetadataDefaults {
+            game_id: "tmnt",
+            sort_title: "Teenage Mutant Ninja Turtles",
+            description: "Four-player arcade beat 'em up featuring the Ninja Turtles.",
+            genre: "Beat 'em up",
+            release_year: 1989,
+            manufacturer: "Konami",
+            player_count: 4,
+            control_notes: "Move with the stick; jump and attack can be pressed together for special moves.",
+            player_slots: &[
+                (1, "Leonardo", "P1", Some("Leonardo")),
+                (2, "Michelangelo", "P2", Some("Michelangelo")),
+                (3, "Donatello", "P3", Some("Donatello")),
+                (4, "Raphael", "P4", Some("Raphael")),
+            ],
+        }),
+        "wwfmania" => Some(&KnownMetadataDefaults {
+            game_id: "wwfmania",
+            sort_title: "WWF WrestleMania",
+            description: "Arcade wrestling game with digitized characters and multiplayer action.",
+            genre: "Wrestling",
+            release_year: 1995,
+            manufacturer: "Midway",
+            player_count: 2,
+            control_notes: "Move with the stick; use attack buttons for strikes, grapples, and specials.",
+            player_slots: &[(1, "Player 1", "P1", None), (2, "Player 2", "P2", None)],
+        }),
+        _ => None,
+    }
+}
+
+fn apply_known_metadata(
+    metadata: &mut GameMetadata,
+    defaults: &KnownMetadataDefaults,
+    overwrite: bool,
+    asset_paths: bool,
+) {
+    set_text_field(&mut metadata.sort_title, defaults.sort_title, overwrite);
+    set_text_field(&mut metadata.description, defaults.description, overwrite);
+    set_text_field(&mut metadata.genre, defaults.genre, overwrite);
+    if overwrite || metadata.release_year.is_none() {
+        metadata.release_year = Some(defaults.release_year);
+    }
+    set_text_field(&mut metadata.manufacturer, defaults.manufacturer, overwrite);
+    if overwrite || metadata.player_count.is_none() {
+        metadata.player_count = Some(defaults.player_count);
+    }
+    set_text_field(
+        &mut metadata.control_notes,
+        defaults.control_notes,
+        overwrite,
+    );
+    apply_known_player_slots(metadata, defaults, overwrite, asset_paths);
+}
+
+fn set_text_field(field: &mut Option<String>, value: &str, overwrite: bool) {
+    if overwrite
+        || field
+            .as_deref()
+            .is_none_or(|current| current.trim().is_empty())
+    {
+        *field = Some(value.to_owned());
+    }
+}
+
+fn apply_known_player_slots(
+    metadata: &mut GameMetadata,
+    defaults: &KnownMetadataDefaults,
+    overwrite: bool,
+    asset_paths: bool,
+) {
+    for (player_number, label, position, character) in defaults.player_slots {
+        let index = metadata
+            .player_slots
+            .iter()
+            .position(|slot| slot.player_number == *player_number);
+        if index.is_none() {
+            metadata.player_slots.push(GamePlayerSlotMetadata {
+                player_number: *player_number,
+                label: None,
+                position: None,
+                character: None,
+                artwork_path: None,
+            });
+        }
+        let slot = metadata
+            .player_slots
+            .iter_mut()
+            .find(|slot| slot.player_number == *player_number)
+            .expect("slot metadata was just inserted when missing");
+        set_text_field(&mut slot.label, label, overwrite);
+        set_text_field(&mut slot.position, position, overwrite);
+        if let Some(character) = character {
+            set_text_field(&mut slot.character, character, overwrite);
+        }
+    }
+    if asset_paths {
+        let paths = conventional_asset_paths(defaults.game_id);
+        apply_placeholder_paths(metadata, &paths, overwrite);
+    }
+}
+
 fn conventional_asset_paths(game_id: &str) -> [(&'static str, String); 4] {
     [
         ("artwork", format!("media/{game_id}/artwork.svg")),
@@ -684,7 +875,7 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
 fn parse_command(values: &[String]) -> Result<Command, String> {
     let Some(command) = values.first().map(String::as_str) else {
         return Err(
-            "missing command: list, report, show, set, set-slot, export, import, validate-assets, or seed-placeholders"
+            "missing command: list, report, show, set, set-slot, export, import, validate-assets, seed-placeholders, or seed-known-metadata"
                 .to_owned(),
         );
     };
@@ -740,6 +931,7 @@ fn parse_command(values: &[String]) -> Result<Command, String> {
             Ok(Command::ValidateAssets)
         }
         "seed-placeholders" => parse_seed_placeholders(&values[1..]),
+        "seed-known-metadata" => parse_seed_known_metadata(&values[1..]),
         _ => Err(format!("unknown command: {command}")),
     }
 }
@@ -812,6 +1004,22 @@ fn parse_seed_placeholders(values: &[String]) -> Result<Command, String> {
         asset_root: asset_root.ok_or("seed-placeholders requires --asset-root <path>")?,
         update_metadata,
         overwrite,
+    })
+}
+
+fn parse_seed_known_metadata(values: &[String]) -> Result<Command, String> {
+    let mut overwrite = false;
+    let mut asset_paths = false;
+    for value in values {
+        match value.as_str() {
+            "--overwrite" => overwrite = true,
+            "--asset-paths" => asset_paths = true,
+            option => return Err(format!("unknown seed-known-metadata option: {option}")),
+        }
+    }
+    Ok(Command::SeedKnownMetadata {
+        overwrite,
+        asset_paths,
     })
 }
 
@@ -979,6 +1187,7 @@ fn usage() -> ! {
   catalog-admin --control-plane <url> [--api-token <token>] import --input <path>
   catalog-admin --control-plane <url> [--api-token <token>] validate-assets
   catalog-admin --control-plane <url> [--api-token <token>] seed-placeholders --asset-root <path> [--update-metadata] [--overwrite]
+  catalog-admin --control-plane <url> [--api-token <token>] seed-known-metadata [--asset-paths] [--overwrite]
 
 Metadata options:
   --sort-title <text>
@@ -1196,6 +1405,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_seed_known_metadata_command() {
+        let command = parse_command(&[
+            "seed-known-metadata".to_owned(),
+            "--asset-paths".to_owned(),
+            "--overwrite".to_owned(),
+        ])
+        .unwrap();
+
+        match command {
+            Command::SeedKnownMetadata {
+                overwrite,
+                asset_paths,
+            } => {
+                assert!(overwrite);
+                assert!(asset_paths);
+            }
+            _ => panic!("expected seed-known-metadata command"),
+        }
+    }
+
+    #[test]
     fn asset_references_list_metadata_media_paths() {
         let metadata = GameMetadata {
             artwork_path: Some("media/tmnt/artwork.png".to_owned()),
@@ -1257,6 +1487,49 @@ mod tests {
         assert_eq!(
             metadata.artwork_path.as_deref(),
             Some("media/tmnt/artwork.svg")
+        );
+    }
+
+    #[test]
+    fn known_metadata_seed_preserves_manual_values_without_overwrite() {
+        let defaults = known_metadata_defaults("tmnt").unwrap();
+        let mut metadata = GameMetadata {
+            genre: Some("Custom genre".to_owned()),
+            ..GameMetadata::default()
+        };
+
+        apply_known_metadata(&mut metadata, defaults, false, false);
+
+        assert_eq!(
+            metadata.sort_title.as_deref(),
+            Some("Teenage Mutant Ninja Turtles")
+        );
+        assert_eq!(metadata.genre.as_deref(), Some("Custom genre"));
+        assert_eq!(metadata.player_count, Some(4));
+        assert_eq!(metadata.player_slots.len(), 4);
+        assert_eq!(metadata.player_slots[0].label.as_deref(), Some("Leonardo"));
+        assert_eq!(metadata.artwork_path, None);
+    }
+
+    #[test]
+    fn known_metadata_seed_can_overwrite_and_set_conventional_asset_paths() {
+        let defaults = known_metadata_defaults("tmnt").unwrap();
+        let mut metadata = GameMetadata {
+            genre: Some("Custom genre".to_owned()),
+            artwork_path: Some("custom/artwork.png".to_owned()),
+            ..GameMetadata::default()
+        };
+
+        apply_known_metadata(&mut metadata, defaults, true, true);
+
+        assert_eq!(metadata.genre.as_deref(), Some("Beat 'em up"));
+        assert_eq!(
+            metadata.artwork_path.as_deref(),
+            Some("media/tmnt/artwork.svg")
+        );
+        assert_eq!(
+            metadata.screenshot_path.as_deref(),
+            Some("media/tmnt/screenshot.svg")
         );
     }
 

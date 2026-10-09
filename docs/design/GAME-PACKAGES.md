@@ -149,6 +149,12 @@ cargo run -p catalog-admin -- `
   seed-placeholders `
   --asset-root /opt/4play/assets `
   --update-metadata
+
+cargo run -p catalog-admin -- `
+  --control-plane http://192.168.20.68:8080 `
+  --api-token <admin-or-seat-api-token> `
+  seed-known-metadata `
+  --asset-paths
 ```
 
 This CLI is an interim admin module. `report` summarizes how complete each
@@ -161,8 +167,11 @@ paths. `validate-assets` checks every artwork, marquee, screenshot, logo, and
 slot artwork path against the configured local asset endpoint.
 `seed-placeholders` creates copyright-safe SVG placeholders under the asset root
 using the conventional `media/<game-id>/` layout, and can optionally update
-metadata to point at those files. Scrapers can later replace those placeholder
-files with provider-sourced media without changing the catalog schema.
+metadata to point at those files. `seed-known-metadata` fills conservative
+presentation defaults for the current reference catalog while preserving manual
+edits unless `--overwrite` is passed; `--asset-paths` also links the conventional
+placeholder/asset paths. Scrapers can later replace those placeholder files with
+provider-sourced media without changing the catalog schema.
 
 ## Validation
 
