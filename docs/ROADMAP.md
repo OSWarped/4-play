@@ -128,7 +128,7 @@ termination or runtime loss. See
 
 ## Phase 2 — Product MVP: Shared Sessions
 
-Status: **in progress on the reference host**.
+Status: **accepted on the reference host**.
 
 - active-session discovery
 - low-cost live previews
@@ -139,8 +139,15 @@ Status: **in progress on the reference host**.
 - configurable runtime-host media/input port pools for n-seat allocation
 - fixed-character and positioned cabinet profiles
 - preview degradation that never blocks gameplay
+- editable catalog metadata, placeholder assets, and machine-readable admin
+  validation reports
+- terminal browser rendering of game metadata, active sessions, player slots,
+  preview status, and spectator counts
 
-**Exit:** multiple seats can discover what is happening, inspect available positions, start or join a game, and spectate without operator intervention.
+**Exit achieved:** multiple seats can discover what is happening, inspect
+available positions, start or join a game, and spectate without operator
+intervention. Automated smoke and Windows multi-seat manual validation passed;
+see [the Phase 2 validation record](testing/PHASE-2-SHARED-SESSION-VALIDATION.md).
 
 ## Phase 3 — Four-Seat Reference Table
 

@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-Last updated: 2026-10-04
+Last updated: 2026-10-09
 
 ## Working now
 
@@ -96,9 +96,10 @@ Last updated: 2026-10-04
   injected runtime loss, recovery to browsing, and the complete seat workflow
 - Phase 1C control-plane orchestration is complete on the reference host
 
-## In progress
+## Phase 2 accepted
 
-- Phase 2 shared-session discovery and player-slot modeling
+- Phase 2 shared-session discovery and player-slot modeling passed automated
+  and manual validation on the reference host
 - session responses expose explicit player slots derived from each game's
   maximum player count
 - the seat client lists active sessions and occupied/open slots while browsing
@@ -175,14 +176,17 @@ Last updated: 2026-10-04
   summaries from editable catalog metadata
 - `seat-input --list-only` renders the current active-session and game browser
   once, then exits for automated validation and kiosk diagnostics
+- Windows manual validation confirmed seat 1 start, seat 2 join, independent
+  player controls, active-session browser rendering, spectator mode, and normal
+  browsing recovery after stop
 
 ## Not started
 
+- Phase 3 four-seat reference-table hardening
 - lower-bitrate preview streams distinct from full-quality spectator media
 
 ## Next milestone
 
-Validate the Phase 2 shared-session product flow with multiple seats: start,
-join, reconnect, spectate, browse still previews, and confirm stale/fallback
-preview degradation never blocks gameplay. The remaining product work is a more
-cabinet-like browser/admin UI on top of the now-working APIs.
+Begin Phase 3 four-seat reference-table work: startup/recovery scripts, stable
+service configuration, firewall/port guidance, kiosk diagnostics, and longer
+four-seat soak validation.
