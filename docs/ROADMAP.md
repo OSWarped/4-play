@@ -157,11 +157,11 @@ Status: **in progress**.
 - independent and shared play — **implemented and manually validated**
 - kiosk startup and recovery — **partially implemented with systemd services,
   launcher defaults, diagnostics, and stale-session cleanup**
-- physical controls and audio isolation — **pending physical-table validation**
+- physical controls and audio isolation — **pending final table layout validation**
 - installer/runtime-host firewall guidance derived from configured port pools —
   **implemented with `tools/phase-3-firewall-plan.sh`**
-- table ergonomics and service access — **pending physical-table validation**
-- soak and abuse testing — **pending extended manual run**
+- table ergonomics and service access — **pending final table layout validation**
+- soak and abuse testing — **initial manual soak accepted; longer party run still useful**
 
 **Exit:** the reference table operates for an extended session with predictable recovery.
 

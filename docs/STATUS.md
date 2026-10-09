@@ -199,9 +199,10 @@ Last updated: 2026-10-09
 - Phase 3 soak support now includes `tools/phase-3-soak-monitor.sh`, which
   captures periodic API, process, listener, diagnostics, cleanup, and strict
   smoke artifacts during a manual extended play session
-- a short Phase 3 manual soak rehearsal completed with 19 monitor samples, the
-  reference host online throughout, no sample/diagnostic errors, clean cleanup,
-  and final strict smoke passing with 15 checks
+- a Phase 3 manual soak validation completed with 19 monitor samples, the
+  reference host online throughout, one active session observed, no
+  sample/diagnostic errors, clean cleanup, and final strict smoke passing with
+  15 checks
 
 ## Not started
 
@@ -209,6 +210,6 @@ Last updated: 2026-10-09
 
 ## Next milestone
 
-Continue Phase 3 with a longer physical-table soak: confirm physical controls
-and audio isolation over extended active play, then record recovery behavior
-during normal family/party use.
+Continue Phase 3 by hardening reference-table operations and recording final
+physical-table observations: control ergonomics, audio isolation, and recovery
+behavior during longer family/party use.

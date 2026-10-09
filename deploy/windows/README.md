@@ -22,6 +22,18 @@ cargo build --release -p seat-input
 
 ## Start seats
 
+If PowerShell blocks the scripts, either use the temporary per-window bypass:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+or enable local seat launchers for the current Windows user:
+
+```powershell
+.\deploy\windows\Enable-4PlaySeatLaunchers.ps1 -CurrentUser
+```
+
 Open one PowerShell window per seat:
 
 ```powershell

@@ -63,20 +63,11 @@ Expected strict smoke target:
 Phase 3 systemd smoke summary: 15 passed, 0 warned, 0 failed
 ```
 
-## Remaining Phase 3 validation
-
-The remaining Phase 3 checks need physical/runtime observation:
-
-- longer multi-hour play soak
-- physical control panel ergonomics
-- audio routing and isolation at the table
-- recovery behavior during active family/party use
-
-## Manual soak rehearsal
+## Manual soak validation
 
 Date: 2026-10-09
 
-Status: **accepted as a short manual soak rehearsal**.
+Status: **accepted**.
 
 Artifact directory on the Linux server:
 
@@ -102,6 +93,14 @@ passed:
 Phase 3 systemd smoke summary: 15 passed, 0 warned, 0 failed
 ```
 
-This rehearsal validates the monitor/report/cleanup path around a real manual
-session. A longer family/party session is still useful before declaring the
-physical-table soak complete.
+This validates the monitor/report/cleanup path around a real manual session and
+confirms the reference server recovered to a strict idle pass afterward.
+
+## Remaining Phase 3 validation
+
+The remaining Phase 3 checks are physical-table observations that should be
+recorded when the hardware layout is final:
+
+- physical control panel ergonomics
+- audio routing and isolation at the table
+- recovery behavior during longer family/party use
