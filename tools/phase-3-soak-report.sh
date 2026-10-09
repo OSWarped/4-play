@@ -64,18 +64,16 @@ print(
 PY
 
 if [[ -d "$samples_directory" ]]; then
-    error_count="$(
-        find "$samples_directory" -type f -name '*.err' -print0 \
-            | xargs -0 grep -L '^$' 2>/dev/null \
-            | wc -l
-    )"
+    nonempty_error_list="$(mktemp)"
+    find "$samples_directory" -type f -name '*.err' -size +0c -print \
+        >"$nonempty_error_list"
+    error_count="$(wc -l <"$nonempty_error_list")"
     printf 'sample_error_files=%s\n' "$error_count"
     if [[ "$error_count" != "0" ]]; then
         printf 'nonempty sample error files:\n'
-        find "$samples_directory" -type f -name '*.err' -print0 \
-            | xargs -0 grep -L '^$' 2>/dev/null \
-            | sed 's/^/  /'
+        sed 's/^/  /' "$nonempty_error_list"
     fi
+    rm -f "$nonempty_error_list"
 fi
 
 if [[ -f "$diagnostics_err_path" && -s "$diagnostics_err_path" ]]; then
