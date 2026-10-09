@@ -235,6 +235,10 @@ validated on the reference setup. The validation record is in
 Use [Phase 3 Soak Runbook](../testing/PHASE-3-SOAK-RUNBOOK.md) for the longer
 family/party validation run that remains before Phase 3 exit.
 
+During that run, `tools/phase-3-soak-monitor.sh` can capture periodic API,
+process, listener, and diagnostic snapshots without controlling the game
+sessions.
+
 ## Acceptance target
 
 Phase 3 exits when the reference table can:

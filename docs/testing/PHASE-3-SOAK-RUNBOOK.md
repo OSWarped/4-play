@@ -27,6 +27,20 @@ FOURPLAY_PHASE3_STRICT_METADATA=1 \
 tools/phase-3-systemd-smoke.sh
 ```
 
+Start the soak monitor in a separate SSH terminal. This only observes the
+server; it does not launch games or seats:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+tools/phase-3-soak-monitor.sh \
+  --seconds 7200 \
+  --sample-seconds 30
+```
+
+For a shorter rehearsal, use `--seconds 300`.
+
 On each Windows seat PowerShell:
 
 ```powershell
@@ -71,6 +85,10 @@ Collect diagnostics before cleanup if anything behaved oddly:
 cd ~/src/4-play
 tools/phase-3-diagnostics.sh
 ```
+
+If you ran the soak monitor, keep the printed artifact directory. It contains
+per-sample API snapshots, process/listener snapshots, a summary table, and a
+full diagnostics capture.
 
 Clean up sessions:
 
