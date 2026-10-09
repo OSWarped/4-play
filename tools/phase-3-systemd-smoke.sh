@@ -140,7 +140,13 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 sessions = data.get("sessions", [])
 active = [
     session for session in sessions
-    if session.get("state") not in {"Stopped", "Failed"}
+    if session.get("state") not in {
+        "stopped",
+        "allocation_failed",
+        "launch_failed",
+        "runtime_lost",
+        "terminated",
+    }
 ]
 if active:
     raise SystemExit(f"expected idle server, found {len(active)} active sessions")
