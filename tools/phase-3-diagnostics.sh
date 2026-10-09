@@ -57,7 +57,14 @@ run ss -ltnp
 run ss -lunp
 
 section "runtime processes"
-run ps -ef
+run sh -c "ps -ef | grep -E 'control-plane-server|runtime-host-agent|session-runtime|mame|ffmpeg' | grep -v grep"
+
+section "recent service journal"
+run journalctl \
+    -u 4play-control-plane.service \
+    -u 4play-runtime-host-agent.service \
+    --no-pager \
+    -n 80
 
 section "uinput"
 run ls -l /dev/uinput
@@ -83,4 +90,3 @@ if [[ -d /tmp/4play/host-agent ]]; then
 else
     printf '/tmp/4play/host-agent does not exist\n'
 fi
-

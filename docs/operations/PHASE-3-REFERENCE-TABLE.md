@@ -104,6 +104,7 @@ The report checks:
 - active MAME, FFmpeg, and session-runtime children
 - `/dev/uinput` permissions
 - 4-Play virtual input devices
+- recent control-plane and runtime-host-agent journal entries
 - recent host-agent logs
 
 For a machine-readable catalog snapshot:
@@ -112,6 +113,21 @@ For a machine-readable catalog snapshot:
 FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
 FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
 ./target/release/catalog-admin report --json
+```
+
+After moving to the systemd-backed database, restore the current reference
+metadata if the report shows incomplete catalog entries:
+
+```bash
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+./target/release/catalog-admin seed-known-metadata
+
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+./target/release/catalog-admin seed-placeholders \
+  --asset-root /home/blake/src/4-play/data/assets \
+  --update-metadata
 ```
 
 ## Acceptance target

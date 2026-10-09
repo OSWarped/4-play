@@ -53,6 +53,26 @@ cd ~/src/4-play
 tools/phase-3-diagnostics.sh
 ```
 
+If the service installation created a fresh control-plane database, restore the
+reference presentation metadata and placeholder assets:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+./target/release/catalog-admin seed-known-metadata
+
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+./target/release/catalog-admin seed-placeholders \
+  --asset-root /home/blake/src/4-play/data/assets \
+  --update-metadata
+
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \
+FOURPLAY_SEAT_API_TOKEN=phase-1c-seat-token-2026 \
+./target/release/catalog-admin report
+```
+
 ## Firewall
 
 Allow the reference control and data-plane ports from trusted LAN clients:
