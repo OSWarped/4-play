@@ -127,7 +127,8 @@ for sessions_path in samples:
             state_counts[session.get("state", "unknown")] = state_counts.get(session.get("state", "unknown"), 0) + 1
         session_states = ",".join(f"{state}:{count}" for state, count in sorted(state_counts.items())) or "none"
     try:
-        hosts = json.loads(hosts_path.read_text(encoding="utf-8")).get("runtime_hosts", [])
+        host_payload = json.loads(hosts_path.read_text(encoding="utf-8"))
+        hosts = host_payload.get("hosts", host_payload.get("runtime_hosts", []))
     except Exception as error:
         host_summary = f"hosts_error:{error}"
     else:
