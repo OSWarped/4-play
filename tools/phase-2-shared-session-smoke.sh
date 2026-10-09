@@ -327,6 +327,22 @@ if wait_for_summary_status still_available "$summary_json" \
 else
     fail "active-session discovery exposes a fresh still preview"
 fi
+seat_active_browser_output="$results_directory/seat-browser-active-session.txt"
+if "$seat_input_binary" \
+    --control-plane "$base_url" \
+    --api-token "$seat_api_token" \
+    --seat-id phase-2-browser-seat \
+    --destination-ip 127.0.0.1 \
+    --list-only >"$seat_active_browser_output" \
+    && grep -Fq 'Active sessions:' "$seat_active_browser_output" \
+    && grep -Fq 'Teenage Mutant Ninja Turtles' "$seat_active_browser_output" \
+    && grep -Fq 'P1 Leonardo occupied by phase-2-seat-1' "$seat_active_browser_output" \
+    && grep -Fq 'P2 Michelangelo open' "$seat_active_browser_output" \
+    && grep -Fq 'preview: still preview available at' "$seat_active_browser_output"; then
+    pass "seat browser renders active session slots and preview details"
+else
+    fail "seat browser renders active session slots and preview details"
+fi
 preview_file="$results_directory/preview.bmp"
 if curl -fsS "$base_url/api/v1/assets/previews/$session_id.bmp" >"$preview_file" \
     && [[ "$(dd if="$preview_file" bs=2 count=1 2>/dev/null)" == "BM" ]]; then

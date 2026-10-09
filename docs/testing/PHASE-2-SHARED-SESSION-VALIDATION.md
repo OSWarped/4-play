@@ -42,22 +42,24 @@ It verifies the current Phase 2 product flow:
 6. seat 1 starts a TMNT session
 7. runtime host launches the session and reports it active
 8. active-session discovery exposes a fresh still preview
-9. the preview BMP is served through the authenticated asset endpoint
-10. old still previews are labeled `stale_available`
-11. seat 2 reserves player 2 atomically
-12. seat 2 connects, disconnects into a reconnectable lease, reconnects, and
+9. the seat browser renders active-session slots, seeded player labels, and
+   preview details
+10. the preview BMP is served through the authenticated asset endpoint
+11. old still previews are labeled `stale_available`
+12. seat 2 reserves player 2 atomically
+13. seat 2 connects, disconnects into a reconnectable lease, reconnects, and
     releases player 2 back to open
-13. a spectator receives a distinct media-port grant
-14. active-session discovery reports spectator count
-15. runtime assignments expose spectator media ports for the running session
-16. the spectator grant releases without affecting player slots
-17. the shared session stops cleanly and reaps its runtime process
-18. the agent and control plane exit cleanly
+14. a spectator receives a distinct media-port grant
+15. active-session discovery reports spectator count
+16. runtime assignments expose spectator media ports for the running session
+17. the spectator grant releases without affecting player slots
+18. the shared session stops cleanly and reaps its runtime process
+19. the agent and control plane exit cleanly
 
-The accepted automated run produced 41 passing assertions:
+The accepted automated run produced 42 passing assertions:
 
 ```text
-Results: /tmp/4play-phase-2-shared-session-smoke-20261009-082617
+Results: /tmp/4play-phase-2-shared-session-smoke-20261009-082759
 OVERALL  PASS
 ```
 
