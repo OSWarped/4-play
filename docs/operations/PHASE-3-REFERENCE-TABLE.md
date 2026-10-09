@@ -50,8 +50,17 @@ Systemd templates are provided in `deploy/systemd/`:
 - `4play-control-plane.service`
 - `4play-runtime-host-agent.service`
 - `4play.env.example`
+- `install-reference-server.sh`
 
 Install them on the Linux server only after reviewing the tokens and paths.
+
+```bash
+cd ~/src/4-play
+sudo deploy/systemd/install-reference-server.sh
+sudo nano /etc/4play/4play.env
+sudo systemctl enable --now 4play-control-plane.service
+sudo systemctl enable --now 4play-runtime-host-agent.service
+```
 
 ## Windows seat startup target
 
@@ -110,4 +119,3 @@ Phase 3 exits when the reference table can:
   unrelated sessions
 - run a multi-hour family/party play session with predictable cleanup
 - produce a useful diagnostics report when something goes wrong
-
