@@ -24,9 +24,15 @@ diagnostic tool, but it should not define the final player experience.
 3. **Operator/admin UI** — management interface for sessions, catalog metadata,
    artwork, diagnostics, and system health.
 
-Player and admin workflows do not need to live in the same application. The
-seat UI should stay controller-friendly and safe for public use; the admin UI
-can be form-heavy and operator-focused.
+Player and admin workflows should be separate applications:
+
+- **Seat Client UI** — player/spectator kiosk app at the table.
+- **Admin/Producer UI** — operations, bookkeeping, game library management,
+  tournament orchestration, and live-production control.
+
+The seat UI should stay controller-friendly and safe for public use. The
+admin/producer UI can be form-heavy, information-dense, mouse/keyboard friendly,
+and appropriate for a booth, desk, tablet, or browser.
 
 ## Seat startup flow
 
@@ -212,11 +218,25 @@ Kicks:
 This page should be available before launch, while joined, and while
 spectating.
 
-## Operator/admin workflow
+## Admin/producer workflow
 
-Operator/admin should be separate from normal player flow.
+Admin/producer should be separate from normal player flow.
 
-Operator sections:
+The admin app is not merely a settings screen. It is the site orchestration
+console and production booth for a location running 4-Play.
+
+Admin/producer responsibilities:
+
+- orchestrate sessions and seats;
+- keep the game catalog and metadata healthy;
+- manage game/ROM updates and visibility;
+- bookkeep tournaments, matches, and player assignments;
+- spectate active sessions;
+- provide clean spectator feeds for OBS or other streaming software;
+- monitor health and recover stale sessions;
+- run diagnostics and acceptance checks.
+
+Admin/producer sections:
 
 - Dashboard
 - Active sessions
@@ -227,6 +247,10 @@ Operator sections:
 - Artwork/media manager
 - ROM validation/import
 - Diagnostics and acceptance checks
+- Tournaments
+- Match queue
+- Production/spectator feeds
+- Stream/recording notes
 
 Admin actions:
 
@@ -238,6 +262,70 @@ Admin actions:
 - set preferred ROM variant
 - manage artwork paths
 - review missing assets
+- create tournament brackets or match queues
+- assign players/seats to tournament matches
+- launch a match session
+- spectate a selected match
+- expose a clean producer/spectator view for OBS capture
+- record match results
+- annotate stream notes or match metadata
+
+## Tournament and live-production workflow
+
+4-Play should support a location hosting events such as Street Fighter, Mortal
+Kombat, Killer Instinct, or beat 'em up exhibitions. In this mode, the
+admin/producer app acts like a lightweight tournament desk and production
+controller.
+
+Example flow:
+
+```text
+Create event
+  ↓
+Select game / rule set
+  ↓
+Create match queue or bracket
+  ↓
+Assign players/seats
+  ↓
+Launch match session
+  ↓
+Open production spectator feed
+  ↓
+Feed OBS / streaming software
+  ↓
+Record winner, notes, clip markers
+  ↓
+Advance next match
+```
+
+The production spectator view is different from a normal seat spectator:
+
+- it should be clean and capture-friendly;
+- it should avoid player/admin controls in the captured region;
+- it should support predictable sizing/aspect ratio;
+- it should make audio/video sync and stability a priority;
+- it should be able to follow a selected session or match;
+- it should optionally show stream-safe overlays later, such as player names,
+  round labels, or bracket context.
+
+Initial production requirements:
+
+- admin can see all active sessions;
+- admin can open a spectator feed for any active session;
+- that feed can be captured by OBS or similar software;
+- admin can stop/recover sessions without affecting unrelated matches;
+- admin can record match result notes manually.
+
+Future production requirements:
+
+- tournament bracket integration;
+- player profiles;
+- match result persistence;
+- stream overlay output;
+- automatic VOD/clip metadata;
+- scheduled events and game rotations;
+- multi-table/multi-host event dashboard.
 
 ## Error and recovery UX
 
