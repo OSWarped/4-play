@@ -45,6 +45,21 @@ http://127.0.0.1:40704
 This is not the final desktop package. It is an operational bridge that lets the
 UI call the same Rust backend contract a packaged shell will use.
 
+## Current gameplay key map
+
+When the UI has started or joined a player runtime, the browser window forwards
+keyboard state through the native bridge:
+
+- `W/A/S/D` or arrow keys: movement, including diagonals
+- `J/K/L`: action buttons 1-3
+- `M/,/.`: action buttons 4-6
+- `1`: coin
+- `2`: start
+- `Esc`: send stop / stop local runtime
+
+The UI tracks held keys, sends button release events, and neutralizes input when
+the browser window loses focus.
+
 Security boundary:
 
 - do not render session input tokens;

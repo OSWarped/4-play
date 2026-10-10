@@ -2,6 +2,9 @@ const state = {
   viewModel: null,
   selectedGameIndex: 0,
   overlayTimer: null,
+  heldKeys: new Set(),
+  lastAxis: { x: 0, y: 0 },
+  inputEnabled: false,
 };
 
 const elements = {
@@ -15,11 +18,9 @@ const elements = {
 };
 
 elements.refresh.addEventListener("click", () => refresh());
-document.addEventListener("keydown", (event) => {
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", " "].includes(event.key)) {
-    showOverlay("Navigation active", ["Start", "Join", "Spectate"]);
-  }
-});
+document.addEventListener("keydown", (event) => handleKey(event, true));
+document.addEventListener("keyup", (event) => handleKey(event, false));
+window.addEventListener("blur", () => neutralizeInput("Window focus lost"));
 
 refresh();
 
@@ -59,9 +60,11 @@ async function nativeCommand(command) {
 
 function render() {
   const view = state.viewModel;
+  state.inputEnabled = view.current_runtime?.mode === "player";
   elements.runtimeStatus.textContent = runtimeLabel(view.current_runtime);
   elements.games.replaceChildren(...view.games.map((game) => gameCard(game)));
   elements.sessions.replaceChildren(...view.active_sessions.map((session) => sessionCard(session)));
+  renderRuntimeActions(view.current_runtime);
 }
 
 function gameCard(game) {
@@ -128,6 +131,108 @@ function sessionCard(session) {
   return card;
 }
 
+function renderRuntimeActions(runtime) {
+  if (!runtime) {
+    return;
+  }
+  const actions = runtime.mode === "player"
+    ? ["WASD move", "J/K/L/M/,/. buttons", "1 coin", "2 start", "Esc stop"]
+    : ["Spectating", "Join an open slot to play", "Esc stop local feed"];
+  showOverlay(runtimeLabel(runtime), actions);
+}
+
+async function handleKey(event, pressed) {
+  if (event.repeat && pressed) {
+    return;
+  }
+
+  if (event.code === "Escape" && pressed) {
+    event.preventDefault();
+    const command = state.viewModel?.current_runtime?.mode === "player"
+      ? { type: "send_stop_input" }
+      : { type: "stop_runtime" };
+    await nativeCommand(command);
+    state.heldKeys.clear();
+    state.lastAxis = { x: 0, y: 0 };
+    showOverlay("Stop sent", ["Runtime stop requested", "Refreshing"]);
+    setTimeout(() => refresh(), 500);
+    return;
+  }
+
+  if (!state.inputEnabled) {
+    if (pressed && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Space"].includes(event.code)) {
+      showOverlay("Navigation active", ["Start", "Join", "Spectate"]);
+    }
+    return;
+  }
+
+  const button = buttonForKey(event.code);
+  if (button) {
+    event.preventDefault();
+    await setHeldKey(event.code, pressed);
+    await nativeCommand({ type: "set_button", button, pressed });
+    showOverlay("Input active", ["WASD move", "J/K/L/M/,/. attack", "1 coin", "2 start"]);
+    return;
+  }
+
+  if (isAxisKey(event.code)) {
+    event.preventDefault();
+    await setHeldKey(event.code, pressed);
+    const axis = axisFromHeldKeys();
+    if (axis.x !== state.lastAxis.x || axis.y !== state.lastAxis.y) {
+      state.lastAxis = axis;
+      await nativeCommand({ type: "set_axis", axis_x: axis.x, axis_y: axis.y });
+    }
+    showOverlay("Input active", ["WASD move", "Diagonals supported"]);
+  }
+}
+
+async function setHeldKey(code, pressed) {
+  if (pressed) {
+    state.heldKeys.add(code);
+  } else {
+    state.heldKeys.delete(code);
+  }
+}
+
+async function neutralizeInput(reason) {
+  if (!state.inputEnabled || state.heldKeys.size === 0) {
+    return;
+  }
+  state.heldKeys.clear();
+  state.lastAxis = { x: 0, y: 0 };
+  await nativeCommand({ type: "neutralize_input" });
+  showOverlay(reason, ["Input neutralized"]);
+}
+
+function buttonForKey(code) {
+  return {
+    KeyJ: "action1",
+    KeyK: "action2",
+    KeyL: "action3",
+    KeyM: "action4",
+    Comma: "action5",
+    Period: "action6",
+    Digit1: "coin",
+    Digit2: "start",
+  }[code] ?? null;
+}
+
+function isAxisKey(code) {
+  return ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(code);
+}
+
+function axisFromHeldKeys() {
+  const left = state.heldKeys.has("KeyA") || state.heldKeys.has("ArrowLeft");
+  const right = state.heldKeys.has("KeyD") || state.heldKeys.has("ArrowRight");
+  const up = state.heldKeys.has("KeyW") || state.heldKeys.has("ArrowUp");
+  const down = state.heldKeys.has("KeyS") || state.heldKeys.has("ArrowDown");
+  return {
+    x: left === right ? 0 : left ? -1 : 1,
+    y: up === down ? 0 : up ? -1 : 1,
+  };
+}
+
 function showOverlay(title, actions) {
   elements.overlayTitle.textContent = title;
   elements.overlayActions.replaceChildren(
@@ -148,11 +253,11 @@ function runtimeLabel(runtime) {
     return "Browsing";
   }
   const player = runtime.player_number ? ` P${runtime.player_number}` : "";
-  return `${runtime.mode}${player} · ${runtime.game_id}`;
+  return `${runtime.mode}${player} - ${runtime.game_id}`;
 }
 
 function summaryLine(game) {
-  return [game.release_year, game.manufacturer].filter(Boolean).join(" · ") || "Ready to launch";
+  return [game.release_year, game.manufacturer].filter(Boolean).join(" - ") || "Ready to launch";
 }
 
 function escapeHtml(value) {
