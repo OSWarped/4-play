@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>4-Play Seat</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">4-Play</p>
+          <h1>Seat Client</h1>
+        </div>
+        <div class="status-pill" id="runtime-status">Browsing</div>
+      </header>
+
+      <section class="hero" id="hero">
+        <div>
+          <p class="eyebrow">Ready</p>
+          <h2>Select a game or join a live cabinet</h2>
+          <p>
+            Native backend owns media, input, and private grants. This UI only
+            sees safe status and view models.
+          </p>
+        </div>
+      </section>
+
+      <section class="layout">
+        <section class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h2>Games</h2>
+            </div>
+            <button id="refresh">Refresh</button>
+          </div>
+          <div class="grid" id="games"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Live</p>
+              <h2>Active Sessions</h2>
+            </div>
+          </div>
+          <div class="stack" id="sessions"></div>
+        </section>
+      </section>
+
+      <section class="overlay hidden" id="actions-overlay">
+        <div>
+          <p class="eyebrow">Actions</p>
+          <strong id="overlay-title">Browsing</strong>
+        </div>
+        <div class="overlay-actions" id="overlay-actions"></div>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
