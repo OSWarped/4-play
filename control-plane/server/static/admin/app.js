@@ -337,6 +337,17 @@ function renderProduction(session) {
       <button id="stop-session" class="danger" type="button">Stop session</button>
       <div id="spectator-grant-result"></div>
       <div id="session-action-result"></div>
+      <div class="producer-notes">
+        <label>
+          <span>Producer notes</span>
+          <textarea id="producer-notes" rows="6" placeholder="Match notes, winner, stream callouts, technical observations...">${escapeHtml(producerNotesForSession(session.id))}</textarea>
+        </label>
+        <div class="form-actions">
+          <button id="save-producer-notes" type="button">Save notes</button>
+          <button id="clear-producer-notes" type="button">Clear notes</button>
+        </div>
+        <div id="producer-notes-result"></div>
+      </div>
     </div>
   `;
   document
@@ -345,6 +356,36 @@ function renderProduction(session) {
   document
     .querySelector("#stop-session")
     .addEventListener("click", () => stopSession(session));
+  document
+    .querySelector("#save-producer-notes")
+    .addEventListener("click", () => saveProducerNotes(session.id));
+  document
+    .querySelector("#clear-producer-notes")
+    .addEventListener("click", () => clearProducerNotes(session.id));
+}
+
+function producerNotesForSession(sessionId) {
+  return localStorage.getItem(producerNotesKey(sessionId)) || "";
+}
+
+function producerNotesKey(sessionId) {
+  return `fourplay.producerNotes.${sessionId}`;
+}
+
+function saveProducerNotes(sessionId) {
+  const notes = document.querySelector("#producer-notes").value.trim();
+  localStorage.setItem(producerNotesKey(sessionId), notes);
+  document.querySelector("#producer-notes-result").innerHTML = `
+    <p class="pill good">Notes saved locally</p>
+  `;
+}
+
+function clearProducerNotes(sessionId) {
+  localStorage.removeItem(producerNotesKey(sessionId));
+  document.querySelector("#producer-notes").value = "";
+  document.querySelector("#producer-notes-result").innerHTML = `
+    <p class="pill warn">Notes cleared locally</p>
+  `;
 }
 
 async function createProductionSpectatorGrant(session) {

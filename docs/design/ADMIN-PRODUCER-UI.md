@@ -95,6 +95,7 @@ The v0 console:
 - prints receiver URLs and ffplay commands for OBS/producer machines;
 - opens a clean production capture helper page for OBS setup/overlay use;
 - requests active session shutdown with a confirmation prompt;
+- stores local producer notes for selected sessions;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console intentionally keeps disruptive controls out of scope. Production
@@ -103,7 +104,7 @@ spectator grants are safe because they do not reserve player slots.
 Next admin/producer increments:
 
 1. add artwork upload/import workflows;
-2. add event/match notes;
+2. persist event/match notes server-side;
 3. surface diagnostics/cleanup results inside the console.
 
 ## Game metadata workflow
@@ -234,6 +235,16 @@ The browser confirmation is intentionally plain and explicit: stopping a
 session ends gameplay for every connected player and spectator. The API moves
 the session to `stopping`; the runtime host then shuts down the emulator and
 releases runtime resources.
+
+## Producer notes
+
+The production panel includes local producer notes for a selected session. This
+is intentionally browser-local in v0, using `localStorage`, so producers can
+quickly record match callouts, winners, technical issues, or stream reminders
+without introducing a server-side event model prematurely.
+
+Future persisted notes should attach to an event/match/session record and
+become part of the Admin/Producer bookkeeping workflow.
 
 ## Relationship to existing tools
 
