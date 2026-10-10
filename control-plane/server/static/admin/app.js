@@ -152,6 +152,7 @@ function renderGame(game) {
 
 function renderGameEditor(game) {
   const metadata = game.metadata || {};
+  const slotCount = metadata.player_count || game.availability?.[0]?.profile?.max_players || 1;
   const editor = document.querySelector("#game-editor");
   editor.classList.remove("muted");
   editor.innerHTML = `
@@ -176,6 +177,15 @@ function renderGameEditor(game) {
         ${metadataInput("Screenshot path", "screenshot_path", metadata.screenshot_path, "text", "media/game/screenshot.png")}
         ${metadataInput("Logo path", "logo_path", metadata.logo_path, "text", "media/game/logo.png")}
       </div>
+      <details class="player-slot-editor">
+        <summary>Player slot metadata</summary>
+        <p class="muted">
+          Optional labels, character names, and per-player artwork for seat selection and future overlays.
+        </p>
+        <div class="player-slot-grid">
+          ${renderPlayerSlotFields(metadata.player_slots || [], slotCount)}
+        </div>
+      </details>
       <div class="form-actions">
         <button type="submit">Save metadata</button>
         <button id="cancel-metadata-edit" type="button">Cancel</button>
@@ -208,6 +218,27 @@ function metadataTextarea(label, name, value) {
       <textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value ?? "")}</textarea>
     </label>
   `;
+}
+
+function renderPlayerSlotFields(playerSlots, slotCount) {
+  const slotsByNumber = new Map(
+    playerSlots.map((slot) => [Number(slot.player_number), slot]),
+  );
+  const count = Math.max(1, Math.min(16, Number(slotCount) || 1));
+  return Array.from({ length: count }, (_, index) => {
+    const playerNumber = index + 1;
+    const slot = slotsByNumber.get(playerNumber) || {};
+    return `
+      <fieldset class="player-slot-card">
+        <legend>Player ${playerNumber}</legend>
+        <input type="hidden" name="slot_${playerNumber}_player_number" value="${playerNumber}" />
+        ${metadataInput("Label", `slot_${playerNumber}_label`, slot.label, "text", `P${playerNumber}`)}
+        ${metadataInput("Position", `slot_${playerNumber}_position`, slot.position, "text", `P${playerNumber}`)}
+        ${metadataInput("Character", `slot_${playerNumber}_character`, slot.character, "text", "Character name")}
+        ${metadataInput("Artwork path", `slot_${playerNumber}_artwork_path`, slot.artwork_path, "text", `media/game/p${playerNumber}.png`)}
+      </fieldset>
+    `;
+  }).join("");
 }
 
 async function saveGameMetadata(event, game) {
@@ -261,7 +292,26 @@ function metadataFromForm(form) {
       metadata[field] = Number(value);
     }
   }
+  metadata.player_slots = playerSlotsFromForm(data, metadata.player_count);
   return metadata;
+}
+
+function playerSlotsFromForm(data, playerCount) {
+  const count = Math.max(1, Math.min(16, Number(playerCount) || 16));
+  const slots = [];
+  for (let playerNumber = 1; playerNumber <= count; playerNumber += 1) {
+    const slot = { player_number: playerNumber };
+    for (const field of ["label", "position", "character", "artwork_path"]) {
+      const value = String(data.get(`slot_${playerNumber}_${field}`) || "").trim();
+      if (value) {
+        slot[field] = value;
+      }
+    }
+    if (slot.label || slot.position || slot.character || slot.artwork_path) {
+      slots.push(slot);
+    }
+  }
+  return slots;
 }
 
 function renderProduction(session) {

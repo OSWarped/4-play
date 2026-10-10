@@ -88,6 +88,7 @@ The v0 console:
 - lists active sessions and player-slot state;
 - lists visible games and basic metadata;
 - edits visible game metadata for library presentation and runtime player count;
+- edits per-player slot metadata for future seat-selection and overlay use;
 - includes a production panel for selected sessions;
 - creates production spectator grants for selected sessions;
 - releases production spectator grants when the producer is done with a feed;
@@ -101,10 +102,9 @@ spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. add player-slot metadata editing;
-2. add artwork upload/import workflows;
-3. add event/match notes;
-4. surface diagnostics/cleanup results inside the console.
+1. add artwork upload/import workflows;
+2. add event/match notes;
+3. surface diagnostics/cleanup results inside the console.
 
 ## Game metadata workflow
 
@@ -119,6 +119,7 @@ catalog grid. Selecting **Edit metadata** on a game opens a form for:
 - description;
 - control notes;
 - artwork, marquee, screenshot, and logo asset paths.
+- optional per-player slot labels, positions, character names, and artwork paths.
 
 Saving uses the existing catalog metadata endpoint:
 
@@ -126,9 +127,8 @@ Saving uses the existing catalog metadata endpoint:
 PUT /api/v1/games/{game_id}/metadata
 ```
 
-The first editor intentionally keeps player-slot labels and file uploads out of
-scope. Those are separate increments because they need more structured editing
-and stronger validation/preview affordances.
+The editor intentionally keeps file uploads out of scope for now. Asset paths
+must already exist under the configured asset root and remain relative paths.
 
 ## Production spectator feed
 
