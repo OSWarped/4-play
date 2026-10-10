@@ -270,6 +270,10 @@ pub fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(readiness))
+        .route("/admin", get(admin_index))
+        .route("/admin/", get(admin_index))
+        .route("/admin/app.js", get(admin_script))
+        .route("/admin/styles.css", get(admin_styles))
         .route("/api/v1", get(api_info))
         .merge(protected)
         .with_state(state)
@@ -327,6 +331,31 @@ async fn readiness(State(state): State<AppState>) -> Result<Json<StatusResponse>
 
 async fn api_info() -> Json<ApiInfo> {
     Json(ApiInfo::control_plane())
+}
+
+async fn admin_index() -> Response {
+    static_response(
+        "text/html; charset=utf-8",
+        include_str!("../static/admin/index.html"),
+    )
+}
+
+async fn admin_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/admin/app.js"),
+    )
+}
+
+async fn admin_styles() -> Response {
+    static_response(
+        "text/css; charset=utf-8",
+        include_str!("../static/admin/styles.css"),
+    )
+}
+
+fn static_response(content_type: &'static str, body: &'static str) -> Response {
+    ([(CONTENT_TYPE, content_type)], Body::from(body)).into_response()
 }
 
 async fn list_runtime_hosts(
@@ -1274,6 +1303,43 @@ mod tests {
                 "api_version": "v1"
             })
         );
+    }
+
+    #[tokio::test]
+    async fn admin_console_assets_are_served_without_api_auth() {
+        let service = app().await.unwrap();
+
+        let (index_status, index_content_type, index_body) =
+            request_bytes(service.clone(), Method::GET, "/admin").await;
+        let (script_status, script_content_type, script_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/app.js").await;
+        let (styles_status, styles_content_type, styles_body) =
+            request_bytes(service, Method::GET, "/admin/styles.css").await;
+
+        assert_eq!(index_status, 200);
+        assert_eq!(
+            index_content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+        assert!(String::from_utf8(index_body)
+            .unwrap()
+            .contains("Admin / Producer Console"));
+
+        assert_eq!(script_status, 200);
+        assert_eq!(
+            script_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert!(String::from_utf8(script_body)
+            .unwrap()
+            .contains("fourplay.adminToken"));
+
+        assert_eq!(styles_status, 200);
+        assert_eq!(
+            styles_content_type.as_deref(),
+            Some("text/css; charset=utf-8")
+        );
+        assert!(String::from_utf8(styles_body).unwrap().contains("--accent"));
     }
 
     #[tokio::test]

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>4-Play Admin/Producer</title>
+    <link rel="stylesheet" href="/admin/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">4-Play</p>
+        <h1>Admin / Producer Console</h1>
+      </div>
+      <div class="token-panel">
+        <label for="api-token">API token</label>
+        <input id="api-token" type="password" autocomplete="off" placeholder="Bearer token" />
+        <button id="save-token" type="button">Save</button>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid summary-grid" aria-label="System summary">
+        <article class="card metric">
+          <span class="label">Health</span>
+          <strong id="health-status">Unknown</strong>
+        </article>
+        <article class="card metric">
+          <span class="label">Runtime hosts</span>
+          <strong id="host-count">0</strong>
+        </article>
+        <article class="card metric">
+          <span class="label">Active sessions</span>
+          <strong id="active-session-count">0</strong>
+        </article>
+        <article class="card metric">
+          <span class="label">Visible games</span>
+          <strong id="game-count">0</strong>
+        </article>
+      </section>
+
+      <section class="layout">
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Operations</p>
+              <h2>Runtime Hosts</h2>
+            </div>
+          </div>
+          <div id="hosts" class="stack muted">No hosts loaded.</div>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Sessions</p>
+              <h2>Active Sessions</h2>
+            </div>
+          </div>
+          <div id="active-sessions" class="stack muted">No active sessions loaded.</div>
+        </article>
+      </section>
+
+      <section class="layout">
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h2>Catalog</h2>
+            </div>
+            <input id="game-filter" type="search" placeholder="Filter games" />
+          </div>
+          <div id="games" class="game-grid muted">No games loaded.</div>
+        </article>
+
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Production</p>
+              <h2>Spectator Feed</h2>
+            </div>
+          </div>
+          <div id="production" class="stack">
+            <p>
+              Select an active session to inspect its media/input ports and open a production
+              spectator workflow. This v0 console does not reserve a spectator grant yet; it
+              documents the operator flow while we keep session control explicit.
+            </p>
+            <p class="muted">
+              Future versions should create spectator grants, open clean OBS capture windows, and
+              attach player/match metadata.
+            </p>
+          </div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Diagnostics</p>
+            <h2>Recent API snapshot</h2>
+          </div>
+        </div>
+        <pre id="snapshot">{}</pre>
+      </section>
+    </main>
+
+    <template id="empty-template">
+      <p class="muted">Nothing to show.</p>
+    </template>
+
+    <script src="/admin/app.js" defer></script>
+  </body>
+</html>

@@ -73,6 +73,16 @@ Windows seat-input client
   → MAME
 ```
 
+The control plane also serves the first read-only Admin/Producer console at:
+
+```text
+http://<control-plane-host>:8080/admin
+```
+
+Use the configured bearer token when prompted. The v0 console shows health,
+runtime hosts, active sessions, player slots, visible catalog games, and a
+production panel for selected sessions.
+
 The next implementation milestone is Phase 2 shared-session discovery, player
 slots, join/reconnect leases, previews, and spectator mode.
 

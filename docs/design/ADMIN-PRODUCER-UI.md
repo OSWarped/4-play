@@ -70,6 +70,37 @@ Diagnostics
   └─ Export support bundle
 ```
 
+## Admin/Producer v0
+
+The first checked-in Admin/Producer UI is intentionally small and dependency
+free. The control plane serves embedded static assets at:
+
+```text
+/admin
+```
+
+The v0 console:
+
+- accepts a bearer token in the browser and stores it in local storage;
+- shows control-plane health;
+- lists runtime hosts;
+- lists active sessions and player-slot state;
+- lists visible games and basic metadata;
+- includes a production panel for selected sessions;
+- shows a raw API snapshot for diagnostics.
+
+The v0 console does not yet mutate state or create spectator grants. That is
+intentional: the first milestone proves the admin/producer information
+architecture before adding disruptive controls.
+
+Next admin/producer increments:
+
+1. create/release spectator grants from the production panel;
+2. open a clean OBS capture window for a selected session;
+3. add session stop/cleanup controls with confirmation;
+4. add game metadata editing;
+5. add event/match notes.
+
 ## Production spectator feed
 
 The production spectator feed should be intentionally capture-friendly:
