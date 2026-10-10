@@ -1569,6 +1569,7 @@ mod tests {
         assert!(script_body.contains("Player slot metadata"));
         assert!(script_body.contains("Producer notes"));
         assert!(script_body.contains("Server notes loaded"));
+        assert!(script_body.contains("Copy session summary"));
         assert!(script_body.contains("Stale >10m"));
         assert!(script_body.contains("Request stale cleanup"));
         assert!(script_body.contains("Request stop"));

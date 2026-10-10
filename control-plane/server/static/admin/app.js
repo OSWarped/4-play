@@ -721,6 +721,7 @@ function renderProduction(session) {
       <span class="pill">player media ${escapeHtml(String(mediaPort))}</span>
       <span class="pill">input ${escapeHtml(String(inputPort))}</span>
       <button id="create-spectator-grant" type="button">Create production spectator feed</button>
+      <button id="copy-session-summary" type="button">Copy session summary</button>
       <button id="stop-session" class="danger" type="button">Stop session</button>
       <div id="spectator-grant-result"></div>
       <div id="session-action-result"></div>
@@ -741,6 +742,9 @@ function renderProduction(session) {
     .querySelector("#create-spectator-grant")
     .addEventListener("click", () => createProductionSpectatorGrant(session));
   document
+    .querySelector("#copy-session-summary")
+    .addEventListener("click", () => copySessionSummary(session));
+  document
     .querySelector("#stop-session")
     .addEventListener("click", () => stopSession(session));
   document
@@ -750,6 +754,37 @@ function renderProduction(session) {
     .querySelector("#clear-producer-notes")
     .addEventListener("click", () => clearProducerNotes(session.id));
   loadSessionNotes(session.id);
+}
+
+async function copySessionSummary(session) {
+  const result = document.querySelector("#session-action-result");
+  const fullSession = state.sessions.find((candidate) => candidate.id === session.id);
+  const notes = document.querySelector("#producer-notes")?.value || producerNotesForSession(session.id);
+  const grants = state.productionGrants.filter((grant) => grant.session_id === session.id);
+  const summary = {
+    exported_at: new Date().toISOString(),
+    session_id: session.id,
+    game_id: session.game_id,
+    display_name: session.display_name || session.game_id,
+    runtime_host_id: session.runtime_host_id,
+    state: session.state,
+    player_slots: session.player_slots || [],
+    player_media_udp_port: fullSession?.connection_grant?.media_udp_port || null,
+    input_udp_port: fullSession?.connection_grant?.input_udp_port || null,
+    active_spectator_count: session.active_spectator_count || 0,
+    production_grants: grants.map((grant) => ({
+      id: grant.id,
+      media_udp_port: grant.media_udp_port,
+      destination_address: grant.destination_address,
+      expires_unix_ms: grant.expires_unix_ms,
+      receiver_url: `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`,
+    })),
+    notes,
+  };
+  await navigator.clipboard.writeText(JSON.stringify(summary, null, 2));
+  result.insertAdjacentHTML("afterbegin", `
+    <p class="pill good">Session summary copied</p>
+  `);
 }
 
 function producerNotesForSession(sessionId) {

@@ -99,6 +99,7 @@ The v0 console:
 - requests active session shutdown with a confirmation prompt;
 - stores local producer notes for selected sessions;
 - persists producer notes on the control plane when the session exists;
+- copies a JSON production/session summary for selected sessions;
 - summarizes session diagnostics for active, stopping, failed, and stale sessions;
 - requests stop for stale non-terminal sessions from diagnostics;
 - requests a graceful stale-session cleanup and reports structured results;
@@ -279,6 +280,12 @@ the session note endpoint is unavailable.
 
 Future persisted notes should attach to an event/match/session record and
 become part of the Admin/Producer bookkeeping workflow.
+
+The production panel can also copy a JSON session summary containing the
+session identity, selected game, player slots, media/input ports, current
+producer notes, and any remembered production spectator grants. This gives
+producers a lightweight export for stream notes, bug reports, or future match
+records without requiring the full tournament/event schema yet.
 
 ## Diagnostics summary
 
