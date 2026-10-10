@@ -213,3 +213,5 @@ Last updated: 2026-10-09
 Continue Phase 3 by hardening reference-table operations and recording final
 physical-table observations: control ergonomics, audio isolation, and recovery
 behavior during longer family/party use.
+Use `docs/testing/PHASE-3-PHYSICAL-CHECKLIST.md` for the final observation pass
+and `docs/testing/PHASE-3-CLOSEOUT-TEMPLATE.md` when marking Phase 3 complete.

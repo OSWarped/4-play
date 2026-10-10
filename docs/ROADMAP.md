@@ -167,6 +167,8 @@ Status: **in progress**.
 
 Initial operations guidance lives in
 [Phase 3 Reference Table Operations](operations/PHASE-3-REFERENCE-TABLE.md).
+Final physical observations should be recorded with
+[Phase 3 Physical Table Checklist](testing/PHASE-3-PHYSICAL-CHECKLIST.md).
 
 ## Phase 4 — Multiple Runtime Hosts and Emulators
 

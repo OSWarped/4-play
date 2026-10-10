@@ -262,6 +262,12 @@ During that run, `tools/phase-3-soak-monitor.sh` can capture periodic API,
 process, listener, and diagnostic snapshots without controlling the game
 sessions.
 
+Use [Phase 3 Physical Table Checklist](../testing/PHASE-3-PHYSICAL-CHECKLIST.md)
+for the final physical control, audio, display, and recovery observations. When
+those checks are accepted, copy
+[Phase 3 Closeout Template](../testing/PHASE-3-CLOSEOUT-TEMPLATE.md) into a
+dated closeout note and mark Phase 3 complete.
+
 ## Acceptance target
 
 Phase 3 exits when the reference table can:
