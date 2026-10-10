@@ -1,6 +1,7 @@
 const tokenInput = document.querySelector("#api-token");
 const seatInput = document.querySelector("#seat-id");
 const destinationInput = document.querySelector("#destination-ip");
+const destinationWarning = document.querySelector("#destination-warning");
 const saveSettingsButton = document.querySelector("#save-settings");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
@@ -54,6 +55,7 @@ const clientApi = {
 tokenInput.value = state.token;
 seatInput.value = state.seatId;
 destinationInput.value = state.destinationIp;
+renderDestinationWarning();
 
 saveSettingsButton.addEventListener("click", () => {
   state.token = tokenInput.value.trim();
@@ -62,10 +64,15 @@ saveSettingsButton.addEventListener("click", () => {
   localStorage.setItem("fourplay.clientToken", state.token);
   localStorage.setItem("fourplay.seatId", state.seatId);
   localStorage.setItem("fourplay.destinationIp", state.destinationIp);
+  renderDestinationWarning();
   refresh();
 });
 
 refreshButton.addEventListener("click", refresh);
+destinationInput.addEventListener("input", () => {
+  state.destinationIp = destinationInput.value.trim();
+  renderDestinationWarning();
+});
 gameFilter.addEventListener("input", renderGames);
 document.querySelector("#browse-games").addEventListener("click", () => {
   document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -279,6 +286,29 @@ function syncSettingsFromInputs() {
   localStorage.setItem("fourplay.clientToken", state.token);
   localStorage.setItem("fourplay.seatId", state.seatId);
   localStorage.setItem("fourplay.destinationIp", state.destinationIp);
+  renderDestinationWarning();
+}
+
+function renderDestinationWarning() {
+  if (!destinationWarning) return;
+  const warning = destinationAddressWarning(state.destinationIp);
+  destinationWarning.textContent = warning || "";
+  destinationWarning.hidden = !warning;
+}
+
+function destinationAddressWarning(destinationAddress) {
+  const destination = String(destinationAddress || "").trim();
+  if (!destination) {
+    return "Enter this Windows seat PC's LAN IP so the game stream is sent here.";
+  }
+  const controlPlaneHost = window.location.hostname;
+  if (destination === controlPlaneHost) {
+    return "This matches the 4-Play server IP. Use this Windows seat PC's LAN IP instead, or the stream will be sent back to the server.";
+  }
+  if (destination === "127.0.0.1" || destination.toLowerCase() === "localhost") {
+    return "Loopback will only work if the game is running on this same PC. Use this Windows seat PC's LAN IP for the Linux server.";
+  }
+  return "";
 }
 
 function renderSessionDetails(session) {

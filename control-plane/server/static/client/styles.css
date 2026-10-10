@@ -104,10 +104,23 @@ button:hover,
   grid-template-columns:
     auto minmax(9rem, 14rem)
     auto minmax(8rem, 12rem)
+    minmax(12rem, 20rem)
     auto minmax(10rem, 16rem)
     auto auto;
   align-items: center;
   gap: 0.6rem;
+}
+
+.setting-warning {
+  max-width: 20rem;
+  color: var(--warn);
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+
+.setting-warning:empty,
+.setting-warning[hidden] {
+  display: none;
 }
 
 .eyebrow,
