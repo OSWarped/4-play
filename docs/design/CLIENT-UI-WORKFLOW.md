@@ -460,6 +460,20 @@ This is deliberately small: it proves the native companion can consume the same
 media plan as the browser UI before we add input forwarding, process supervision
 APIs, or WebView packaging.
 
+It also includes a narrow input plumbing command for validating authenticated UDP
+controller-state delivery without launching the full terminal `seat-input`
+client:
+
+```powershell
+cargo run -p seat-client-runtime -- input --destination 192.168.20.68:42000 --token <session-token> --player 1 --seconds 3 --stop
+```
+
+That command sends neutral controller-state packets at the normal input cadence
+and can optionally send the stop flag. It is a diagnostic/building-block command,
+not final keyboard or gamepad capture. The next native-client increment should
+turn this primitive into supervised input forwarding owned by the packaged seat
+client.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details
