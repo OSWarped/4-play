@@ -248,6 +248,9 @@ function syncSettingsFromInputs() {
 
 function renderSessionDetails(session) {
   const openSlots = (session.player_slots || []).filter((slot) => slot.state === "open");
+  const ownOccupied = (session.player_slots || []).filter(
+    (slot) => slot.state === "occupied" && slot.seat_id === state.seatId,
+  );
   const ownDisconnected = (session.player_slots || []).filter(
     (slot) => slot.state === "disconnected" && slot.seat_id === state.seatId,
   );
@@ -256,14 +259,20 @@ function renderSessionDetails(session) {
       <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
       <p class="muted">Running on ${escapeHtml(session.runtime_host_id || "unknown host")}.</p>
       <div class="form-actions">
+        ${ownOccupied.map((slot) => `<button type="button" data-leave-player="${escapeHtml(String(slot.player_number))}">Leave ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         ${ownDisconnected.map((slot) => `<button type="button" data-rejoin-player="${escapeHtml(String(slot.player_number))}">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         ${openSlots.map((slot) => `<button type="button" data-join-player="${escapeHtml(String(slot.player_number))}">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         <button type="button" id="spectate-session">Spectate</button>
       </div>
-      <p class="muted">Join/rejoin now reserves and connects a real player slot. Media/input launch is the next client increment.</p>
+      <p class="muted">Join/rejoin/leave now update real player slots. Media/input launch is the next client increment.</p>
       <div id="client-action-result"></div>
     </div>
   `);
+  document.querySelectorAll("[data-leave-player]").forEach((button) => {
+    button.addEventListener("click", () =>
+      leavePlayerSlot(session, Number(button.dataset.leavePlayer)),
+    );
+  });
   document.querySelectorAll("[data-join-player]").forEach((button) => {
     button.addEventListener("click", () =>
       joinPlayerSlot(session, Number(button.dataset.joinPlayer), false),
@@ -312,6 +321,36 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
       </div>
     `;
     wireCopyButtons(result);
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+async function leavePlayerSlot(session, playerNumber) {
+  const result = document.querySelector("#client-action-result");
+  syncSettingsFromInputs();
+  if (!Number.isInteger(playerNumber) || playerNumber <= 0) {
+    result.innerHTML = `<p class="pill bad">Invalid player slot.</p>`;
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Leaving player ${escapeHtml(String(playerNumber))}...</p>`;
+  try {
+    const updated = await postJson(
+      `/api/v1/sessions/${session.id}/player-slots/${playerNumber}/disconnect`,
+      { seat_id: state.seatId },
+    );
+    const slot = (updated.player_slots || []).find(
+      (candidate) => candidate.player_number === playerNumber,
+    );
+    result.innerHTML = `
+      <div class="item">
+        <h3>Player slot left</h3>
+        <span class="pill warn">${escapeHtml(slot?.label || `P${playerNumber}`)}</span>
+        <span class="pill">${escapeHtml(slot?.state || "disconnected")}</span>
+        <p class="muted">The slot is disconnected for this seat and can be rejoined from the same client.</p>
+      </div>
+    `;
     await refresh();
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;

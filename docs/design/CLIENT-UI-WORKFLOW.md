@@ -396,6 +396,7 @@ slice provides:
 - player-slot display with open/disconnected states;
 - real start-game session requests through `POST /api/v1/sessions`;
 - real join/rejoin flow through the player-slot reserve/connect APIs;
+- real leave/disconnect flow for slots owned by the current seat;
 - real spectator grant creation with receiver URL/ffplay command output.
 - copyable receiver URL and `ffplay` command output for started, joined, and
   spectator sessions.
