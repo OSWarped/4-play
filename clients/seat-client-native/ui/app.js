@@ -20,9 +20,11 @@ const elements = {
   overlayTitle: document.querySelector("#overlay-title"),
   overlayActions: document.querySelector("#overlay-actions"),
   message: document.querySelector("#message"),
+  stopRuntime: document.querySelector("#stop-runtime"),
 };
 
 elements.refresh.addEventListener("click", () => runUiAction(() => refresh()));
+elements.stopRuntime.addEventListener("click", () => stopCurrentRuntime());
 document.addEventListener("keydown", (event) => handleKey(event, true));
 document.addEventListener("keyup", (event) => handleKey(event, false));
 window.addEventListener("blur", () => neutralizeInput("Window focus lost"));
@@ -83,9 +85,25 @@ function render() {
   const view = state.viewModel;
   state.inputEnabled = view.current_runtime?.mode === "player";
   elements.runtimeStatus.textContent = runtimeLabel(view.current_runtime);
+  elements.stopRuntime.disabled = !view.current_runtime;
   elements.games.replaceChildren(...view.games.map((game) => gameCard(game)));
   elements.sessions.replaceChildren(...view.active_sessions.map((session) => sessionCard(session)));
   renderRuntimeActions(view.current_runtime);
+}
+
+async function stopCurrentRuntime() {
+  const command = state.viewModel?.current_runtime?.mode === "player"
+    ? { type: "send_stop_input" }
+    : { type: "stop_runtime" };
+  await runUiAction(async () => {
+    await nativeCommand(command);
+    state.heldKeys.clear();
+    state.lastAxis = { x: 0, y: 0 };
+    state.lastGamepad.buttons.clear();
+    state.lastGamepad.axis = { x: 0, y: 0 };
+    showOverlay("Stop sent", ["Runtime stop requested", "Refreshing"]);
+    setTimeout(() => refresh(), 500);
+  });
 }
 
 function gameCard(game) {
@@ -169,14 +187,7 @@ async function handleKey(event, pressed) {
 
   if (event.code === "Escape" && pressed) {
     event.preventDefault();
-    const command = state.viewModel?.current_runtime?.mode === "player"
-      ? { type: "send_stop_input" }
-      : { type: "stop_runtime" };
-    await runUiAction(() => nativeCommand(command));
-    state.heldKeys.clear();
-    state.lastAxis = { x: 0, y: 0 };
-    showOverlay("Stop sent", ["Runtime stop requested", "Refreshing"]);
-    setTimeout(() => refresh(), 500);
+    await stopCurrentRuntime();
     return;
   }
 
