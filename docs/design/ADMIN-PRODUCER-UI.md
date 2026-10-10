@@ -90,6 +90,7 @@ The v0 console:
 - edits visible game metadata for library presentation and runtime player count;
 - edits per-player slot metadata for future seat-selection and overlay use;
 - uploads artwork/media assets under the configured asset root;
+- previews configured game artwork/media in the catalog and metadata editor;
 - includes a production panel for selected sessions;
 - creates production spectator grants for selected sessions;
 - releases production spectator grants when the producer is done with a feed;
@@ -106,7 +107,7 @@ spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. add artwork preview thumbnails and replacement warnings;
+1. add asset replacement warnings;
 2. persist event/match notes server-side;
 3. add deeper cleanup execution/results inside the console.
 
@@ -125,6 +126,7 @@ catalog grid. Selecting **Edit metadata** on a game opens a form for:
 - artwork, marquee, screenshot, and logo asset paths.
 - optional per-player slot labels, positions, character names, and artwork paths.
 - direct upload of artwork/media files to a relative asset path.
+- media previews for screenshot, artwork, marquee, and logo paths.
 
 Saving uses the existing catalog metadata endpoint:
 
@@ -142,6 +144,9 @@ The upload body is the raw file bytes. The path must be relative and cannot
 contain traversal. After upload, the Admin/Producer UI applies the uploaded path
 to the selected metadata field; the operator then saves metadata to keep the
 reference.
+
+Catalog cards and the metadata editor preview configured media using the first
+available path in this order: screenshot, artwork, marquee, logo.
 
 ## Production spectator feed
 

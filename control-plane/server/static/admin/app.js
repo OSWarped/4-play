@@ -218,8 +218,10 @@ function renderDiagnosticSession(session) {
 function renderGame(game) {
   const element = item();
   const metadata = game.metadata || {};
+  const previewPath = primaryMediaPath(metadata);
   element.classList.add("clickable");
   element.innerHTML = `
+    ${previewPath ? mediaPreview(previewPath, game.display_name || game.id, "game-thumbnail") : ""}
     <h3>${escapeHtml(game.display_name || game.id)}</h3>
     <span class="pill">${escapeHtml(game.id)}</span>
     <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
@@ -234,6 +236,7 @@ function renderGame(game) {
 function renderGameEditor(game) {
   const metadata = game.metadata || {};
   const slotCount = metadata.player_count || game.availability?.[0]?.profile?.max_players || 1;
+  const previewPath = primaryMediaPath(metadata);
   const editor = document.querySelector("#game-editor");
   editor.classList.remove("muted");
   editor.innerHTML = `
@@ -244,6 +247,19 @@ function renderGameEditor(game) {
           <h3>${escapeHtml(game.display_name || game.id)}</h3>
         </div>
         <span class="pill">${escapeHtml(game.id)}</span>
+      </div>
+      <div class="metadata-preview-panel">
+        ${
+          previewPath
+            ? mediaPreview(previewPath, game.display_name || game.id, "metadata-preview")
+            : `<p class="muted">No preview media path is set yet.</p>`
+        }
+        <div>
+          <p class="muted">
+            Preview uses screenshot, artwork, marquee, or logo metadata in that order.
+          </p>
+          ${mediaLinks(metadata)}
+        </div>
       </div>
       ${metadataInput("Sort title", "sort_title", metadata.sort_title)}
       ${metadataInput("Genre", "genre", metadata.genre)}
@@ -306,6 +322,45 @@ function renderGameEditor(game) {
     editor.textContent = "Select a game to edit its metadata.";
   });
   editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
+}
+
+function primaryMediaPath(metadata) {
+  return (
+    metadata.screenshot_path ||
+    metadata.artwork_path ||
+    metadata.marquee_path ||
+    metadata.logo_path ||
+    ""
+  );
+}
+
+function assetUrl(path) {
+  return `/api/v1/assets/${encodeAssetPath(path)}`;
+}
+
+function mediaPreview(path, alt, className) {
+  return `
+    <a class="${escapeHtml(className)}" href="${escapeHtml(assetUrl(path))}" target="_blank" rel="noreferrer">
+      <img src="${escapeHtml(assetUrl(path))}" alt="${escapeHtml(alt)} preview" loading="lazy" />
+    </a>
+  `;
+}
+
+function mediaLinks(metadata) {
+  const links = [
+    ["screenshot", metadata.screenshot_path],
+    ["artwork", metadata.artwork_path],
+    ["marquee", metadata.marquee_path],
+    ["logo", metadata.logo_path],
+  ]
+    .filter(([, path]) => path)
+    .map(([label, path]) => `
+      <a class="pill" href="${escapeHtml(assetUrl(path))}" target="_blank" rel="noreferrer">
+        ${escapeHtml(label)}
+      </a>
+    `)
+    .join("");
+  return links || `<p class="muted">No media links available.</p>`;
 }
 
 function metadataInput(label, name, value, type = "text", placeholder = "") {
