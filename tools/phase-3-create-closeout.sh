@@ -53,7 +53,12 @@ output_path = pathlib.Path(sys.argv[3])
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 template = template_path.read_text(encoding="utf-8")
 
-content = template.replace(
+content = template.replace("# Phase 3 Closeout Template", "# Phase 3 Closeout")
+content = content.replace(
+    "Copy this template into a dated validation note when Phase 3 is ready to close.\n\n",
+    "",
+)
+content = content.replace(
     "Status: **accepted / accepted with follow-ups / not accepted**",
     "Status: **draft — physical validation pending**",
 )
