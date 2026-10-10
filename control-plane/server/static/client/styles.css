@@ -211,6 +211,12 @@ button:hover,
   color: var(--accent);
 }
 
+.receiver-commands {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
 @media (max-width: 900px) {
   .topbar,
   .hero,

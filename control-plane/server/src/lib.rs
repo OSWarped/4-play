@@ -1667,6 +1667,7 @@ mod tests {
         assert!(script_body.contains("async function startGame"));
         assert!(script_body.contains("async function joinPlayerSlot"));
         assert!(script_body.contains("async function spectateSession"));
+        assert!(script_body.contains("mediaReceiverCommands"));
         assert!(script_body.contains("POST"));
 
         assert_eq!(styles_status, 200);

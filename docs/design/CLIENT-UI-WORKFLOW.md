@@ -397,6 +397,8 @@ slice provides:
 - real start-game session requests through `POST /api/v1/sessions`;
 - real join/rejoin flow through the player-slot reserve/connect APIs;
 - real spectator grant creation with receiver URL/ffplay command output.
+- copyable receiver URL and `ffplay` command output for started, joined, and
+  spectator sessions.
 
 The remaining placeholders are deliberate. The proven `seat-input.exe` path
 remains the gameplay path until the graphical client owns media receiver launch
