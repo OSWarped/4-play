@@ -334,6 +334,163 @@ impl NativeSeatConfigStore {
     }
 }
 
+pub struct NativeSeatUiSession<A, M, I>
+where
+    A: ControlPlaneApi,
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    app: NativeSeatApp<A, M, I>,
+    input: NativeControllerStateTracker,
+}
+
+impl<A, M, I> NativeSeatUiSession<A, M, I>
+where
+    A: ControlPlaneApi,
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    pub fn new(app: NativeSeatApp<A, M, I>) -> Self {
+        Self {
+            app,
+            input: NativeControllerStateTracker::new(),
+        }
+    }
+
+    pub fn input_state(&self) -> NativeControllerInput {
+        self.input.state()
+    }
+
+    pub fn handle_command(
+        &mut self,
+        command: NativeUiCommand,
+    ) -> Result<NativeUiResponse, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        match command {
+            NativeUiCommand::Refresh => self.refresh_view_model(),
+            NativeUiCommand::StartGame { game_id } => self
+                .app
+                .start_game(&game_id)
+                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::JoinSession {
+                session_id,
+                player_number,
+            } => self
+                .app
+                .join_session(&session_id, player_number)
+                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::RejoinSession {
+                session_id,
+                player_number,
+            } => self
+                .app
+                .rejoin_session(&session_id, player_number)
+                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::SpectateSession { session_id } => self
+                .app
+                .spectate_session(&session_id)
+                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::JoinFromSpectator {
+                session_id,
+                player_number,
+            } => self
+                .app
+                .join_from_spectator(&session_id, player_number)
+                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::LeavePlayerSlot {
+                session_id,
+                player_number,
+            } => {
+                self.app.leave_player_slot(&session_id, player_number)?;
+                Ok(NativeUiResponse::Ack)
+            }
+            NativeUiCommand::StopRuntime => {
+                self.app.stop_runtime()?;
+                Ok(NativeUiResponse::Ack)
+            }
+            NativeUiCommand::SetButton { button, pressed } => {
+                let state = self.input.set_button(button, pressed);
+                self.app.send_controller_state(state)?;
+                Ok(NativeUiResponse::InputState(state))
+            }
+            NativeUiCommand::SetAxis { axis_x, axis_y } => {
+                let state = self.input.set_axis(axis_x, axis_y);
+                self.app.send_controller_state(state)?;
+                Ok(NativeUiResponse::InputState(state))
+            }
+            NativeUiCommand::NeutralizeInput => {
+                let state = self.input.neutralize();
+                self.app.send_controller_state(state)?;
+                Ok(NativeUiResponse::InputState(state))
+            }
+            NativeUiCommand::SendStopInput => {
+                self.input.neutralize();
+                self.app.send_player_stop()?;
+                Ok(NativeUiResponse::InputState(self.input.state()))
+            }
+        }
+    }
+
+    fn refresh_view_model(
+        &mut self,
+    ) -> Result<NativeUiResponse, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let snapshot = self.app.refresh()?;
+        let status = self.app.runtime_status()?;
+        Ok(NativeUiResponse::ViewModel(build_native_seat_view_model(
+            snapshot,
+            status,
+            self.app.seat_id(),
+        )))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NativeUiCommand {
+    Refresh,
+    StartGame {
+        game_id: String,
+    },
+    JoinSession {
+        session_id: String,
+        player_number: u32,
+    },
+    RejoinSession {
+        session_id: String,
+        player_number: u32,
+    },
+    SpectateSession {
+        session_id: String,
+    },
+    JoinFromSpectator {
+        session_id: String,
+        player_number: u32,
+    },
+    LeavePlayerSlot {
+        session_id: String,
+        player_number: u32,
+    },
+    StopRuntime,
+    SetButton {
+        button: NativeInputButton,
+        pressed: bool,
+    },
+    SetAxis {
+        axis_x: i16,
+        axis_y: i16,
+    },
+    NeutralizeInput,
+    SendStopInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum NativeUiResponse {
+    ViewModel(NativeSeatViewModel),
+    RuntimeStatus(NativeRuntimeStatus),
+    InputState(NativeControllerInput),
+    Ack,
+}
+
 pub struct NativeSeatApp<A, M, I>
 where
     A: ControlPlaneApi,
@@ -368,6 +525,10 @@ where
         self.controller
             .refresh()
             .map_err(NativeSeatAppError::Controller)
+    }
+
+    pub fn seat_id(&self) -> &str {
+        self.controller.seat_id()
     }
 
     pub fn start_game(
@@ -785,6 +946,10 @@ impl<A: ControlPlaneApi> NativeSeatController<A> {
 
     pub fn current_runtime(&self) -> Option<&NativeRuntime> {
         self.current_runtime.as_ref()
+    }
+
+    pub fn seat_id(&self) -> &str {
+        &self.config.seat_id
     }
 
     pub fn start_game(
@@ -1673,6 +1838,91 @@ mod tests {
             input_protocol::button::START
         );
         assert_eq!(app.supervisor.input.sent[0].state.axis_x, 1);
+    }
+
+    #[test]
+    fn native_ui_session_refresh_returns_view_model() {
+        let mut ui = NativeSeatUiSession::new(app(FakeApi::default()));
+
+        let response = ui.handle_command(NativeUiCommand::Refresh).unwrap();
+
+        match response {
+            NativeUiResponse::ViewModel(view_model) => {
+                assert_eq!(view_model.games[0].id, "tmnt");
+                assert_eq!(view_model.active_sessions[0].id, "session-1");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn native_ui_session_start_and_input_commands_drive_runtime() {
+        let mut ui = NativeSeatUiSession::new(app(FakeApi::default()));
+
+        let response = ui
+            .handle_command(NativeUiCommand::StartGame {
+                game_id: "tmnt".to_owned(),
+            })
+            .unwrap();
+        assert!(matches!(
+            response,
+            NativeUiResponse::RuntimeStatus(NativeRuntimeStatus {
+                mode: NativeRuntimeMode::Player,
+                ..
+            })
+        ));
+
+        let response = ui
+            .handle_command(NativeUiCommand::SetButton {
+                button: NativeInputButton::Action1,
+                pressed: true,
+            })
+            .unwrap();
+        assert_eq!(
+            response,
+            NativeUiResponse::InputState(NativeControllerInput {
+                buttons: input_protocol::button::ACTION_1,
+                axis_x: 0,
+                axis_y: 0,
+            })
+        );
+        assert_eq!(
+            ui.app.supervisor.input.sent[0].state.buttons,
+            input_protocol::button::ACTION_1
+        );
+
+        let response = ui
+            .handle_command(NativeUiCommand::SetAxis {
+                axis_x: 1,
+                axis_y: -1,
+            })
+            .unwrap();
+        assert_eq!(
+            response,
+            NativeUiResponse::InputState(NativeControllerInput {
+                buttons: input_protocol::button::ACTION_1,
+                axis_x: 1,
+                axis_y: -1,
+            })
+        );
+        assert_eq!(ui.app.supervisor.input.sent[1].state.axis_y, -1);
+    }
+
+    #[test]
+    fn native_ui_command_serializes_with_stable_names() {
+        let command = NativeUiCommand::JoinFromSpectator {
+            session_id: "session-1".to_owned(),
+            player_number: 2,
+        };
+
+        assert_eq!(
+            serde_json::to_value(command).unwrap(),
+            serde_json::json!({
+                "type": "join_from_spectator",
+                "session_id": "session-1",
+                "player_number": 2
+            })
+        );
     }
 
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
