@@ -106,6 +106,165 @@ pub enum NativeRuntimeSupervisorError<MediaError, InputError> {
     NoPlayerRuntime,
 }
 
+#[derive(Debug)]
+pub enum NativeSeatAppError<ApiError, MediaError, InputError> {
+    Controller(NativeClientError<ApiError>),
+    Runtime(NativeRuntimeSupervisorError<MediaError, InputError>),
+    NoRuntime,
+}
+
+pub struct NativeSeatApp<A, M, I>
+where
+    A: ControlPlaneApi,
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    controller: NativeSeatController<A>,
+    supervisor: NativeRuntimeSupervisor<M, I>,
+}
+
+impl<A, M, I> NativeSeatApp<A, M, I>
+where
+    A: ControlPlaneApi,
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    pub fn new(
+        config: SeatClientConfig,
+        api: A,
+        media: M,
+        input: I,
+    ) -> Result<Self, NativeClientError<A::Error>> {
+        Ok(Self {
+            controller: NativeSeatController::new(config, api)?,
+            supervisor: NativeRuntimeSupervisor::new(media, input),
+        })
+    }
+
+    pub fn refresh(
+        &mut self,
+    ) -> Result<NativeSeatSnapshot, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.controller
+            .refresh()
+            .map_err(NativeSeatAppError::Controller)
+    }
+
+    pub fn start_game(
+        &mut self,
+        game_id: &str,
+    ) -> Result<NativeRuntimeStatus, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let launch = self
+            .controller
+            .start_game(game_id)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.supervisor
+            .start_player(launch)
+            .map_err(NativeSeatAppError::Runtime)?;
+        self.runtime_status()?.ok_or(NativeSeatAppError::NoRuntime)
+    }
+
+    pub fn join_session(
+        &mut self,
+        session_id: &str,
+        player_number: u32,
+    ) -> Result<NativeRuntimeStatus, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let launch = self
+            .controller
+            .join_session(session_id, player_number)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.supervisor
+            .start_player(launch)
+            .map_err(NativeSeatAppError::Runtime)?;
+        self.runtime_status()?.ok_or(NativeSeatAppError::NoRuntime)
+    }
+
+    pub fn rejoin_session(
+        &mut self,
+        session_id: &str,
+        player_number: u32,
+    ) -> Result<NativeRuntimeStatus, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let launch = self
+            .controller
+            .rejoin_session(session_id, player_number)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.supervisor
+            .start_player(launch)
+            .map_err(NativeSeatAppError::Runtime)?;
+        self.runtime_status()?.ok_or(NativeSeatAppError::NoRuntime)
+    }
+
+    pub fn spectate_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<NativeRuntimeStatus, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let launch = self
+            .controller
+            .spectate_session(session_id)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.supervisor
+            .start_spectator(launch)
+            .map_err(NativeSeatAppError::Runtime)?;
+        self.runtime_status()?.ok_or(NativeSeatAppError::NoRuntime)
+    }
+
+    pub fn join_from_spectator(
+        &mut self,
+        session_id: &str,
+        player_number: u32,
+    ) -> Result<NativeRuntimeStatus, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        let launch = self
+            .controller
+            .join_from_spectator(session_id, player_number)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.supervisor
+            .start_player(launch)
+            .map_err(NativeSeatAppError::Runtime)?;
+        self.runtime_status()?.ok_or(NativeSeatAppError::NoRuntime)
+    }
+
+    pub fn leave_player_slot(
+        &mut self,
+        session_id: &str,
+        player_number: u32,
+    ) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.controller
+            .leave_player_slot(session_id, player_number)
+            .map_err(NativeSeatAppError::Controller)?;
+        self.stop_runtime()
+    }
+
+    pub fn stop_runtime(&mut self) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.supervisor.stop().map_err(NativeSeatAppError::Runtime)
+    }
+
+    pub fn runtime_status(
+        &mut self,
+    ) -> Result<Option<NativeRuntimeStatus>, NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.supervisor
+            .status()
+            .map_err(NativeSeatAppError::Runtime)
+    }
+
+    pub fn send_player_input(
+        &mut self,
+        buttons: u16,
+        axis_x: i16,
+        axis_y: i16,
+    ) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.supervisor
+            .send_player_input(buttons, axis_x, axis_y)
+            .map_err(NativeSeatAppError::Runtime)
+    }
+
+    pub fn send_player_stop(
+        &mut self,
+    ) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.supervisor
+            .send_player_stop()
+            .map_err(NativeSeatAppError::Runtime)
+    }
+}
+
 pub trait MediaProcessSupervisor {
     type Error;
     type Handle;
@@ -976,6 +1135,78 @@ mod tests {
         assert_eq!(supervisor.input.sent[0].state.axis_y, 0);
     }
 
+    #[test]
+    fn native_seat_app_start_game_launches_runtime_and_exposes_safe_status() {
+        let mut app = app(FakeApi::default());
+
+        let status = app.start_game("tmnt").unwrap();
+
+        assert_eq!(status.mode, NativeRuntimeMode::Player);
+        assert_eq!(status.session_id, "session-1");
+        assert_eq!(status.player_number, Some(1));
+        assert_eq!(
+            status.input_destination,
+            Some("192.0.2.68:42000".to_owned())
+        );
+        assert!(status.media_running);
+        assert!(status.input_running);
+        assert_eq!(app.controller.api.calls, vec!["create_session:tmnt"]);
+        assert_eq!(app.supervisor.media.spawned.len(), 1);
+
+        let status_json = serde_json::to_string(&status).unwrap();
+        assert!(!status_json.contains("00112233-4455-6677-8899-aabbccddeeff"));
+        assert!(!status_json.contains("token"));
+    }
+
+    #[test]
+    fn native_seat_app_spectate_then_join_switches_local_runtime_and_input() {
+        let mut app = app(FakeApi::default());
+
+        let spectator = app.spectate_session("session-1").unwrap();
+        assert_eq!(spectator.mode, NativeRuntimeMode::Spectator);
+        assert_eq!(spectator.player_number, None);
+        assert_eq!(app.supervisor.media.spawned.len(), 1);
+
+        let player = app.join_from_spectator("session-1", 2).unwrap();
+        assert_eq!(player.mode, NativeRuntimeMode::Player);
+        assert_eq!(player.player_number, Some(2));
+        assert_eq!(app.supervisor.media.spawned.len(), 2);
+        assert_eq!(app.supervisor.media.stopped, vec![1]);
+        assert_eq!(
+            app.controller.api.calls,
+            vec![
+                "create_spectator:session-1".to_owned(),
+                "get_session:session-1".to_owned(),
+                "release_spectator:session-1:grant-1".to_owned(),
+                "reserve:session-1:2".to_owned(),
+                "connect:session-1:2".to_owned(),
+            ]
+        );
+
+        app.send_player_input(input_protocol::button::START, 0, 0)
+            .unwrap();
+        assert_eq!(app.supervisor.input.sent[0].state.player_slot, 2);
+        assert_eq!(
+            app.supervisor.input.sent[0].state.buttons,
+            input_protocol::button::START
+        );
+    }
+
+    #[test]
+    fn native_seat_app_leave_player_slot_disconnects_and_stops_runtime() {
+        let mut app = app(FakeApi::default());
+
+        app.start_game("tmnt").unwrap();
+        app.leave_player_slot("session-1", 1).unwrap();
+
+        assert_eq!(app.supervisor.media.stopped, vec![1]);
+        assert!(app.runtime_status().unwrap().is_none());
+        assert_eq!(
+            app.controller.api.calls,
+            vec!["create_session:tmnt", "disconnect:session-1:1"]
+        );
+    }
+
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
         NativeSeatController::new(
             SeatClientConfig {
@@ -986,6 +1217,22 @@ mod tests {
                 ffplay_path: PathBuf::from("ffplay"),
             },
             api,
+        )
+        .unwrap()
+    }
+
+    fn app(api: FakeApi) -> NativeSeatApp<FakeApi, FakeMediaSupervisor, FakeInputSender> {
+        NativeSeatApp::new(
+            SeatClientConfig {
+                control_plane_url: "http://192.0.2.68:8080".to_owned(),
+                seat_id: "windows-seat-1".to_owned(),
+                destination_address: "192.0.2.10".parse().unwrap(),
+                seat_api_token: "seat-token".to_owned(),
+                ffplay_path: PathBuf::from("ffplay"),
+            },
+            api,
+            FakeMediaSupervisor::default(),
+            FakeInputSender::default(),
         )
         .unwrap()
     }
