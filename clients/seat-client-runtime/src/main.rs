@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env, io,
     net::{SocketAddr, UdpSocket},
     path::PathBuf,
@@ -8,6 +9,10 @@ use std::{
     time::Duration,
 };
 
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode},
+};
 use input_protocol::{
     AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
 };
@@ -23,6 +28,7 @@ struct RuntimeConfig {
 enum RuntimeCommand {
     Media { port: u16 },
     Input(InputCommand),
+    Keyboard(KeyboardCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +41,14 @@ struct InputCommand {
     axis_x: i16,
     axis_y: i16,
     stop: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KeyboardCommand {
+    destination: SocketAddr,
+    token: SessionToken,
+    player: u8,
+    debug: bool,
 }
 
 fn main() {
@@ -72,6 +86,7 @@ fn run(config: RuntimeConfig) -> io::Result<()> {
             }
         }
         RuntimeCommand::Input(command) => run_input(command),
+        RuntimeCommand::Keyboard(command) => run_keyboard(command),
     }
 }
 
@@ -136,6 +151,170 @@ impl InputPacket {
 fn send_input_packet(socket: &UdpSocket, packet: InputPacket) -> io::Result<()> {
     socket.send_to(&packet.encode(), packet.destination)?;
     Ok(())
+}
+
+fn run_keyboard(command: KeyboardCommand) -> io::Result<()> {
+    let _raw_mode = RawModeGuard::enable()?;
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    let interval = Duration::from_millis(16);
+    let mut held = HashSet::new();
+    let mut sequence = 0_u32;
+    println!(
+        "Forwarding keyboard input to {} as player {}. Press Esc to stop.",
+        command.destination, command.player
+    );
+    println!("W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start");
+
+    loop {
+        if event::poll(interval)?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press {
+                sequence = sequence.wrapping_add(1);
+                send_input_packet(
+                    &socket,
+                    keyboard_packet(
+                        command.destination,
+                        command.token,
+                        &held,
+                        sequence,
+                        FLAG_STOP,
+                        command.player,
+                    ),
+                )?;
+                println!("Stopped keyboard input forwarding.");
+                return Ok(());
+            }
+            update_held_keys(&mut held, key);
+        }
+
+        sequence = sequence.wrapping_add(1);
+        let packet = keyboard_packet(
+            command.destination,
+            command.token,
+            &held,
+            sequence,
+            0,
+            command.player,
+        );
+        if command.debug {
+            println!("{}", debug_state(&held, packet.state));
+        }
+        send_input_packet(&socket, packet)?;
+    }
+}
+
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn enable() -> io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
+fn keyboard_packet(
+    destination: SocketAddr,
+    token: SessionToken,
+    held: &HashSet<KeyCode>,
+    sequence: u32,
+    flags: u8,
+    player_slot: u8,
+) -> InputPacket {
+    InputPacket {
+        destination,
+        token,
+        state: state_from_keys(held, sequence, flags, player_slot),
+    }
+}
+
+fn update_held_keys(held: &mut HashSet<KeyCode>, key: KeyEvent) -> bool {
+    let code = normalize_key(key.code);
+    if !is_control_key(code) {
+        return false;
+    }
+    match key.kind {
+        KeyEventKind::Press => held.insert(code),
+        KeyEventKind::Release => held.remove(&code),
+        KeyEventKind::Repeat => false,
+    }
+}
+
+fn normalize_key(key: KeyCode) -> KeyCode {
+    match key {
+        KeyCode::Char(character) => KeyCode::Char(character.to_ascii_lowercase()),
+        other => other,
+    }
+}
+
+fn is_control_key(key: KeyCode) -> bool {
+    matches!(
+        key,
+        KeyCode::Char('w' | 'a' | 's' | 'd' | 'j' | 'k' | 'l' | 'm' | ',' | '.' | '1' | '2')
+    )
+}
+
+fn state_from_keys(
+    held: &HashSet<KeyCode>,
+    sequence: u32,
+    flags: u8,
+    player_slot: u8,
+) -> ControllerState {
+    let is_held = |character| held.contains(&KeyCode::Char(character));
+    let axis_x = (i16::from(is_held('d')) - i16::from(is_held('a'))) * i16::MAX;
+    let axis_y = (i16::from(is_held('s')) - i16::from(is_held('w'))) * i16::MAX;
+    let mut buttons = 0;
+    for (key, mask) in [
+        ('j', button::ACTION_1),
+        ('k', button::ACTION_2),
+        ('l', button::ACTION_3),
+        ('m', button::ACTION_4),
+        (',', button::ACTION_5),
+        ('.', button::ACTION_6),
+        ('1', button::COIN),
+        ('2', button::START),
+    ] {
+        if is_held(key) {
+            buttons |= mask;
+        }
+    }
+    ControllerState {
+        sequence,
+        buttons,
+        axis_x,
+        axis_y,
+        flags,
+        player_slot,
+    }
+}
+
+fn debug_state(held: &HashSet<KeyCode>, state: ControllerState) -> String {
+    format!(
+        "input seq={} axis=({}, {}) buttons=0x{:04x} keys={}",
+        state.sequence,
+        state.axis_x.signum(),
+        state.axis_y.signum(),
+        state.buttons,
+        debug_keys(held)
+    )
+}
+
+fn debug_keys(held: &HashSet<KeyCode>) -> String {
+    let keys = ['w', 'a', 's', 'd', 'j', 'k', 'l', 'm', ',', '.', '1', '2']
+        .into_iter()
+        .filter(|character| held.contains(&KeyCode::Char(*character)))
+        .collect::<String>();
+    if keys.is_empty() {
+        "none".to_owned()
+    } else {
+        keys
+    }
 }
 
 fn spawn_ffplay(path: &PathBuf, args: &[String]) -> io::Result<Child> {
@@ -218,6 +397,37 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, S
                 axis_x,
                 axis_y,
                 stop,
+            })
+        }
+        "keyboard" => {
+            let mut destination = None;
+            let mut token = None;
+            let mut player = None;
+            let mut debug = false;
+            while let Some(option) = args.next() {
+                match option.as_str() {
+                    "--destination" => {
+                        destination = Some(parse_socket_addr(value(&mut args, &option)?)?);
+                    }
+                    "--token" => {
+                        token = Some(parse_token(value(&mut args, &option)?)?);
+                    }
+                    "--player" => {
+                        player = Some(parse_player(value(&mut args, &option)?)?);
+                    }
+                    "--debug-input" => {
+                        debug = true;
+                    }
+                    "--help" | "-h" => return Err("help requested".to_owned()),
+                    other => return Err(format!("unknown option {other}")),
+                }
+            }
+            RuntimeCommand::Keyboard(KeyboardCommand {
+                destination: destination
+                    .ok_or_else(|| "missing --destination <host:port>".to_owned())?,
+                token: token.ok_or_else(|| "missing --token <session-token>".to_owned())?,
+                player: player.ok_or_else(|| "missing --player <player-number>".to_owned())?,
+                debug,
             })
         }
         "--help" | "-h" => return Err("help requested".to_owned()),
@@ -321,7 +531,7 @@ fn value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String
 
 fn usage(program: &str) -> String {
     format!(
-        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--buttons <names>] [--axis-x <-1|0|1>] [--axis-y <-1|0|1>] [--stop]\n\nInput buttons:\n  action1/b1/attack, action2/b2/jump, action3/b3, action4/b4, action5/b5, action6/b6, coin/select, start\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
+        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--buttons <names>] [--axis-x <-1|0|1>] [--axis-y <-1|0|1>] [--stop]\n  {program} keyboard --destination <host:port> --token <uuid> --player <number> [--debug-input]\n\nInput buttons:\n  action1/b1/attack, action2/b2/jump, action3/b3, action4/b4, action5/b5, action6/b6, coin/select, start\n\nKeyboard map:\n  W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start; Esc stops.\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
     )
 }
 
@@ -441,6 +651,30 @@ mod tests {
     }
 
     #[test]
+    fn parses_keyboard_command() {
+        let config = parse_args([
+            "keyboard".to_owned(),
+            "--destination".to_owned(),
+            "192.0.2.68:42000".to_owned(),
+            "--token".to_owned(),
+            "00112233-4455-6677-8899-aabbccddeeff".to_owned(),
+            "--player".to_owned(),
+            "4".to_owned(),
+            "--debug-input".to_owned(),
+        ])
+        .unwrap();
+
+        match config.command {
+            RuntimeCommand::Keyboard(command) => {
+                assert_eq!(command.destination, "192.0.2.68:42000".parse().unwrap());
+                assert_eq!(command.player, 4);
+                assert!(command.debug);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
     fn builds_authenticated_input_packet() {
         let command = InputCommand {
             destination: "192.0.2.68:42000".parse().unwrap(),
@@ -467,6 +701,31 @@ mod tests {
                 flags: 0,
                 player_slot: 3,
             }
+        );
+    }
+
+    #[test]
+    fn simultaneous_keys_produce_combined_state() {
+        let held = HashSet::from([
+            KeyCode::Char('w'),
+            KeyCode::Char('d'),
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+        ]);
+        let state = state_from_keys(&held, 7, 0, 1);
+        assert_eq!(state.axis_x, i16::MAX);
+        assert_eq!(state.axis_y, -i16::MAX);
+        assert_eq!(state.buttons, button::ACTION_1 | button::ACTION_2);
+    }
+
+    #[test]
+    fn debug_state_lists_axis_buttons_and_keys() {
+        let held = HashSet::from([KeyCode::Char('d'), KeyCode::Char('j')]);
+        let state = state_from_keys(&held, 42, 0, 1);
+
+        assert_eq!(
+            debug_state(&held, state),
+            "input seq=42 axis=(1, 0) buttons=0x0001 keys=dj"
         );
     }
 

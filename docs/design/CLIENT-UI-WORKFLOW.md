@@ -482,6 +482,18 @@ diagnostic/building-block command, not final keyboard or gamepad capture. The
 next native-client increment should turn this primitive into supervised input
 forwarding owned by the packaged seat client.
 
+The runtime companion also has an initial terminal keyboard-forwarding command:
+
+```powershell
+cargo run -p seat-client-runtime -- keyboard --destination 192.168.20.68:42000 --token <session-token> --player 1 --debug-input
+```
+
+This uses the same development key map as `seat-input`: `W/A/S/D` movement,
+`J/K/L/M/,/.` actions, `1` coin, `2` start, and `Esc` to send stop and exit.
+It is intentionally still a low-level runtime command. The packaged client
+should eventually own this process invisibly, then replace terminal keyboard
+capture with the appropriate kiosk/window/gamepad input source.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details
