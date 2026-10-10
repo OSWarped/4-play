@@ -8,7 +8,9 @@ use std::{
     time::Duration,
 };
 
-use input_protocol::{AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken};
+use input_protocol::{
+    AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
+};
 use seat_client_core::media_receiver_plan;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,9 @@ struct InputCommand {
     token: SessionToken,
     player: u8,
     seconds: u64,
+    buttons: u16,
+    axis_x: i16,
+    axis_y: i16,
     stop: bool,
 }
 
@@ -75,8 +80,13 @@ fn run_input(command: InputCommand) -> io::Result<()> {
     let interval = Duration::from_millis(16);
     let ticks = command.seconds.saturating_mul(1000).div_ceil(16);
     println!(
-        "Sending neutral 4-Play input to {} as player {} for {} second(s).",
-        command.destination, command.player, command.seconds
+        "Sending 4-Play input to {} as player {} for {} second(s): buttons=0x{:04x} axis=({}, {}).",
+        command.destination,
+        command.player,
+        command.seconds,
+        command.buttons,
+        command.axis_x,
+        command.axis_y
     );
     for sequence in 1..=ticks {
         send_controller_state(
@@ -85,6 +95,9 @@ fn run_input(command: InputCommand) -> io::Result<()> {
             command.token,
             ControllerState {
                 sequence: sequence.try_into().unwrap_or(u32::MAX),
+                buttons: command.buttons,
+                axis_x: command.axis_x,
+                axis_y: command.axis_y,
                 player_slot: command.player,
                 ..ControllerState::default()
             },
@@ -157,6 +170,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, S
             let mut token = None;
             let mut player = None;
             let mut seconds = 1;
+            let mut buttons = 0;
+            let mut axis_x = 0;
+            let mut axis_y = 0;
             let mut stop = false;
             while let Some(option) = args.next() {
                 match option.as_str() {
@@ -172,6 +188,15 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, S
                     "--seconds" => {
                         seconds = parse_seconds(value(&mut args, &option)?)?;
                     }
+                    "--buttons" => {
+                        buttons = parse_button_mask(value(&mut args, &option)?)?;
+                    }
+                    "--axis-x" => {
+                        axis_x = parse_axis(value(&mut args, &option)?, "axis-x")?;
+                    }
+                    "--axis-y" => {
+                        axis_y = parse_axis(value(&mut args, &option)?, "axis-y")?;
+                    }
                     "--stop" => {
                         stop = true;
                     }
@@ -185,6 +210,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, S
                 token: token.ok_or_else(|| "missing --token <session-token>".to_owned())?,
                 player: player.ok_or_else(|| "missing --player <player-number>".to_owned())?,
                 seconds,
+                buttons,
+                axis_x,
+                axis_y,
                 stop,
             })
         }
@@ -246,6 +274,41 @@ fn parse_seconds(value: String) -> Result<u64, String> {
         })
 }
 
+fn parse_axis(value: String, field: &str) -> Result<i16, String> {
+    value
+        .parse::<i16>()
+        .map_err(|_| format!("invalid {field} value {value}"))
+        .and_then(|axis| {
+            if (-1..=1).contains(&axis) {
+                Ok(axis)
+            } else {
+                Err(format!("{field} must be -1, 0, or 1"))
+            }
+        })
+}
+
+fn parse_button_mask(value: String) -> Result<u16, String> {
+    let mut buttons = 0;
+    for name in value
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        buttons |= match name.to_ascii_lowercase().as_str() {
+            "action1" | "b1" | "south" | "attack" => button::ACTION_1,
+            "action2" | "b2" | "east" | "jump" => button::ACTION_2,
+            "action3" | "b3" | "north" => button::ACTION_3,
+            "action4" | "b4" | "west" => button::ACTION_4,
+            "action5" | "b5" | "tl" | "left-shoulder" => button::ACTION_5,
+            "action6" | "b6" | "tr" | "right-shoulder" => button::ACTION_6,
+            "coin" | "select" => button::COIN,
+            "start" => button::START,
+            other => return Err(format!("unknown button {other}")),
+        };
+    }
+    Ok(buttons)
+}
+
 fn value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
     args.next()
         .filter(|value| !value.trim().is_empty())
@@ -254,7 +317,7 @@ fn value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String
 
 fn usage(program: &str) -> String {
     format!(
-        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--stop]\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
+        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--buttons <names>] [--axis-x <-1|0|1>] [--axis-y <-1|0|1>] [--stop]\n\nInput buttons:\n  action1/b1/attack, action2/b2/jump, action3/b3, action4/b4, action5/b5, action6/b6, coin/select, start\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
     )
 }
 
@@ -312,6 +375,12 @@ mod tests {
             "2".to_owned(),
             "--seconds".to_owned(),
             "3".to_owned(),
+            "--buttons".to_owned(),
+            "attack,jump,start".to_owned(),
+            "--axis-x".to_owned(),
+            "1".to_owned(),
+            "--axis-y".to_owned(),
+            "-1".to_owned(),
             "--stop".to_owned(),
         ])
         .unwrap();
@@ -321,6 +390,12 @@ mod tests {
                 assert_eq!(command.destination, "192.0.2.68:42000".parse().unwrap());
                 assert_eq!(command.player, 2);
                 assert_eq!(command.seconds, 3);
+                assert_eq!(
+                    command.buttons,
+                    button::ACTION_1 | button::ACTION_2 | button::START
+                );
+                assert_eq!(command.axis_x, 1);
+                assert_eq!(command.axis_y, -1);
                 assert!(command.stop);
             }
             other => panic!("unexpected command: {other:?}"),
@@ -339,6 +414,25 @@ mod tests {
             ])
             .unwrap_err()
             .contains("missing --token")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_button_name() {
+        assert!(
+            parse_args([
+                "input".to_owned(),
+                "--destination".to_owned(),
+                "192.0.2.68:42000".to_owned(),
+                "--token".to_owned(),
+                "00112233-4455-6677-8899-aabbccddeeff".to_owned(),
+                "--player".to_owned(),
+                "1".to_owned(),
+                "--buttons".to_owned(),
+                "turbo".to_owned(),
+            ])
+            .unwrap_err()
+            .contains("unknown button")
         );
     }
 

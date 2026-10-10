@@ -468,11 +468,19 @@ client:
 cargo run -p seat-client-runtime -- input --destination 192.168.20.68:42000 --token <session-token> --player 1 --seconds 3 --stop
 ```
 
-That command sends neutral controller-state packets at the normal input cadence
-and can optionally send the stop flag. It is a diagnostic/building-block command,
-not final keyboard or gamepad capture. The next native-client increment should
-turn this primitive into supervised input forwarding owned by the packaged seat
-client.
+By default that command sends neutral controller-state packets at the normal
+input cadence and can optionally send the stop flag. It can also hold diagnostic
+state for the duration:
+
+```powershell
+cargo run -p seat-client-runtime -- input --destination 192.168.20.68:42000 --token <session-token> --player 2 --seconds 1 --buttons attack,jump --axis-x 1
+```
+
+Supported diagnostic button names are `action1` through `action6`, `b1` through
+`b6`, `attack`, `jump`, `coin`, `select`, and `start`. This is a
+diagnostic/building-block command, not final keyboard or gamepad capture. The
+next native-client increment should turn this primitive into supervised input
+forwarding owned by the packaged seat client.
 
 ### UI v1 — arcade browser
 
