@@ -254,13 +254,61 @@ function renderSessionDetails(session) {
       <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
       <p class="muted">Running on ${escapeHtml(session.runtime_host_id || "unknown host")}.</p>
       <div class="form-actions">
-        ${ownDisconnected.map((slot) => `<button type="button">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
-        ${openSlots.map((slot) => `<button type="button">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
+        ${ownDisconnected.map((slot) => `<button type="button" data-rejoin-player="${escapeHtml(String(slot.player_number))}">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
+        ${openSlots.map((slot) => `<button type="button" data-join-player="${escapeHtml(String(slot.player_number))}">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         <button type="button">Spectate</button>
       </div>
-      <p class="muted">These buttons define the player-facing flow. Wiring them to reserve/connect/spectate and launch media/input is the next implementation increment.</p>
+      <p class="muted">Join/rejoin now reserves and connects a real player slot. Media/input launch is the next client increment.</p>
+      <div id="client-action-result"></div>
     </div>
   `);
+  document.querySelectorAll("[data-join-player]").forEach((button) => {
+    button.addEventListener("click", () =>
+      joinPlayerSlot(session, Number(button.dataset.joinPlayer), false),
+    );
+  });
+  document.querySelectorAll("[data-rejoin-player]").forEach((button) => {
+    button.addEventListener("click", () =>
+      joinPlayerSlot(session, Number(button.dataset.rejoinPlayer), true),
+    );
+  });
+}
+
+async function joinPlayerSlot(session, playerNumber, rejoin) {
+  const result = document.querySelector("#client-action-result");
+  syncSettingsFromInputs();
+  if (!Number.isInteger(playerNumber) || playerNumber <= 0) {
+    result.innerHTML = `<p class="pill bad">Invalid player slot.</p>`;
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">${rejoin ? "Rejoining" : "Joining"} player ${escapeHtml(String(playerNumber))}...</p>`;
+  try {
+    if (!rejoin) {
+      await postJson(`/api/v1/sessions/${session.id}/player-slots/${playerNumber}/reserve`, {
+        seat_id: state.seatId,
+      });
+    }
+    const connected = await postJson(
+      `/api/v1/sessions/${session.id}/player-slots/${playerNumber}/connect`,
+      { seat_id: state.seatId },
+    );
+    const slot = (connected.player_slots || []).find(
+      (candidate) => candidate.player_number === playerNumber,
+    );
+    result.innerHTML = `
+      <div class="item">
+        <h3>${rejoin ? "Player slot rejoined" : "Player slot joined"}</h3>
+        <span class="pill good">${escapeHtml(slot?.label || `P${playerNumber}`)}</span>
+        <span class="pill">${escapeHtml(connected.id)}</span>
+        <span class="pill">media ${escapeHtml(String(connected.connection_grant?.media_udp_port || "unknown"))}</span>
+        <span class="pill">input ${escapeHtml(String(connected.connection_grant?.input_udp_port || "unknown"))}</span>
+        <p class="muted">Slot ownership is live. The next increment will launch or coordinate media and input from this graphical client.</p>
+      </div>
+    `;
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
 }
 
 function renderDetails(html) {

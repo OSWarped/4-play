@@ -395,11 +395,12 @@ slice provides:
 - game detail, control notes, and running-session awareness;
 - player-slot display with open/disconnected states;
 - real start-game session requests through `POST /api/v1/sessions`;
-- join/rejoin/spectate action placeholders.
+- real join/rejoin flow through the player-slot reserve/connect APIs;
+- spectate action placeholders.
 
 The remaining placeholders are deliberate. The proven `seat-input.exe` path
-remains the gameplay path until the graphical client owns the full
-reserve/connect/spectate, media receiver, and input forwarding lifecycle.
+remains the gameplay path until the graphical client owns the full spectate,
+media receiver, and input forwarding lifecycle.
 
 The next client UI increment should wire those buttons to existing control-plane
 APIs and either launch or coordinate the existing media/input path.

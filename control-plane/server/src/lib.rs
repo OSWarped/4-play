@@ -1665,6 +1665,7 @@ mod tests {
         assert!(script_body.contains("fourplay.destinationIp"));
         assert!(script_body.contains("findOwnDisconnectedSlot"));
         assert!(script_body.contains("async function startGame"));
+        assert!(script_body.contains("async function joinPlayerSlot"));
         assert!(script_body.contains("POST"));
 
         assert_eq!(styles_status, 200);
