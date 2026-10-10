@@ -477,6 +477,15 @@ async function uploadAsset(form) {
   }
   result.innerHTML = `<p class="pill warn">Uploading asset...</p>`;
   try {
+    if (await assetExists(path)) {
+      const confirmed = window.confirm(
+        `Replace existing asset?\n\n${path}\n\nThis will overwrite the current file at that asset path.`,
+      );
+      if (!confirmed) {
+        result.innerHTML = `<p class="pill warn">Upload cancelled; existing asset was not replaced.</p>`;
+        return;
+      }
+    }
     await putRaw(`/api/v1/assets/${encodeAssetPath(path)}`, file);
     form.elements[field].value = path;
     result.innerHTML = `
@@ -489,6 +498,18 @@ async function uploadAsset(form) {
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
   }
+}
+
+async function assetExists(path) {
+  const response = await fetch(assetUrl(path), { headers: authHeaders() });
+  if (response.ok) {
+    return true;
+  }
+  if (response.status === 404) {
+    return false;
+  }
+  const text = await response.text();
+  throw new Error(`${response.status} ${response.statusText}: ${text}`);
 }
 
 function encodeAssetPath(path) {

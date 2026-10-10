@@ -144,6 +144,8 @@ The upload body is the raw file bytes. The path must be relative and cannot
 contain traversal. After upload, the Admin/Producer UI applies the uploaded path
 to the selected metadata field; the operator then saves metadata to keep the
 reference.
+Before upload, the UI checks whether the target asset path already exists. If
+it does, the operator must confirm replacement before the file is overwritten.
 
 Catalog cards and the metadata editor preview configured media using the first
 available path in this order: screenshot, artwork, marquee, logo.
