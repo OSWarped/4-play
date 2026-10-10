@@ -167,12 +167,17 @@ function renderProduction(session) {
       <span class="pill">player media ${escapeHtml(String(mediaPort))}</span>
       <span class="pill">input ${escapeHtml(String(inputPort))}</span>
       <button id="create-spectator-grant" type="button">Create production spectator feed</button>
+      <button id="stop-session" class="danger" type="button">Stop session</button>
       <div id="spectator-grant-result"></div>
+      <div id="session-action-result"></div>
     </div>
   `;
   document
     .querySelector("#create-spectator-grant")
     .addEventListener("click", () => createProductionSpectatorGrant(session));
+  document
+    .querySelector("#stop-session")
+    .addEventListener("click", () => stopSession(session));
 }
 
 async function createProductionSpectatorGrant(session) {
@@ -272,6 +277,32 @@ async function releaseProductionSpectatorGrant(grant) {
   }
 }
 
+async function stopSession(session) {
+  const result = document.querySelector("#session-action-result");
+  const label = session.display_name || session.game_id || session.id;
+  const confirmed = window.confirm(
+    `Stop ${label}?\n\nThis will end gameplay for every connected player and spectator in this session.`,
+  );
+  if (!confirmed) {
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Stopping ${escapeHtml(label)}...</p>`;
+  try {
+    const updated = await postJson(`/api/v1/sessions/${session.id}/stop`);
+    result.innerHTML = `
+      <div class="item">
+        <h3>Session stop requested</h3>
+        <span class="pill warn">${escapeHtml(updated.state || "stopping")}</span>
+        <span class="pill">${escapeHtml(updated.id || session.id)}</span>
+        <p class="muted">The runtime host will shut down the emulator and release session resources.</p>
+      </div>
+    `;
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
 async function postJson(path, body) {
   return sendJson("POST", path, body);
 }
@@ -287,7 +318,7 @@ async function sendJson(method, path, body) {
       ...authHeaders(),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
     const text = await response.text();

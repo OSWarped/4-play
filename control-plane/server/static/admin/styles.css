@@ -74,9 +74,17 @@ button {
   background: linear-gradient(135deg, rgba(121, 242, 192, 0.2), rgba(122, 167, 255, 0.2));
 }
 
+button.danger {
+  background: linear-gradient(135deg, rgba(255, 107, 107, 0.26), rgba(255, 209, 102, 0.12));
+}
+
 button:hover,
 .button-link:hover {
   border-color: rgba(121, 242, 192, 0.65);
+}
+
+button.danger:hover {
+  border-color: rgba(255, 107, 107, 0.72);
 }
 
 .button-link {

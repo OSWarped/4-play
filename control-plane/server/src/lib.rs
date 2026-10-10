@@ -1353,6 +1353,7 @@ mod tests {
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("fourplay.adminToken"));
         assert!(script_body.contains("Release production spectator feed"));
+        assert!(script_body.contains("Stop session"));
         assert!(script_body.contains("/admin/capture?"));
 
         assert_eq!(capture_status, 200);

@@ -92,6 +92,7 @@ The v0 console:
 - releases production spectator grants when the producer is done with a feed;
 - prints receiver URLs and ffplay commands for OBS/producer machines;
 - opens a clean production capture helper page for OBS setup/overlay use;
+- requests active session shutdown with a confirmation prompt;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console intentionally keeps disruptive controls out of scope. Production
@@ -99,9 +100,9 @@ spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. add session stop/cleanup controls with confirmation;
-2. add game metadata editing;
-3. add event/match notes.
+1. add game metadata editing;
+2. add event/match notes;
+3. surface diagnostics/cleanup results inside the console.
 
 ## Production spectator feed
 
@@ -186,11 +187,27 @@ Minimum event fields:
 Admin actions can affect multiple players, so destructive or disruptive actions
 should be explicit:
 
-- stopping an active session should require confirmation;
+- stopping an active session requires confirmation and should explain that all
+  connected players and spectators will be disconnected;
 - hiding a game should explain that players will no longer see it;
 - ROM import/validation should not automatically publish broken games;
 - cleanup should distinguish stale/non-terminal sessions from normal history;
 - production spectator mode should not reserve player slots.
+
+## Session stop workflow
+
+The Admin/Producer v0 console exposes a **Stop session** action in the
+production panel for a selected active session. The action uses the existing
+control-plane endpoint:
+
+```text
+POST /api/v1/sessions/{session_id}/stop
+```
+
+The browser confirmation is intentionally plain and explicit: stopping a
+session ends gameplay for every connected player and spectator. The API moves
+the session to `stopping`; the runtime host then shuts down the emulator and
+releases runtime resources.
 
 ## Relationship to existing tools
 
