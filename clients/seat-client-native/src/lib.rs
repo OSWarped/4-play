@@ -342,6 +342,7 @@ where
 {
     app: NativeSeatApp<A, M, I>,
     input: NativeControllerStateTracker,
+    input_heartbeat_enabled: bool,
 }
 
 impl<A, M, I> NativeSeatUiSession<A, M, I>
@@ -354,11 +355,25 @@ where
         Self {
             app,
             input: NativeControllerStateTracker::new(),
+            input_heartbeat_enabled: false,
         }
     }
 
     pub fn input_state(&self) -> NativeControllerInput {
         self.input.state()
+    }
+
+    pub fn heartbeat_input(
+        &mut self,
+    ) -> Result<Option<NativeControllerInput>, NativeSeatAppError<A::Error, M::Error, I::Error>>
+    {
+        if !self.input_heartbeat_enabled {
+            return Ok(None);
+        }
+
+        let state = self.input.state();
+        self.app.send_controller_state(state)?;
+        Ok(Some(state))
     }
 
     pub fn handle_command(
@@ -367,43 +382,50 @@ where
     ) -> Result<NativeUiResponse, NativeSeatAppError<A::Error, M::Error, I::Error>> {
         match command {
             NativeUiCommand::Refresh => self.refresh_view_model(),
-            NativeUiCommand::StartGame { game_id } => self
-                .app
-                .start_game(&game_id)
-                .map(NativeUiResponse::RuntimeStatus),
+            NativeUiCommand::StartGame { game_id } => {
+                let status = self.app.start_game(&game_id)?;
+                self.enter_player_runtime();
+                Ok(NativeUiResponse::RuntimeStatus(status))
+            }
             NativeUiCommand::JoinSession {
                 session_id,
                 player_number,
-            } => self
-                .app
-                .join_session(&session_id, player_number)
-                .map(NativeUiResponse::RuntimeStatus),
+            } => {
+                let status = self.app.join_session(&session_id, player_number)?;
+                self.enter_player_runtime();
+                Ok(NativeUiResponse::RuntimeStatus(status))
+            }
             NativeUiCommand::RejoinSession {
                 session_id,
                 player_number,
-            } => self
-                .app
-                .rejoin_session(&session_id, player_number)
-                .map(NativeUiResponse::RuntimeStatus),
-            NativeUiCommand::SpectateSession { session_id } => self
-                .app
-                .spectate_session(&session_id)
-                .map(NativeUiResponse::RuntimeStatus),
+            } => {
+                let status = self.app.rejoin_session(&session_id, player_number)?;
+                self.enter_player_runtime();
+                Ok(NativeUiResponse::RuntimeStatus(status))
+            }
+            NativeUiCommand::SpectateSession { session_id } => {
+                let status = self.app.spectate_session(&session_id)?;
+                self.enter_non_player_runtime();
+                Ok(NativeUiResponse::RuntimeStatus(status))
+            }
             NativeUiCommand::JoinFromSpectator {
                 session_id,
                 player_number,
-            } => self
-                .app
-                .join_from_spectator(&session_id, player_number)
-                .map(NativeUiResponse::RuntimeStatus),
+            } => {
+                let status = self.app.join_from_spectator(&session_id, player_number)?;
+                self.enter_player_runtime();
+                Ok(NativeUiResponse::RuntimeStatus(status))
+            }
             NativeUiCommand::LeavePlayerSlot {
                 session_id,
                 player_number,
             } => {
+                self.enter_non_player_runtime();
                 self.app.leave_player_slot(&session_id, player_number)?;
                 Ok(NativeUiResponse::Ack)
             }
             NativeUiCommand::StopRuntime => {
+                self.enter_non_player_runtime();
                 self.app.stop_runtime()?;
                 Ok(NativeUiResponse::Ack)
             }
@@ -423,9 +445,13 @@ where
                 Ok(NativeUiResponse::InputState(state))
             }
             NativeUiCommand::SendStopInput => {
-                self.input.neutralize();
-                self.app.send_player_stop()?;
-                Ok(NativeUiResponse::InputState(self.input.state()))
+                let state = self.input.neutralize();
+                self.input_heartbeat_enabled = false;
+                let stop_result = self.app.send_player_stop();
+                let runtime_result = self.app.stop_runtime();
+                stop_result?;
+                runtime_result?;
+                Ok(NativeUiResponse::InputState(state))
             }
         }
     }
@@ -440,6 +466,16 @@ where
             status,
             self.app.seat_id(),
         )))
+    }
+
+    fn enter_player_runtime(&mut self) {
+        self.input.neutralize();
+        self.input_heartbeat_enabled = true;
+    }
+
+    fn enter_non_player_runtime(&mut self) {
+        self.input.neutralize();
+        self.input_heartbeat_enabled = false;
     }
 }
 
@@ -1906,6 +1942,69 @@ mod tests {
             })
         );
         assert_eq!(ui.app.supervisor.input.sent[1].state.axis_y, -1);
+    }
+
+    #[test]
+    fn native_ui_session_heartbeat_repeats_current_player_input() {
+        let mut ui = NativeSeatUiSession::new(app(FakeApi::default()));
+
+        ui.handle_command(NativeUiCommand::StartGame {
+            game_id: "tmnt".to_owned(),
+        })
+        .unwrap();
+        ui.handle_command(NativeUiCommand::SetAxis {
+            axis_x: 1,
+            axis_y: 0,
+        })
+        .unwrap();
+
+        let heartbeat_state = ui.heartbeat_input().unwrap();
+
+        assert_eq!(
+            heartbeat_state,
+            Some(NativeControllerInput {
+                buttons: 0,
+                axis_x: 1,
+                axis_y: 0,
+            })
+        );
+        assert_eq!(ui.app.supervisor.input.sent.len(), 2);
+        assert_eq!(ui.app.supervisor.input.sent[1].state.axis_x, 1);
+        assert_eq!(ui.app.supervisor.input.sent[1].state.flags, 0);
+    }
+
+    #[test]
+    fn native_ui_session_heartbeat_is_disabled_for_spectators() {
+        let mut ui = NativeSeatUiSession::new(app(FakeApi::default()));
+
+        ui.handle_command(NativeUiCommand::SpectateSession {
+            session_id: "session-1".to_owned(),
+        })
+        .unwrap();
+
+        assert_eq!(ui.heartbeat_input().unwrap(), None);
+        assert!(ui.app.supervisor.input.sent.is_empty());
+    }
+
+    #[test]
+    fn native_ui_session_stop_input_stops_local_media_process() {
+        let mut ui = NativeSeatUiSession::new(app(FakeApi::default()));
+
+        ui.handle_command(NativeUiCommand::StartGame {
+            game_id: "tmnt".to_owned(),
+        })
+        .unwrap();
+        let response = ui.handle_command(NativeUiCommand::SendStopInput).unwrap();
+
+        assert_eq!(
+            response,
+            NativeUiResponse::InputState(NativeControllerInput::default())
+        );
+        assert_eq!(ui.app.supervisor.input.sent.len(), 1);
+        assert_eq!(ui.app.supervisor.input.sent[0].state.flags, FLAG_STOP);
+        assert_eq!(ui.app.supervisor.media.stopped, vec![1]);
+        assert!(ui.app.runtime_status().unwrap().is_none());
+        assert_eq!(ui.heartbeat_input().unwrap(), None);
     }
 
     #[test]

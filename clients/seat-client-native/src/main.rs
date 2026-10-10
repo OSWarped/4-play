@@ -1,4 +1,12 @@
-use std::{env, error::Error, net::SocketAddr, path::PathBuf, sync::mpsc, thread};
+use std::{
+    env,
+    error::Error,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
@@ -13,6 +21,8 @@ use seat_client_native::{
     NativeUiResponse, UdpInputPacketSender, build_native_seat_view_model,
 };
 use serde::Serialize;
+
+const INPUT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(16);
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().collect::<Vec<_>>();
@@ -118,11 +128,19 @@ fn run_native_worker(
     >,
     receiver: mpsc::Receiver<NativeBridgeRequest>,
 ) {
-    for request in receiver {
-        let result = session
-            .handle_command(request.command)
-            .map_err(|error| format!("native command failed: {error:?}"));
-        let _ = request.response.send(result);
+    loop {
+        match receiver.recv_timeout(INPUT_HEARTBEAT_INTERVAL) {
+            Ok(request) => {
+                let result = session
+                    .handle_command(request.command)
+                    .map_err(|error| format!("native command failed: {error:?}"));
+                let _ = request.response.send(result);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = session.heartbeat_input();
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
     }
 }
 

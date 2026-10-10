@@ -573,6 +573,10 @@ The current native backend provides:
   child process arguments;
 - controller-state tracking for graphical keyboard/gamepad events, including
   simultaneous buttons, axis clamping, and neutralize behavior;
+- a native input heartbeat while playing, so held directions/buttons continue
+  to be transmitted even when the graphical UI only emits key/button transitions;
+- stop handling that sends the runtime stop flag and tears down the supervised
+  local media receiver, preventing frozen ffplay windows after `Esc`;
 - safe JSON view models for games, active sessions, joinable slots, spectator
   counts, previews, and current runtime status.
 - a localhost `serve-ui` bridge that serves the native UI scaffold and forwards

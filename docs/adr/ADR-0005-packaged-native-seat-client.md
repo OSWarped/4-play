@@ -95,7 +95,8 @@ foundation:
 
 - token-safe launch plans for player and spectator runtimes;
 - a media process supervisor for ffplay-compatible receivers;
-- in-process authenticated UDP input forwarding;
+- in-process authenticated UDP input forwarding, including a backend heartbeat
+  for held controller state while a player runtime is active;
 - an app facade for refresh, start, join, rejoin, spectate, join-from-spectator,
   leave, stop, status, and controller-state send operations;
 - JSON view models for game cards, active session cards, joinable player slots,
@@ -131,3 +132,10 @@ The `serve-ui` command is a development bridge, not the final desktop package.
 It binds to localhost by default, serves the UI scaffold, and exposes
 `POST /native-command` for the same `NativeUiCommand` contract that a future
 Tauri/Wry/WebView shell should call directly.
+
+The native backend owns held-input durability. The graphical UI sends keyboard
+and gamepad state changes, while the worker thread re-sends the latest player
+state at a short interval. This preserves continuous walking and held attacks
+without requiring the browser layer to spam HTTP requests. Stop commands also
+shut down the supervised media receiver after sending the player stop flag, so
+the local ffplay window should not remain frozen on the last frame.

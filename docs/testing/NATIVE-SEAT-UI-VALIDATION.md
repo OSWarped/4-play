@@ -54,6 +54,7 @@ http://127.0.0.1:40704
 3. The UI status changes to player mode.
 4. Keyboard input works:
    - `W/A/S/D` or arrow keys move.
+   - holding a direction continuously moves until the key is released.
    - diagonal movement works.
    - `J/K/L/M/,/.` send action buttons.
    - simultaneous movement plus attack/jump works.
@@ -64,7 +65,9 @@ http://127.0.0.1:40704
    - buttons 0-5 send actions.
    - button 8 sends coin/select.
    - button 9 sends start.
-6. Click **Stop** and confirm the runtime stops or returns to browsing.
+6. Press `Esc` or click **Stop** and confirm:
+   - the runtime stops or returns to browsing;
+   - the local FFplay window closes instead of staying frozen on the last frame.
 
 ## Validate join/spectate
 
