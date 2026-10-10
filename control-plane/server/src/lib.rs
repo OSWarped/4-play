@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path as AxumPath, State},
     http::{HeaderMap, Request, StatusCode, header::CONTENT_TYPE},
     middleware::{self, Next},
@@ -29,6 +29,7 @@ pub use store::StoreError;
 pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
 pub const DEFAULT_GRANT_TTL: Duration = Duration::from_secs(300);
 pub const DEFAULT_PREVIEW_STALE_AFTER: Duration = Duration::from_secs(5);
+const MAX_ASSET_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -207,7 +208,7 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/games/{game_id}/metadata",
             get(get_game_metadata).put(update_game_metadata),
         )
-        .route("/api/v1/assets/{*asset_path}", get(get_asset))
+        .route("/api/v1/assets/{*asset_path}", get(get_asset).put(put_asset))
         .route(
             "/api/v1/active-sessions",
             get(list_active_session_summaries),
@@ -527,6 +528,51 @@ async fn get_asset(
         Body::from(bytes),
     )
         .into_response())
+}
+
+async fn put_asset(
+    State(state): State<AppState>,
+    AxumPath(asset_path): AxumPath<String>,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let Some(asset_root) = state.asset_root.as_ref() else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "asset_root_not_configured",
+            "asset serving is not configured",
+        ));
+    };
+    if body.is_empty() {
+        return Err(ApiError::bad_request(
+            "empty_asset",
+            "asset upload body must not be empty",
+        ));
+    }
+    if body.len() > MAX_ASSET_UPLOAD_BYTES {
+        return Err(ApiError::bad_request(
+            "asset_too_large",
+            "asset upload body exceeds the maximum allowed size",
+        ));
+    }
+    let relative_path = safe_relative_asset_path(&asset_path)?;
+    let full_path = asset_root.join(relative_path);
+    if let Some(parent) = full_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "asset_write_failed",
+                "asset directory could not be created",
+            )
+        })?;
+    }
+    tokio::fs::write(&full_path, body).await.map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "asset_write_failed",
+            "asset could not be written",
+        )
+    })?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn create_session(
@@ -1290,6 +1336,22 @@ mod tests {
         (status, content_type, body.to_vec())
     }
 
+    async fn request_raw(
+        app: axum::Router,
+        method: Method,
+        path: &str,
+        body: impl Into<Body>,
+    ) -> (u16, Vec<u8>) {
+        let mut request = Request::builder().method(method).uri(path);
+        if path.starts_with("/api/v1/") {
+            request = request.header("authorization", "Bearer test-seat-token");
+        }
+        let response = app.oneshot(request.body(body.into()).unwrap()).await.unwrap();
+        let status = response.status().as_u16();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, body.to_vec())
+    }
+
     async fn get_json(path: &str) -> (u16, Value) {
         request_json(app().await.unwrap(), Method::GET, path, None).await
     }
@@ -1352,6 +1414,7 @@ mod tests {
         );
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("fourplay.adminToken"));
+        assert!(script_body.contains("Upload asset"));
         assert!(script_body.contains("Save metadata"));
         assert!(script_body.contains("Player slot metadata"));
         assert!(script_body.contains("Producer notes"));
@@ -1988,6 +2051,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn asset_endpoint_accepts_authenticated_uploads() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("control-plane.sqlite3");
+        let asset_root = directory.path().join("assets");
+        let service = app_with_database_tokens_ports_and_assets(
+            &database,
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            Some(asset_root.clone()),
+        )
+        .await
+        .unwrap();
+
+        let (upload_status, upload_body) = request_raw(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/assets/media/tmnt/uploaded.txt",
+            Body::from("uploaded asset"),
+        )
+        .await;
+        assert_eq!(upload_status, 204);
+        assert!(upload_body.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(asset_root.join("media/tmnt/uploaded.txt")).unwrap(),
+            "uploaded asset"
+        );
+
+        let (download_status, content_type, body) = request_bytes(
+            service,
+            Method::GET,
+            "/api/v1/assets/media/tmnt/uploaded.txt",
+        )
+        .await;
+        assert_eq!(download_status, 200);
+        assert_eq!(content_type.as_deref(), Some("text/plain; charset=utf-8"));
+        assert_eq!(body, b"uploaded asset");
+    }
+
+    #[tokio::test]
     async fn asset_endpoint_rejects_traversal_and_reports_missing_root() {
         let no_root = app().await.unwrap();
         let (missing_root_status, _, _) = request_bytes(
@@ -2018,6 +2122,47 @@ mod tests {
         .await;
 
         assert_eq!(status, 400);
+    }
+
+    #[tokio::test]
+    async fn asset_upload_rejects_empty_and_unsafe_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database_tokens_ports_and_assets(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            Some(directory.path().join("assets")),
+        )
+        .await
+        .unwrap();
+
+        let (empty_status, empty_body) = request_raw(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/assets/media/tmnt/empty.txt",
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(empty_status, 400);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&empty_body).unwrap()["code"],
+            "empty_asset"
+        );
+
+        let (unsafe_status, unsafe_body) = request_raw(
+            service,
+            Method::PUT,
+            "/api/v1/assets/media/%2e%2e/secret.txt",
+            Body::from("nope"),
+        )
+        .await;
+        assert_eq!(unsafe_status, 400);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&unsafe_body).unwrap()["code"],
+            "invalid_asset_path"
+        );
     }
 
     #[tokio::test]

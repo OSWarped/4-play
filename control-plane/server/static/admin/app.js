@@ -242,6 +242,31 @@ function renderGameEditor(game) {
         ${metadataInput("Screenshot path", "screenshot_path", metadata.screenshot_path, "text", "media/game/screenshot.png")}
         ${metadataInput("Logo path", "logo_path", metadata.logo_path, "text", "media/game/logo.png")}
       </div>
+      <details class="asset-upload-editor">
+        <summary>Upload artwork/media asset</summary>
+        <p class="muted">
+          Upload a file under the configured asset root, then apply that relative path to a metadata field.
+        </p>
+        <label>
+          <span>Destination asset path</span>
+          <input id="asset-upload-path" type="text" placeholder="media/${escapeHtml(game.id)}/screenshot.png" />
+        </label>
+        <label>
+          <span>Apply uploaded path to</span>
+          <select id="asset-upload-field">
+            <option value="screenshot_path">Screenshot path</option>
+            <option value="marquee_path">Marquee path</option>
+            <option value="artwork_path">Artwork path</option>
+            <option value="logo_path">Logo path</option>
+          </select>
+        </label>
+        <label>
+          <span>File</span>
+          <input id="asset-upload-file" type="file" />
+        </label>
+        <button id="upload-asset" type="button">Upload asset</button>
+        <div id="asset-upload-result"></div>
+      </details>
       <details class="player-slot-editor">
         <summary>Player slot metadata</summary>
         <p class="muted">
@@ -258,13 +283,13 @@ function renderGameEditor(game) {
       <div id="metadata-result"></div>
     </form>
   `;
-  editor
-    .querySelector("#metadata-form")
-    .addEventListener("submit", (event) => saveGameMetadata(event, game));
+  const form = editor.querySelector("#metadata-form");
+  form.addEventListener("submit", (event) => saveGameMetadata(event, game));
   editor.querySelector("#cancel-metadata-edit").addEventListener("click", () => {
     editor.classList.add("muted");
     editor.textContent = "Select a game to edit its metadata.";
   });
+  editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
 }
 
 function metadataInput(label, name, value, type = "text", placeholder = "") {
@@ -330,6 +355,39 @@ async function saveGameMetadata(event, game) {
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
   }
+}
+
+async function uploadAsset(form) {
+  const path = form.querySelector("#asset-upload-path").value.trim();
+  const field = form.querySelector("#asset-upload-field").value;
+  const fileInput = form.querySelector("#asset-upload-file");
+  const result = form.querySelector("#asset-upload-result");
+  const file = fileInput.files?.[0];
+  if (!path || !file) {
+    result.innerHTML = `<p class="pill bad">Choose a destination path and file.</p>`;
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Uploading asset...</p>`;
+  try {
+    await putRaw(`/api/v1/assets/${encodeAssetPath(path)}`, file);
+    form.elements[field].value = path;
+    result.innerHTML = `
+      <div class="item">
+        <h3>Asset uploaded</h3>
+        <span class="pill good">${escapeHtml(path)}</span>
+        <p class="muted">The path was applied to ${escapeHtml(field)}. Save metadata to keep the reference.</p>
+      </div>
+    `;
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+function encodeAssetPath(path) {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function metadataFromForm(form) {
@@ -582,6 +640,18 @@ async function postJson(path, body) {
 
 async function putJson(path, body) {
   return sendJson("PUT", path, body);
+}
+
+async function putRaw(path, body) {
+  const response = await fetch(path, {
+    method: "PUT",
+    headers: authHeaders(),
+    body,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+  }
 }
 
 async function deleteJson(path, body) {
