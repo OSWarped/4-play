@@ -15,22 +15,25 @@ const elements = {
   overlay: document.querySelector("#actions-overlay"),
   overlayTitle: document.querySelector("#overlay-title"),
   overlayActions: document.querySelector("#overlay-actions"),
+  message: document.querySelector("#message"),
 };
 
-elements.refresh.addEventListener("click", () => refresh());
+elements.refresh.addEventListener("click", () => runUiAction(() => refresh()));
 document.addEventListener("keydown", (event) => handleKey(event, true));
 document.addEventListener("keyup", (event) => handleKey(event, false));
 window.addEventListener("blur", () => neutralizeInput("Window focus lost"));
 
-refresh();
+runUiAction(() => refresh());
 
 async function refresh() {
+  setMessage("Refreshing seat state...");
   const response = await nativeCommand({ type: "refresh" });
   if (response.type !== "view_model") {
     throw new Error(`Unexpected refresh response: ${response.type}`);
   }
   state.viewModel = response.payload;
   render();
+  setMessage("Seat state refreshed.");
 }
 
 async function nativeCommand(command) {
@@ -50,9 +53,13 @@ async function nativeCommand(command) {
       if (response.ok) {
         return response.json();
       }
-      console.warn("Native bridge command failed; using mock data", await response.text());
+      throw new Error(await response.text());
     } catch (error) {
-      console.warn("Native bridge unavailable; using mock data", error);
+      if (location.hostname === "" || location.protocol === "file:") {
+        console.warn("Native bridge unavailable; using mock data", error);
+      } else {
+        throw error;
+      }
     }
   }
   return mockNativeCommand(command);
@@ -83,11 +90,11 @@ function gameCard(game) {
       <button data-action="start">Start</button>
     </div>
   `;
-  card.querySelector("[data-action='start']").addEventListener("click", async () => {
+  card.querySelector("[data-action='start']").addEventListener("click", () => runUiAction(async () => {
     await nativeCommand({ type: "start_game", game_id: game.id });
     showOverlay(`Starting ${game.display_name}`, ["Launching media", "Input ready"]);
     await refresh();
-  });
+  }));
   return card;
 }
 
@@ -113,7 +120,7 @@ function sessionCard(session) {
     </div>
   `;
   for (const button of card.querySelectorAll("[data-join]")) {
-    button.addEventListener("click", async () => {
+    button.addEventListener("click", () => runUiAction(async () => {
       await nativeCommand({
         type: "join_session",
         session_id: session.id,
@@ -121,13 +128,13 @@ function sessionCard(session) {
       });
       showOverlay(`Joined ${session.display_name}`, ["Playing", "Esc / menu to leave"]);
       await refresh();
-    });
+    }));
   }
-  card.querySelector("[data-spectate]")?.addEventListener("click", async () => {
+  card.querySelector("[data-spectate]")?.addEventListener("click", () => runUiAction(async () => {
     await nativeCommand({ type: "spectate_session", session_id: session.id });
     showOverlay(`Spectating ${session.display_name}`, ["Join open slot", "Stop viewing"]);
     await refresh();
-  });
+  }));
   return card;
 }
 
@@ -151,7 +158,7 @@ async function handleKey(event, pressed) {
     const command = state.viewModel?.current_runtime?.mode === "player"
       ? { type: "send_stop_input" }
       : { type: "stop_runtime" };
-    await nativeCommand(command);
+    await runUiAction(() => nativeCommand(command));
     state.heldKeys.clear();
     state.lastAxis = { x: 0, y: 0 };
     showOverlay("Stop sent", ["Runtime stop requested", "Refreshing"]);
@@ -170,7 +177,7 @@ async function handleKey(event, pressed) {
   if (button) {
     event.preventDefault();
     await setHeldKey(event.code, pressed);
-    await nativeCommand({ type: "set_button", button, pressed });
+    await runUiAction(() => nativeCommand({ type: "set_button", button, pressed }), false);
     showOverlay("Input active", ["WASD move", "J/K/L/M/,/. attack", "1 coin", "2 start"]);
     return;
   }
@@ -181,7 +188,7 @@ async function handleKey(event, pressed) {
     const axis = axisFromHeldKeys();
     if (axis.x !== state.lastAxis.x || axis.y !== state.lastAxis.y) {
       state.lastAxis = axis;
-      await nativeCommand({ type: "set_axis", axis_x: axis.x, axis_y: axis.y });
+      await runUiAction(() => nativeCommand({ type: "set_axis", axis_x: axis.x, axis_y: axis.y }), false);
     }
     showOverlay("Input active", ["WASD move", "Diagonals supported"]);
   }
@@ -201,8 +208,41 @@ async function neutralizeInput(reason) {
   }
   state.heldKeys.clear();
   state.lastAxis = { x: 0, y: 0 };
-  await nativeCommand({ type: "neutralize_input" });
+  await runUiAction(() => nativeCommand({ type: "neutralize_input" }), false);
   showOverlay(reason, ["Input neutralized"]);
+}
+
+async function runUiAction(action, showSuccess = true) {
+  try {
+    await action();
+    if (showSuccess) {
+      clearMessageSoon();
+    }
+  } catch (error) {
+    setMessage(errorMessage(error), true);
+    showOverlay("Action failed", ["Check message banner", "Try refresh"]);
+  }
+}
+
+function setMessage(message, isError = false) {
+  elements.message.textContent = message;
+  elements.message.classList.toggle("error", isError);
+  elements.message.classList.remove("hidden");
+}
+
+function clearMessageSoon() {
+  setTimeout(() => {
+    elements.message.classList.add("hidden");
+    elements.message.textContent = "";
+    elements.message.classList.remove("error");
+  }, 1800);
+}
+
+function errorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function buttonForKey(code) {

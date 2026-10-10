@@ -103,6 +103,24 @@ h1 {
   max-width: 58rem;
 }
 
+.message {
+  background: rgba(98, 255, 211, 0.1);
+  border: 1px solid rgba(98, 255, 211, 0.28);
+  border-radius: 1rem;
+  color: var(--text);
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.message.error {
+  background: rgba(255, 107, 139, 0.12);
+  border-color: rgba(255, 107, 139, 0.42);
+}
+
+.hidden {
+  display: none;
+}
+
 .layout {
   display: grid;
   gap: 1rem;
@@ -167,6 +185,7 @@ h1 {
 }
 
 .overlay.hidden {
+  display: flex;
   opacity: 0;
   pointer-events: none;
   transform: translate(-50%, 1.5rem);
