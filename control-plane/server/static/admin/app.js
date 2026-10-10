@@ -69,6 +69,7 @@ async function refresh() {
     renderHosts();
     renderActiveSessions();
     renderGames();
+    renderDiagnostics();
     renderSnapshot({ health, hosts, activeSessions, sessions });
   } catch (error) {
     setText("#health-status", "Error");
@@ -132,6 +133,70 @@ function renderGames() {
   });
   const container = document.querySelector("#games");
   replaceChildren(container, filtered.map(renderGame));
+}
+
+function renderDiagnostics() {
+  const container = document.querySelector("#diagnostics");
+  const now = Date.now();
+  const sessions = state.sessions || [];
+  const nonterminal = sessions.filter((session) => !terminalSessionStates().has(session.state));
+  const failed = sessions.filter((session) => failureSessionStates().has(session.state));
+  const stopping = sessions.filter((session) => session.state === "stopping");
+  const stale = nonterminal.filter((session) => {
+    const updated = Number(session.updated_unix_ms || 0);
+    return updated > 0 && now - updated > 10 * 60 * 1000;
+  });
+  const cards = [
+    diagnosticMetric("Non-terminal", nonterminal.length, "Sessions still in progress or cleanup."),
+    diagnosticMetric("Stopping", stopping.length, "Sessions waiting for runtime shutdown."),
+    diagnosticMetric("Failed", failed.length, "Terminal sessions that need operator review."),
+    diagnosticMetric("Stale >10m", stale.length, "Non-terminal sessions without recent updates."),
+  ];
+  const details = [...stale, ...failed].slice(0, 8).map(renderDiagnosticSession);
+  container.classList.remove("muted");
+  container.innerHTML = `
+    <div class="diagnostic-grid">${cards.join("")}</div>
+    <div class="stack">
+      ${
+        details.length
+          ? details.join("")
+          : `<p class="muted">No stale or failed sessions found.</p>`
+      }
+    </div>
+  `;
+}
+
+function terminalSessionStates() {
+  return new Set(["stopped", "allocation_failed", "launch_failed", "runtime_lost", "terminated"]);
+}
+
+function failureSessionStates() {
+  return new Set(["allocation_failed", "launch_failed", "runtime_lost", "unhealthy", "terminated"]);
+}
+
+function diagnosticMetric(label, value, description) {
+  const tone = value > 0 ? "warn" : "good";
+  return `
+    <article class="diagnostic-card">
+      <span class="label">${escapeHtml(label)}</span>
+      <strong class="${tone}">${escapeHtml(String(value))}</strong>
+      <p class="muted">${escapeHtml(description)}</p>
+    </article>
+  `;
+}
+
+function renderDiagnosticSession(session) {
+  const updated = Number(session.updated_unix_ms || 0);
+  const age = updated ? `${Math.round((Date.now() - updated) / 1000)}s since update` : "unknown age";
+  return `
+    <div class="item">
+      <h3>${escapeHtml(session.game_id || session.id)}</h3>
+      <span class="pill warn">${escapeHtml(session.state || "unknown")}</span>
+      <span class="pill">${escapeHtml(session.runtime_host_id || "unknown host")}</span>
+      <span class="pill">${escapeHtml(age)}</span>
+      <p class="muted">${escapeHtml(session.failure_reason || "No failure reason recorded.")}</p>
+    </div>
+  `;
 }
 
 function renderGame(game) {

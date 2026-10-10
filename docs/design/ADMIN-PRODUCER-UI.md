@@ -96,6 +96,7 @@ The v0 console:
 - opens a clean production capture helper page for OBS setup/overlay use;
 - requests active session shutdown with a confirmation prompt;
 - stores local producer notes for selected sessions;
+- summarizes session diagnostics for active, stopping, failed, and stale sessions;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console intentionally keeps disruptive controls out of scope. Production
@@ -105,7 +106,7 @@ Next admin/producer increments:
 
 1. add artwork upload/import workflows;
 2. persist event/match notes server-side;
-3. surface diagnostics/cleanup results inside the console.
+3. add cleanup execution/results inside the console.
 
 ## Game metadata workflow
 
@@ -245,6 +246,21 @@ without introducing a server-side event model prematurely.
 
 Future persisted notes should attach to an event/match/session record and
 become part of the Admin/Producer bookkeeping workflow.
+
+## Diagnostics summary
+
+The Admin/Producer console summarizes session health above the raw API
+snapshot. The first diagnostic view is read-only and derived from existing
+session APIs:
+
+- non-terminal sessions;
+- sessions in `stopping`;
+- failed/terminal sessions that need review;
+- non-terminal sessions with no updates for more than ten minutes.
+
+This gives an operator a quick triage view before reaching for cleanup tools.
+The next increment is to wire cleanup execution and structured cleanup results
+directly into the console.
 
 ## Relationship to existing tools
 
