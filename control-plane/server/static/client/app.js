@@ -254,7 +254,7 @@ async function startGame(game) {
   result.innerHTML = `<p class="pill warn">Requesting session...</p>`;
   try {
     const session = await clientApi.startGame(game.id, state.seatId, state.destinationIp);
-    rememberRuntime(playerRuntimeState(session, 1));
+    rememberRuntime(publicPlayerHandoff(session, 1));
     result.innerHTML = `
       <div class="item">
         <h3>Session requested</h3>
@@ -336,7 +336,7 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
       await clientApi.reservePlayerSlot(session.id, playerNumber, state.seatId);
     }
     const connected = await clientApi.connectPlayerSlot(session.id, playerNumber, state.seatId);
-    rememberRuntime(playerRuntimeState(connected, playerNumber));
+    rememberRuntime(publicPlayerHandoff(connected, playerNumber));
     const slot = (connected.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -395,7 +395,7 @@ async function spectateSession(session) {
   result.innerHTML = `<p class="pill warn">Creating spectator feed...</p>`;
   try {
     const grant = await clientApi.spectate(session.id, state.seatId, state.destinationIp);
-    rememberRuntime(spectatorRuntimeState(session, grant));
+    rememberRuntime(publicSpectatorHandoff(session, grant));
     result.innerHTML = `
       <div class="item">
         <h3>Spectator feed created</h3>
@@ -422,28 +422,41 @@ function runtimePills(grant) {
   `;
 }
 
-function playerRuntimeState(session, playerNumber) {
+function publicPlayerHandoff(session, playerNumber) {
   const grant = session.connection_grant || {};
   return {
-    kind: "player",
-    sessionId: session.id,
-    gameId: session.game_id,
-    displayName: session.display_name || session.game_id,
-    playerNumber,
-    mediaUdpPort: grant.media_udp_port || null,
-    inputUdpPort: grant.input_udp_port || null,
-    runtimeHostAddress: grant.runtime_host_address || null,
+    mode: "player",
+    session_id: session.id,
+    game_id: session.game_id,
+    display_name: session.display_name || session.game_id,
+    media: publicMediaHandoff(grant.media_udp_port),
+    input: grant.runtime_host_address && grant.input_udp_port
+      ? {
+          destination: `${grant.runtime_host_address}:${grant.input_udp_port}`,
+          player_number: playerNumber,
+          token_required: true,
+        }
+      : null,
   };
 }
 
-function spectatorRuntimeState(session, grant) {
+function publicSpectatorHandoff(session, grant) {
   return {
-    kind: "spectator",
-    sessionId: session.id,
-    gameId: session.game_id,
-    displayName: session.display_name || session.game_id,
-    mediaUdpPort: grant.media_udp_port || null,
-    grantId: grant.id || null,
+    mode: "spectator",
+    session_id: session.id,
+    game_id: session.game_id,
+    display_name: session.display_name || session.game_id,
+    media: publicMediaHandoff(grant.media_udp_port),
+    input: null,
+  };
+}
+
+function publicMediaHandoff(mediaPort) {
+  if (!mediaPort) return null;
+  return {
+    udp_port: mediaPort,
+    receiver_url: receiverUrl(mediaPort),
+    runtime_command_hint: `seat-client-runtime media --port ${mediaPort} --ffplay-path <path-to-ffplay>`,
   };
 }
 
@@ -462,9 +475,9 @@ function loadLastRuntime() {
 
 function clearLastRuntimeFor(sessionId, playerNumber) {
   if (
-    state.lastRuntime?.kind === "player" &&
-    state.lastRuntime.sessionId === sessionId &&
-    state.lastRuntime.playerNumber === playerNumber
+    state.lastRuntime?.mode === "player" &&
+    state.lastRuntime.session_id === sessionId &&
+    state.lastRuntime.input?.player_number === playerNumber
   ) {
     state.lastRuntime = null;
     localStorage.removeItem("fourplay.lastRuntime");
@@ -472,16 +485,15 @@ function clearLastRuntimeFor(sessionId, playerNumber) {
 }
 
 function playerRuntimePanel(session, playerNumber) {
-  const grant = session.connection_grant;
-  if (!grant?.media_udp_port || !grant?.runtime_host_address || !grant?.input_udp_port) {
+  const handoff = publicPlayerHandoff(session, playerNumber);
+  if (!handoff.media || !handoff.input) {
     return `<p class="pill bad">Runtime connection grant is missing; refresh or rejoin this slot.</p>`;
   }
-  const destination = `${grant.runtime_host_address}:${grant.input_udp_port}`;
   return `
     <div class="runtime-panel player-mode">
       <h4>Player runtime</h4>
-      ${mediaReceiverCommands(grant.media_udp_port)}
-      <p><strong>Input endpoint:</strong> ${escapeHtml(destination)} for player ${escapeHtml(String(playerNumber))}</p>
+      ${mediaReceiverCommands(handoff.media.udp_port)}
+      <p><strong>Input endpoint:</strong> ${escapeHtml(handoff.input.destination)} for player ${escapeHtml(String(handoff.input.player_number))}</p>
       <p class="muted">Input token is intentionally not displayed or persisted. The packaged client/runtime handoff will consume it internally after start, join, or rejoin.</p>
     </div>
   `;
@@ -504,14 +516,14 @@ function mediaReceiverCommands(mediaPort) {
   if (!mediaPort) {
     return "";
   }
-  const receiverUrl = `udp://0.0.0.0:${mediaPort}?fifo_size=1000000&overrun_nonfatal=1`;
-  const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${receiverUrl}"`;
+  const url = receiverUrl(mediaPort);
+  const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${url}"`;
   const runtime = `cargo run -p seat-client-runtime -- media --port ${mediaPort} --ffplay-path .\\path\\to\\ffplay.exe`;
   return `
     <div class="receiver-commands">
       <p><strong>Receiver URL:</strong></p>
-      <pre class="command">${escapeHtml(receiverUrl)}</pre>
-      <button type="button" data-copy-text="${escapeHtml(receiverUrl)}">Copy receiver URL</button>
+      <pre class="command">${escapeHtml(url)}</pre>
+      <button type="button" data-copy-text="${escapeHtml(url)}">Copy receiver URL</button>
       <p><strong>Seat runtime media command:</strong></p>
       <pre class="command">${escapeHtml(runtime)}</pre>
       <button type="button" data-copy-text="${escapeHtml(runtime)}">Copy runtime media command</button>
@@ -520,6 +532,10 @@ function mediaReceiverCommands(mediaPort) {
       <button type="button" data-copy-text="${escapeHtml(ffplay)}">Copy ffplay command</button>
     </div>
   `;
+}
+
+function receiverUrl(mediaPort) {
+  return `udp://0.0.0.0:${mediaPort}?fifo_size=1000000&overrun_nonfatal=1`;
 }
 
 function wireCopyButtons(container) {
@@ -543,9 +559,9 @@ function renderLastRuntimeHint() {
     return;
   }
   const label =
-    runtime.kind === "player"
-      ? `Last player runtime: ${runtime.displayName || runtime.gameId} P${runtime.playerNumber}`
-      : `Last spectator runtime: ${runtime.displayName || runtime.gameId}`;
+    runtime.mode === "player"
+      ? `Last player runtime: ${runtime.display_name || runtime.game_id} P${runtime.input?.player_number || "?"}`
+      : `Last spectator runtime: ${runtime.display_name || runtime.game_id}`;
   container.innerHTML = `
     <div class="runtime-status">
       <span class="pill warn">${escapeHtml(label)}</span>
