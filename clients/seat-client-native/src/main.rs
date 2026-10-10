@@ -1,15 +1,32 @@
-use std::{env, error::Error, path::PathBuf};
-
-use seat_client_native::{
-    BlockingControlPlaneClient, ControlPlaneApi, NativeSeatConfigFile, NativeSeatConfigStore,
-    build_native_seat_view_model,
+use std::{
+    env,
+    error::Error,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
-fn main() -> Result<(), Box<dyn Error>> {
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{StatusCode, header},
+    response::{Html, IntoResponse, Response},
+    routing::{get, post},
+};
+use seat_client_native::{
+    BlockingControlPlaneClient, ChildMediaProcessSupervisor, ControlPlaneApi, NativeSeatApp,
+    NativeSeatConfigFile, NativeSeatConfigStore, NativeSeatUiSession, NativeUiCommand,
+    UdpInputPacketSender, build_native_seat_view_model,
+};
+use serde::Serialize;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().collect::<Vec<_>>();
     match args.get(1).map(String::as_str) {
         Some("init-config") => init_config(&args[2..]),
         Some("snapshot") => snapshot(&args[2..]),
+        Some("serve-ui") => serve_ui(&args[2..]).await,
         Some("-h") | Some("--help") | None => {
             print_usage(&args[0]);
             Ok(())
@@ -62,6 +79,42 @@ fn snapshot(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn serve_ui(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let options = NativeCliOptions::parse(args)?;
+    let api_token = options
+        .api_token
+        .or_else(|| env::var("FOURPLAY_SEAT_API_TOKEN").ok())
+        .ok_or("missing --api-token <token> or FOURPLAY_SEAT_API_TOKEN")?;
+    let bind_address = options
+        .bind_address
+        .unwrap_or_else(|| "127.0.0.1:40704".to_owned())
+        .parse::<SocketAddr>()?;
+    let store = NativeSeatConfigStore::new(required(options.config, "--config")?);
+    let config = store.load_with_token(api_token.clone())?;
+    let api = BlockingControlPlaneClient::new(&config.control_plane_url, api_token);
+    let app = NativeSeatApp::new(
+        config,
+        api,
+        ChildMediaProcessSupervisor,
+        UdpInputPacketSender::bind_any()?,
+    )
+    .map_err(|error| format!("native app configuration failed: {error:?}"))?;
+    let state = NativeBridgeState {
+        session: Arc::new(Mutex::new(NativeSeatUiSession::new(app))),
+    };
+    let router = Router::new()
+        .route("/", get(ui_index))
+        .route("/index.html", get(ui_index))
+        .route("/app.js", get(ui_script))
+        .route("/styles.css", get(ui_styles))
+        .route("/native-command", post(native_command))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind(bind_address).await?;
+    println!("4-Play native seat UI: http://{}", listener.local_addr()?);
+    axum::serve(listener, router).await?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct NativeCliOptions {
     config: Option<String>,
@@ -70,6 +123,7 @@ struct NativeCliOptions {
     destination_address: Option<String>,
     ffplay_path: Option<String>,
     api_token: Option<String>,
+    bind_address: Option<String>,
 }
 
 impl NativeCliOptions {
@@ -90,6 +144,7 @@ impl NativeCliOptions {
                 }
                 "--ffplay-path" => options.ffplay_path = Some(value(args, &mut index, option)?),
                 "--api-token" => options.api_token = Some(value(args, &mut index, option)?),
+                "--bind" => options.bind_address = Some(value(args, &mut index, option)?),
                 "-h" | "--help" => return Err("help requested".to_owned()),
                 _ => return Err(format!("unknown option '{option}'")),
             }
@@ -122,8 +177,70 @@ fn default_ffplay_path() -> &'static str {
 
 fn print_usage(program: &str) {
     println!(
-        "Usage:\n  {program} init-config --config <path> --control-plane <url> --seat-id <id> --destination-ip <seat-ip> [--ffplay-path <path>]\n  {program} snapshot --config <path> [--api-token <token>]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token for snapshot."
+        "Usage:\n  {program} init-config --config <path> --control-plane <url> --seat-id <id> --destination-ip <seat-ip> [--ffplay-path <path>]\n  {program} snapshot --config <path> [--api-token <token>]\n  {program} serve-ui --config <path> [--api-token <token>] [--bind 127.0.0.1:40704]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token for snapshot and serve-ui."
     );
+}
+
+#[derive(Clone)]
+struct NativeBridgeState {
+    session: Arc<
+        Mutex<
+            NativeSeatUiSession<
+                BlockingControlPlaneClient,
+                ChildMediaProcessSupervisor,
+                UdpInputPacketSender,
+            >,
+        >,
+    >,
+}
+
+#[derive(Debug, Serialize)]
+struct NativeBridgeError {
+    message: String,
+}
+
+async fn ui_index() -> Html<&'static str> {
+    Html(include_str!("../ui/index.html"))
+}
+
+async fn ui_script() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        include_str!("../ui/app.js"),
+    )
+}
+
+async fn ui_styles() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("../ui/styles.css"),
+    )
+}
+
+async fn native_command(
+    State(state): State<NativeBridgeState>,
+    Json(command): Json<NativeUiCommand>,
+) -> Response {
+    let result = state
+        .session
+        .lock()
+        .map_err(|error| format!("native session lock failed: {error}"))
+        .and_then(|mut session| {
+            session
+                .handle_command(command)
+                .map_err(|error| format!("native command failed: {error:?}"))
+        });
+    match result {
+        Ok(response) => Json(response).into_response(),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(NativeBridgeError { message }),
+        )
+            .into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -148,6 +265,20 @@ mod tests {
 
         assert_eq!(options.config, Some("seat.json".to_owned()));
         assert_eq!(options.ffplay_path, Some("ffplay-custom".to_owned()));
+    }
+
+    #[test]
+    fn parses_serve_ui_bind_option() {
+        let options = NativeCliOptions::parse(&[
+            "--config".to_owned(),
+            "seat.json".to_owned(),
+            "--bind".to_owned(),
+            "127.0.0.1:49999".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.config, Some("seat.json".to_owned()));
+        assert_eq!(options.bind_address, Some("127.0.0.1:49999".to_owned()));
     }
 
     #[test]

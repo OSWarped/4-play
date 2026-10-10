@@ -957,12 +957,14 @@ dependencies = [
 name = "seat-client-native"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "control-protocol",
  "input-protocol",
  "reqwest",
  "seat-client-core",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

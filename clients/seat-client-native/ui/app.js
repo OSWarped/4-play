@@ -39,6 +39,21 @@ async function nativeCommand(command) {
   if (window.__FOURPLAY_NATIVE__?.command) {
     return window.__FOURPLAY_NATIVE__.command(command);
   }
+  if (location.protocol === "http:" || location.protocol === "https:") {
+    try {
+      const response = await fetch("./native-command", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (response.ok) {
+        return response.json();
+      }
+      console.warn("Native bridge command failed; using mock data", await response.text());
+    } catch (error) {
+      console.warn("Native bridge unavailable; using mock data", error);
+    }
+  }
   return mockNativeCommand(command);
 }
 
