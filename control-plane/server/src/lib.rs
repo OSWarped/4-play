@@ -1662,6 +1662,7 @@ mod tests {
         );
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("fourplay.clientToken"));
+        assert!(script_body.contains("const clientApi"));
         assert!(script_body.contains("fourplay.destinationIp"));
         assert!(script_body.contains("findOwnDisconnectedSlot"));
         assert!(script_body.contains("async function startGame"));

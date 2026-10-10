@@ -13,6 +13,43 @@ const state = {
   sessions: [],
 };
 
+const clientApi = {
+  async loadCatalog() {
+    return fetchJson("/api/v1/games");
+  },
+  async loadActiveSessions() {
+    return fetchJson("/api/v1/active-sessions");
+  },
+  async startGame(gameId, seatId, destinationAddress) {
+    return postJson("/api/v1/sessions", {
+      game_id: gameId,
+      seat_id: seatId,
+      destination_address: destinationAddress,
+    });
+  },
+  async reservePlayerSlot(sessionId, playerNumber, seatId) {
+    return postJson(`/api/v1/sessions/${sessionId}/player-slots/${playerNumber}/reserve`, {
+      seat_id: seatId,
+    });
+  },
+  async connectPlayerSlot(sessionId, playerNumber, seatId) {
+    return postJson(`/api/v1/sessions/${sessionId}/player-slots/${playerNumber}/connect`, {
+      seat_id: seatId,
+    });
+  },
+  async disconnectPlayerSlot(sessionId, playerNumber, seatId) {
+    return postJson(`/api/v1/sessions/${sessionId}/player-slots/${playerNumber}/disconnect`, {
+      seat_id: seatId,
+    });
+  },
+  async spectate(sessionId, seatId, destinationAddress) {
+    return postJson(`/api/v1/sessions/${sessionId}/spectators`, {
+      seat_id: seatId,
+      destination_address: destinationAddress,
+    });
+  },
+};
+
 tokenInput.value = state.token;
 seatInput.value = state.seatId;
 destinationInput.value = state.destinationIp;
@@ -71,8 +108,8 @@ async function refresh() {
   setText("#primary-detail", "Fetching games and active sessions.");
   try {
     const [games, sessions] = await Promise.all([
-      fetchJson("/api/v1/games"),
-      fetchJson("/api/v1/active-sessions"),
+      clientApi.loadCatalog(),
+      clientApi.loadActiveSessions(),
     ]);
     state.games = games.games || [];
     state.sessions = sessions.sessions || [];
@@ -214,11 +251,7 @@ async function startGame(game) {
   }
   result.innerHTML = `<p class="pill warn">Requesting session...</p>`;
   try {
-    const session = await postJson("/api/v1/sessions", {
-      game_id: game.id,
-      seat_id: state.seatId,
-      destination_address: state.destinationIp,
-    });
+    const session = await clientApi.startGame(game.id, state.seatId, state.destinationIp);
     result.innerHTML = `
       <div class="item">
         <h3>Session requested</h3>
@@ -298,14 +331,9 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
   result.innerHTML = `<p class="pill warn">${rejoin ? "Rejoining" : "Joining"} player ${escapeHtml(String(playerNumber))}...</p>`;
   try {
     if (!rejoin) {
-      await postJson(`/api/v1/sessions/${session.id}/player-slots/${playerNumber}/reserve`, {
-        seat_id: state.seatId,
-      });
+      await clientApi.reservePlayerSlot(session.id, playerNumber, state.seatId);
     }
-    const connected = await postJson(
-      `/api/v1/sessions/${session.id}/player-slots/${playerNumber}/connect`,
-      { seat_id: state.seatId },
-    );
+    const connected = await clientApi.connectPlayerSlot(session.id, playerNumber, state.seatId);
     const slot = (connected.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -336,10 +364,7 @@ async function leavePlayerSlot(session, playerNumber) {
   }
   result.innerHTML = `<p class="pill warn">Leaving player ${escapeHtml(String(playerNumber))}...</p>`;
   try {
-    const updated = await postJson(
-      `/api/v1/sessions/${session.id}/player-slots/${playerNumber}/disconnect`,
-      { seat_id: state.seatId },
-    );
+    const updated = await clientApi.disconnectPlayerSlot(session.id, playerNumber, state.seatId);
     const slot = (updated.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -366,10 +391,7 @@ async function spectateSession(session) {
   }
   result.innerHTML = `<p class="pill warn">Creating spectator feed...</p>`;
   try {
-    const grant = await postJson(`/api/v1/sessions/${session.id}/spectators`, {
-      seat_id: state.seatId,
-      destination_address: state.destinationIp,
-    });
+    const grant = await clientApi.spectate(session.id, state.seatId, state.destinationIp);
     result.innerHTML = `
       <div class="item">
         <h3>Spectator feed created</h3>

@@ -408,6 +408,38 @@ and input forwarding.
 The next client UI increment should wire those buttons to existing control-plane
 APIs and either launch or coordinate the existing media/input path.
 
+### Packaged seat client direction
+
+The browser-served `/client` surface is a prototype and diagnostic UI. The real
+cabinet/table client should become a packaged Windows seat application with:
+
+- a web-style frontend for the arcade UI;
+- a local Rust backend for native responsibilities;
+- persistent local seat configuration;
+- control-plane API calls;
+- FFplay/media receiver process launch and supervision;
+- low-latency keyboard/gamepad capture;
+- UDP input forwarding;
+- leave/rejoin cleanup.
+
+The current JavaScript routes control-plane calls through a `clientApi` adapter.
+In the browser build, that adapter calls HTTP endpoints directly. In the future
+packaged build, the same UI should call a local Rust/WebView backend through the
+same conceptual methods:
+
+```text
+loadCatalog()
+loadActiveSessions()
+startGame(gameId, seatId, destinationAddress)
+reservePlayerSlot(sessionId, playerNumber, seatId)
+connectPlayerSlot(sessionId, playerNumber, seatId)
+disconnectPlayerSlot(sessionId, playerNumber, seatId)
+spectate(sessionId, seatId, destinationAddress)
+```
+
+This keeps the UI flow portable while moving native process and input work out
+of the browser sandbox.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details
