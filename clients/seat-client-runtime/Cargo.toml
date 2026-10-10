@@ -1,0 +1,7 @@
+[package]
+name = "seat-client-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+seat-client-core = { path = "../seat-client-core" }

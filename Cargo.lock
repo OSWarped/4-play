@@ -952,6 +952,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "seat-client-runtime"
+version = "0.1.0"
+dependencies = [
+ "seat-client-core",
+]
+
+[[package]]
 name = "seat-input"
 version = "0.1.0"
 dependencies = [

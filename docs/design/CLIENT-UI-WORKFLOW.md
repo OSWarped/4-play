@@ -449,6 +449,17 @@ It intentionally has no desktop-framework dependency yet. It defines:
 - input forwarding plans derived from control-plane connection grants;
 - a `SeatRuntimeBackend` trait for the future native process/input owner.
 
+The first companion binary is `clients/seat-client-runtime`. Its initial command
+owns local media receiver launch:
+
+```powershell
+cargo run -p seat-client-runtime -- media --port 41000 --ffplay-path .\path\to\ffplay.exe
+```
+
+This is deliberately small: it proves the native companion can consume the same
+media plan as the browser UI before we add input forwarding, process supervision
+APIs, or WebView packaging.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details
