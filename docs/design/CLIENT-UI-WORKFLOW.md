@@ -575,6 +575,8 @@ The current native backend provides:
   simultaneous buttons, axis clamping, and neutralize behavior;
 - safe JSON view models for games, active sessions, joinable slots, spectator
   counts, previews, and current runtime status.
+- a localhost `serve-ui` bridge that serves the native UI scaffold and forwards
+  JSON commands to the Rust backend session.
 
 Development smoke commands:
 
@@ -588,12 +590,20 @@ cargo run -p seat-client-native -- init-config `
 
 $env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
 cargo run -p seat-client-native -- snapshot --config .\tmp\seat-native.json
+
+cargo run -p seat-client-native -- serve-ui --config .\tmp\seat-native.json
 ```
 
 The config file intentionally does not contain `FOURPLAY_SEAT_API_TOKEN` or any
 session input token. This is a deliberate security boundary. A later packaging
 slice should add pairing or OS credential storage instead of plaintext token
 persistence.
+
+`serve-ui` is an operational development bridge, not the final desktop package.
+It binds to localhost by default, serves the static native UI scaffold, and
+accepts `NativeUiCommand` JSON at `POST /native-command`. A future packaged shell
+should reuse this command contract while replacing the browser/localhost wrapper
+with direct WebView-to-Rust IPC.
 
 `seat-client-runtime` includes diagnostic handoff-preview commands that read
 private JSON from files and print only the public/sanitized handoff:

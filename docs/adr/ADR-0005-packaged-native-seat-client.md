@@ -103,7 +103,9 @@ foundation:
 - local non-secret config save/load. The API token is intentionally supplied at
   runtime rather than stored in the config file;
 - a simple `seat-client-native` CLI for writing a token-safe config file and
-  printing a token-safe snapshot view model.
+  printing a token-safe snapshot view model;
+- a localhost `serve-ui` development bridge that serves the native UI scaffold
+  and forwards JSON commands to the Rust backend session.
 
 Useful development commands:
 
@@ -117,8 +119,15 @@ cargo run -p seat-client-native -- init-config `
 
 $env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
 cargo run -p seat-client-native -- snapshot --config .\tmp\seat-native.json
+
+cargo run -p seat-client-native -- serve-ui --config .\tmp\seat-native.json
 ```
 
 The snapshot command is a backend smoke test and frontend integration aid. It
 does not launch media or input yet; the app facade and runtime supervisor provide
 that lower-level capability for the packaged UI shell.
+
+The `serve-ui` command is a development bridge, not the final desktop package.
+It binds to localhost by default, serves the UI scaffold, and exposes
+`POST /native-command` for the same `NativeUiCommand` contract that a future
+Tauri/Wry/WebView shell should call directly.
