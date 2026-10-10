@@ -2,6 +2,7 @@ use std::{net::IpAddr, path::PathBuf};
 
 use control_protocol::{ConnectionGrant, Session, SpectatorGrant};
 use input_protocol::SessionToken;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatClientConfig {
@@ -110,6 +111,37 @@ pub struct InputForwardingPlan {
     pub player_number: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicRuntimeHandoff {
+    pub mode: RuntimeHandoffMode,
+    pub session_id: String,
+    pub game_id: String,
+    pub display_name: Option<String>,
+    pub media: PublicMediaHandoff,
+    pub input: Option<PublicInputHandoff>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeHandoffMode {
+    Player,
+    Spectator,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicMediaHandoff {
+    pub udp_port: u16,
+    pub receiver_url: String,
+    pub runtime_command_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicInputHandoff {
+    pub destination: String,
+    pub player_number: u32,
+    pub token_required: bool,
+}
+
 pub trait SeatRuntimeBackend {
     type Error;
 
@@ -164,6 +196,48 @@ pub fn spectator_runtime_plan(grant: &SpectatorGrant) -> SpectatorRuntimePlan {
         session_id: grant.session_id.clone(),
         grant_id: grant.id.clone(),
         media: media_receiver_plan(grant.media_udp_port),
+    }
+}
+
+pub fn public_player_handoff(
+    session: &Session,
+    player_number: u32,
+) -> Result<PublicRuntimeHandoff, RuntimePlanError> {
+    let private_plan = player_runtime_plan(session, player_number)?;
+    Ok(PublicRuntimeHandoff {
+        mode: RuntimeHandoffMode::Player,
+        session_id: session.id.clone(),
+        game_id: session.game_id.clone(),
+        display_name: None,
+        media: public_media_handoff(&private_plan.media),
+        input: Some(PublicInputHandoff {
+            destination: private_plan.input.destination,
+            player_number,
+            token_required: true,
+        }),
+    })
+}
+
+pub fn public_spectator_handoff(session: &Session, grant: &SpectatorGrant) -> PublicRuntimeHandoff {
+    let private_plan = spectator_runtime_plan(grant);
+    PublicRuntimeHandoff {
+        mode: RuntimeHandoffMode::Spectator,
+        session_id: session.id.clone(),
+        game_id: session.game_id.clone(),
+        display_name: None,
+        media: public_media_handoff(&private_plan.media),
+        input: None,
+    }
+}
+
+fn public_media_handoff(plan: &MediaReceiverPlan) -> PublicMediaHandoff {
+    PublicMediaHandoff {
+        udp_port: plan.udp_port,
+        receiver_url: plan.receiver_url.clone(),
+        runtime_command_hint: format!(
+            "seat-client-runtime media --port {} --ffplay-path <path-to-ffplay>",
+            plan.udp_port
+        ),
     }
 }
 
@@ -274,6 +348,49 @@ mod tests {
         assert_eq!(plan.session_id, "session-1");
         assert_eq!(plan.media.udp_port, 41_000);
         assert_eq!(plan.input.destination, "192.0.2.68:42000");
+    }
+
+    #[test]
+    fn builds_public_player_handoff_without_token() {
+        let session = session();
+        let handoff = public_player_handoff(&session, 2).unwrap();
+
+        assert_eq!(handoff.mode, RuntimeHandoffMode::Player);
+        assert_eq!(handoff.session_id, "session-1");
+        assert_eq!(handoff.media.udp_port, 41_000);
+        assert_eq!(
+            handoff.input,
+            Some(PublicInputHandoff {
+                destination: "192.0.2.68:42000".to_owned(),
+                player_number: 2,
+                token_required: true,
+            })
+        );
+
+        let json = serde_json::to_string(&handoff).unwrap();
+        assert!(!json.contains("00112233-4455-6677-8899-aabbccddeeff"));
+        assert!(!json.contains("token\":"));
+    }
+
+    #[test]
+    fn builds_public_spectator_handoff_without_input() {
+        let handoff = public_spectator_handoff(
+            &session(),
+            &control_protocol::SpectatorGrant {
+                id: "grant-1".to_owned(),
+                session_id: "session-1".to_owned(),
+                seat_id: "windows-seat-2".to_owned(),
+                destination_address: "192.0.2.10".to_owned(),
+                media_udp_port: 41_002,
+                runtime_host_id: "reference-linux".to_owned(),
+                runtime_host_address: "192.0.2.68".to_owned(),
+                expires_unix_ms: 999,
+            },
+        );
+
+        assert_eq!(handoff.mode, RuntimeHandoffMode::Spectator);
+        assert_eq!(handoff.media.udp_port, 41_002);
+        assert_eq!(handoff.input, None);
     }
 
     fn session() -> Session {

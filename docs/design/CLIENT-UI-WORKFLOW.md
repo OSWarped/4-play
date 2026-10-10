@@ -447,6 +447,7 @@ It intentionally has no desktop-framework dependency yet. It defines:
 - user-facing seat actions;
 - media receiver plans and low-latency FFplay arguments;
 - input forwarding plans derived from control-plane connection grants;
+- public runtime handoff DTOs that intentionally omit session input tokens;
 - a `SeatRuntimeBackend` trait for the future native process/input owner.
 
 The first companion binary is `clients/seat-client-runtime`. Its initial command
@@ -501,6 +502,22 @@ token had to be fetched from the admin-only session detail endpoint. That is
 acceptable for diagnostics, but not for the player UX. The packaged client must
 receive and use connection grants internally after start/join/rejoin without
 displaying or requiring the operator to copy tokens.
+
+The browser-facing `/client` UI must only use a public runtime handoff shape:
+
+```text
+mode
+session_id
+game_id
+media receiver details
+optional input endpoint/player number
+token_required = true
+```
+
+It must not render, copy, or persist the input token. The native packaged-client
+backend may hold the private `Session`/`ConnectionGrant` in memory long enough
+to start media and input forwarding, but it should expose only sanitized runtime
+status back to the web UI.
 
 ### UI v1 — arcade browser
 

@@ -949,6 +949,8 @@ version = "0.1.0"
 dependencies = [
  "control-protocol",
  "input-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
