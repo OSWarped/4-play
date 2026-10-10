@@ -34,6 +34,42 @@ The seat UI should stay controller-friendly and safe for public use. The
 admin/producer UI can be form-heavy, information-dense, mouse/keyboard friendly,
 and appropriate for a booth, desk, tablet, or browser.
 
+## Future deployment vision
+
+The long-term goal is not just a single personal cabinet. 4-Play should be
+deployable in a real venue, such as a barcade, where the operator may have a
+mix of existing PCs, mini PCs, tablets, phones, TVs, streaming machines, and
+network gear.
+
+The architecture should therefore preserve these deployment properties:
+
+- the control plane can run on one reliable machine on the venue LAN;
+- runtime hosts can be added wherever MAME/emulation hardware is available;
+- seat clients can run on Windows PCs first, then other device classes later;
+- admin/producer can run from a browser on a laptop, tablet, or booth machine;
+- spectator/production feeds can be opened from OBS or a streaming workstation;
+- tokens and runtime grants stay internal to trusted clients and services;
+- public/player-facing UIs should not expose ports, tokens, or infrastructure
+  details once native packaging exists;
+- network setup should be explainable in venue terms: server, runtime host,
+  seat devices, display/streaming receiver.
+
+Mobile/tablet clients are a future revision, not part of the current solidify
+phase. The likely shape is a touch-first seat/spectator client that can show an
+on-screen control overlay and send input over the same authenticated input
+protocol. That future client should reuse the same control-plane APIs and public
+runtime handoff model, while using a device-appropriate input source instead of
+terminal keyboard capture.
+
+For now, the priority is proving the core venue model with:
+
+- one control plane;
+- one Linux runtime host;
+- one or more Windows seat clients;
+- browser admin/producer;
+- spectator feeds suitable for OBS;
+- safe public/private handoff boundaries.
+
 ## Seat startup flow
 
 ```text
