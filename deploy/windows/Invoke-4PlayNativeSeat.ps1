@@ -31,10 +31,15 @@ function Get-4PlaySetting {
 }
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$NativeSeat = Join-Path $RepoRoot "target\debug\seat-client-native.exe"
+$ReleaseNativeSeat = Join-Path $RepoRoot "target\release\seat-client-native.exe"
+$DebugNativeSeat = Join-Path $RepoRoot "target\debug\seat-client-native.exe"
+$NativeSeat = $ReleaseNativeSeat
+if (-not (Test-Path -LiteralPath $NativeSeat)) {
+  $NativeSeat = $DebugNativeSeat
+}
 
 if (-not (Test-Path -LiteralPath $NativeSeat)) {
-  throw "seat-client-native.exe was not found at $NativeSeat. Build it first with: cargo build -p seat-client-native"
+  throw "seat-client-native.exe was not found. Build it first with: cargo build --release -p seat-client-native"
 }
 
 $ControlPlane = Get-4PlaySetting "FOURPLAY_CONTROL_PLANE_URL" "http://192.168.20.68:8080"
@@ -71,6 +76,7 @@ if (-not [string]::IsNullOrWhiteSpace($FfplayPath)) {
 $env:FOURPLAY_SEAT_API_TOKEN = $ApiToken
 
 Write-Host "Starting 4-Play native seat UI $SeatNumber as $SeatId"
+Write-Host "  native bridge: $NativeSeat"
 Write-Host "  control plane: $ControlPlane"
 Write-Host "  media destination: $SeatAddress"
 Write-Host "  local UI: http://$Bind"
