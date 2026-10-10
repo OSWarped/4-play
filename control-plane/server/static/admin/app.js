@@ -157,6 +157,11 @@ function renderDiagnostics() {
   container.classList.remove("muted");
   container.innerHTML = `
     <div class="diagnostic-grid">${cards.join("")}</div>
+    <div class="form-actions">
+      <button type="button" id="cleanup-stale-sessions">Request stale cleanup</button>
+      <span class="muted">Gracefully stops non-terminal sessions older than 10 minutes.</span>
+    </div>
+    <div id="cleanup-result"></div>
     <div class="stack">
       ${
         details.length
@@ -165,6 +170,7 @@ function renderDiagnostics() {
       }
     </div>
   `;
+  document.querySelector("#cleanup-stale-sessions").addEventListener("click", cleanupStaleSessions);
   container.querySelectorAll("[data-stop-diagnostic-session]").forEach((button) => {
     button.addEventListener("click", () => {
       const session = state.sessions.find(
@@ -175,6 +181,53 @@ function renderDiagnostics() {
       }
     });
   });
+}
+
+async function cleanupStaleSessions() {
+  const result = document.querySelector("#cleanup-result");
+  const confirmed = window.confirm(
+    "Request graceful stop for every non-terminal session that has not updated in more than 10 minutes?",
+  );
+  if (!confirmed) {
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Requesting stale cleanup...</p>`;
+  try {
+    const cleanup = await postJson("/api/v1/sessions/cleanup-stale", {
+      stale_after_ms: 10 * 60 * 1000,
+    });
+    result.innerHTML = renderCleanupResult(cleanup);
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+function renderCleanupResult(cleanup) {
+  const requested = cleanup.requested || [];
+  const stopped = requested
+    .map(
+      (session) => `
+        <li>
+          ${escapeHtml(session.game_id || session.session_id)}
+          <span class="pill warn">${escapeHtml(session.state || "stopping")}</span>
+          <span class="pill">${escapeHtml(String(Math.round((session.age_ms || 0) / 1000)))}s old</span>
+        </li>
+      `,
+    )
+    .join("");
+  return `
+    <div class="item">
+      <h3>Stale cleanup requested</h3>
+      <span class="pill ${requested.length ? "warn" : "good"}">${escapeHtml(String(cleanup.requested_count || 0))} stop requests</span>
+      <span class="pill">${escapeHtml(String(cleanup.skipped_count || 0))} skipped</span>
+      ${
+        stopped
+          ? `<ul>${stopped}</ul>`
+          : `<p class="muted">No stale non-terminal sessions needed cleanup.</p>`
+      }
+    </div>
+  `;
 }
 
 function terminalSessionStates() {

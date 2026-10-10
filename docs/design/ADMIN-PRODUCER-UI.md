@@ -101,16 +101,17 @@ The v0 console:
 - persists producer notes on the control plane when the session exists;
 - summarizes session diagnostics for active, stopping, failed, and stale sessions;
 - requests stop for stale non-terminal sessions from diagnostics;
+- requests a graceful stale-session cleanup and reports structured results;
 - shows a raw API snapshot for diagnostics.
 
-The v0 console intentionally keeps disruptive controls out of scope. Production
-spectator grants are safe because they do not reserve player slots.
+The v0 console gates disruptive controls behind confirmation prompts. Production
+spectator grants remain non-disruptive because they do not reserve player slots.
 
 Next admin/producer increments:
 
 1. add asset replacement warnings;
 2. promote session notes into event/match records;
-3. add deeper cleanup execution/results inside the console.
+3. add script-backed smoke/acceptance execution and artifact browsing inside the console.
 
 ## Game metadata workflow
 
@@ -291,8 +292,16 @@ session APIs:
 This gives an operator a quick triage view before reaching for cleanup tools.
 For stale non-terminal sessions, the diagnostics list exposes **Request stop**,
 which uses the same confirmed stop-session workflow as the production panel.
-The next increment is to wire deeper cleanup execution and structured cleanup
-results directly into the console.
+The console also exposes **Request stale cleanup**, which calls:
+
+```text
+POST /api/v1/sessions/cleanup-stale
+```
+
+The endpoint gracefully requests `stopping` for every non-terminal session older
+than the configured threshold and returns structured requested/skipped results.
+It does not kill processes directly; the runtime host remains responsible for
+orderly emulator, encoder, virtual-controller, and temporary-resource cleanup.
 
 ## Relationship to existing tools
 

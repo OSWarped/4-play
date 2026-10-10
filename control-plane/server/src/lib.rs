@@ -218,6 +218,10 @@ pub fn app_with_state(state: AppState) -> Router {
             get(list_active_session_summaries),
         )
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
+        .route(
+            "/api/v1/sessions/cleanup-stale",
+            post(cleanup_stale_sessions),
+        )
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
             "/api/v1/sessions/{session_id}/notes",
@@ -615,6 +619,76 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList
         .await
         .map(|sessions| Json(SessionList { sessions }))
         .map_err(ApiError::store)
+}
+
+async fn cleanup_stale_sessions(
+    State(state): State<AppState>,
+    request: Option<Json<Value>>,
+) -> Result<Json<Value>, ApiError> {
+    let stale_after_ms = request
+        .as_ref()
+        .and_then(|Json(value)| value.get("stale_after_ms"))
+        .and_then(Value::as_u64)
+        .unwrap_or(10 * 60 * 1000);
+    if !(1_000..=24 * 60 * 60 * 1000).contains(&stale_after_ms) {
+        return Err(ApiError::bad_request(
+            "invalid_stale_after_ms",
+            "stale_after_ms must be between 1000 and 86400000",
+        ));
+    }
+
+    let now = unix_time_ms();
+    let sessions = state
+        .runtime_hosts
+        .list_sessions()
+        .await
+        .map_err(ApiError::store)?;
+    let mut requested = Vec::new();
+    let mut skipped = Vec::new();
+
+    for session in sessions {
+        let age_ms = now.saturating_sub(session.updated_unix_ms);
+        if session.state.is_terminal() || age_ms <= stale_after_ms {
+            skipped.push(json!({
+                "session_id": session.id,
+                "game_id": session.game_id,
+                "state": session.state,
+                "age_ms": age_ms,
+                "reason": if session.state.is_terminal() { "terminal" } else { "fresh" },
+            }));
+            continue;
+        }
+
+        let previous_state = session.state;
+        match state
+            .runtime_hosts
+            .request_session_stop(session.id.clone(), now)
+            .await
+        {
+            Ok(updated) => requested.push(json!({
+                "session_id": updated.id,
+                "game_id": updated.game_id,
+                "previous_state": previous_state,
+                "state": updated.state,
+                "age_ms": age_ms,
+            })),
+            Err(error) => skipped.push(json!({
+                "session_id": session.id,
+                "game_id": session.game_id,
+                "state": previous_state,
+                "age_ms": age_ms,
+                "reason": format!("stop request failed: {error}"),
+            })),
+        }
+    }
+
+    Ok(Json(json!({
+        "stale_after_ms": stale_after_ms,
+        "requested_count": requested.len(),
+        "skipped_count": skipped.len(),
+        "requested": requested,
+        "skipped": skipped,
+    })))
 }
 
 async fn list_active_session_summaries(
@@ -1496,6 +1570,7 @@ mod tests {
         assert!(script_body.contains("Producer notes"));
         assert!(script_body.contains("Server notes loaded"));
         assert!(script_body.contains("Stale >10m"));
+        assert!(script_body.contains("Request stale cleanup"));
         assert!(script_body.contains("Request stop"));
         assert!(script_body.contains("Release production spectator feed"));
         assert!(script_body.contains("Stop session"));
@@ -2779,6 +2854,58 @@ mod tests {
         .await;
         assert_eq!(invalid_status, 400);
         assert_eq!(invalid["code"], "invalid_session_notes");
+    }
+
+    #[tokio::test]
+    async fn stale_session_cleanup_requests_stops_for_old_nonterminal_sessions() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        tokio::time::sleep(Duration::from_millis(1_050)).await;
+
+        let (cleanup_status, cleanup) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions/cleanup-stale",
+            Some(json!({ "stale_after_ms": 1000 })),
+        )
+        .await;
+
+        assert_eq!(cleanup_status, 200);
+        assert_eq!(cleanup["requested_count"], 1);
+        assert_eq!(cleanup["requested"][0]["session_id"], session_id);
+        assert_eq!(cleanup["requested"][0]["state"], "stopping");
+
+        let (session_status, session) = request_json(
+            service,
+            Method::GET,
+            &format!("/api/v1/sessions/{session_id}"),
+            None,
+        )
+        .await;
+        assert_eq!(session_status, 200);
+        assert_eq!(session["state"], "stopping");
+    }
+
+    #[tokio::test]
+    async fn stale_session_cleanup_rejects_invalid_thresholds() {
+        let service = app().await.unwrap();
+        let (status, response) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions/cleanup-stale",
+            Some(json!({ "stale_after_ms": 999 })),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(response["code"], "invalid_stale_after_ms");
     }
 
     #[tokio::test]
