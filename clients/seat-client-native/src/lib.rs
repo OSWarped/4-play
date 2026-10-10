@@ -7,8 +7,8 @@ use std::{
 
 use control_protocol::{
     CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
-    PlayerSlotState, ReservePlayerSlotRequest, Session, SessionSummary, SessionSummaryList,
-    SpectatorGrant,
+    PlayerSlotState, ReservePlayerSlotRequest, Session, SessionState, SessionSummary,
+    SessionSummaryList, SpectatorGrant,
 };
 use input_protocol::{AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken};
 use seat_client_core::{
@@ -88,6 +88,48 @@ pub enum NativeRuntime {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinableSlot {
+    pub player_number: u32,
+    pub state: PlayerSlotState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeSeatViewModel {
+    pub games: Vec<NativeGameCard>,
+    pub active_sessions: Vec<NativeSessionCard>,
+    pub current_runtime: Option<NativeRuntimeStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeGameCard {
+    pub id: String,
+    pub display_name: String,
+    pub genre: Option<String>,
+    pub release_year: Option<u16>,
+    pub manufacturer: Option<String>,
+    pub player_count: Option<u32>,
+    pub screenshot_path: Option<String>,
+    pub marquee_path: Option<String>,
+    pub logo_path: Option<String>,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeSessionCard {
+    pub id: String,
+    pub game_id: String,
+    pub display_name: String,
+    pub runtime_host_id: String,
+    pub state: SessionState,
+    pub max_players: u32,
+    pub joinable_slots: Vec<NativeJoinableSlot>,
+    pub player_slots: Vec<PlayerSlot>,
+    pub can_spectate: bool,
+    pub active_spectator_count: u32,
+    pub preview_asset_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeJoinableSlot {
     pub player_number: u32,
     pub state: PlayerSlotState,
 }
@@ -921,6 +963,80 @@ pub fn joinable_slots_for_seat(slots: &[PlayerSlot], seat_id: &str) -> Vec<Joina
         .collect()
 }
 
+pub fn build_native_seat_view_model(
+    snapshot: NativeSeatSnapshot,
+    current_runtime: Option<NativeRuntimeStatus>,
+    seat_id: &str,
+) -> NativeSeatViewModel {
+    let games = snapshot
+        .games
+        .iter()
+        .map(native_game_card)
+        .collect::<Vec<_>>();
+    let active_sessions = snapshot
+        .active_sessions
+        .iter()
+        .map(|session| native_session_card(session, &snapshot.games, seat_id))
+        .collect::<Vec<_>>();
+    NativeSeatViewModel {
+        games,
+        active_sessions,
+        current_runtime,
+    }
+}
+
+fn native_game_card(game: &CatalogGame) -> NativeGameCard {
+    NativeGameCard {
+        id: game.id.clone(),
+        display_name: game.display_name.clone(),
+        genre: game.metadata.genre.clone(),
+        release_year: game.metadata.release_year,
+        manufacturer: game.metadata.manufacturer.clone(),
+        player_count: game.metadata.player_count.or_else(|| {
+            game.availability
+                .first()
+                .map(|available| available.profile.max_players)
+        }),
+        screenshot_path: game.metadata.screenshot_path.clone(),
+        marquee_path: game.metadata.marquee_path.clone(),
+        logo_path: game.metadata.logo_path.clone(),
+        available: game.availability.iter().any(|availability| {
+            availability.runtime_host_status == control_protocol::RuntimeHostStatus::Online
+        }),
+    }
+}
+
+fn native_session_card(
+    session: &SessionSummary,
+    games: &[CatalogGame],
+    seat_id: &str,
+) -> NativeSessionCard {
+    let display_name = games
+        .iter()
+        .find(|game| game.id == session.game_id)
+        .map(|game| game.display_name.clone())
+        .unwrap_or_else(|| session.game_id.clone());
+    NativeSessionCard {
+        id: session.id.clone(),
+        game_id: session.game_id.clone(),
+        display_name,
+        runtime_host_id: session.runtime_host_id.clone(),
+        state: session.state,
+        max_players: session.runtime_profile.max_players,
+        joinable_slots: joinable_slots_for_seat(&session.player_slots, seat_id)
+            .into_iter()
+            .map(|slot| NativeJoinableSlot {
+                player_number: slot.player_number,
+                state: slot.state,
+            })
+            .collect(),
+        player_slots: session.player_slots.clone(),
+        can_spectate: !session.state.is_terminal(),
+        active_spectator_count: session.active_spectator_count,
+        preview_asset_path: session.preview_asset_path.clone(),
+    }
+}
+
 pub fn plan_native_player_launch(
     session: &Session,
     player_number: u32,
@@ -1347,6 +1463,76 @@ mod tests {
                 SeatClientConfigError::MissingSeatApiToken
             ))
         ));
+    }
+
+    #[test]
+    fn native_seat_view_model_builds_ready_to_render_cards_without_tokens() {
+        let mut summary = session_summary();
+        summary.player_slots.push(PlayerSlot {
+            player_number: 2,
+            state: PlayerSlotState::Open,
+            seat_id: None,
+            lease_expires_unix_ms: None,
+            presentation: PlayerSlotPresentation::default(),
+        });
+        summary.active_spectator_count = 1;
+        summary.preview_asset_path = Some("previews/session-1.jpg".to_owned());
+        let runtime = NativeRuntimeStatus {
+            mode: NativeRuntimeMode::Spectator,
+            session_id: "session-1".to_owned(),
+            game_id: "tmnt".to_owned(),
+            media_udp_port: 41_002,
+            input_destination: None,
+            player_number: None,
+            media_running: true,
+            input_running: false,
+        };
+
+        let view_model = build_native_seat_view_model(
+            NativeSeatSnapshot {
+                games: vec![catalog_game()],
+                active_sessions: vec![summary],
+            },
+            Some(runtime),
+            "windows-seat-2",
+        );
+
+        assert_eq!(view_model.games[0].id, "tmnt");
+        assert_eq!(
+            view_model.active_sessions[0].display_name,
+            "Teenage Mutant Ninja Turtles"
+        );
+        assert_eq!(view_model.active_sessions[0].joinable_slots.len(), 1);
+        assert_eq!(
+            view_model.active_sessions[0].joinable_slots[0],
+            NativeJoinableSlot {
+                player_number: 2,
+                state: PlayerSlotState::Open,
+            }
+        );
+        assert!(view_model.active_sessions[0].can_spectate);
+        assert_eq!(view_model.active_sessions[0].active_spectator_count, 1);
+
+        let json = serde_json::to_string(&view_model).unwrap();
+        assert!(!json.contains("00112233-4455-6677-8899-aabbccddeeff"));
+        assert!(!json.contains("token"));
+    }
+
+    #[test]
+    fn native_seat_view_model_marks_terminal_sessions_not_spectatable() {
+        let mut summary = session_summary();
+        summary.state = SessionState::Stopped;
+
+        let view_model = build_native_seat_view_model(
+            NativeSeatSnapshot {
+                games: vec![catalog_game()],
+                active_sessions: vec![summary],
+            },
+            None,
+            "windows-seat-1",
+        );
+
+        assert!(!view_model.active_sessions[0].can_spectate);
     }
 
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
