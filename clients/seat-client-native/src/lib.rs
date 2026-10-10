@@ -190,6 +190,11 @@ impl NativeSeatConfigFile {
         config.validate().map_err(NativeSeatConfigError::Config)?;
         Ok(config)
     }
+
+    pub fn validate_without_token(&self) -> Result<(), NativeSeatConfigError> {
+        self.clone().into_config("__runtime_token_placeholder")?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -238,13 +243,17 @@ impl NativeSeatConfigStore {
 
     pub fn save(&self, config: &SeatClientConfig) -> Result<(), NativeSeatConfigError> {
         config.validate().map_err(NativeSeatConfigError::Config)?;
+        self.save_file(&NativeSeatConfigFile::from_config(config))
+    }
+
+    pub fn save_file(&self, config: &NativeSeatConfigFile) -> Result<(), NativeSeatConfigError> {
+        config.validate_without_token()?;
         if let Some(parent) = self.path.parent()
             && !parent.as_os_str().is_empty()
         {
             fs::create_dir_all(parent).map_err(NativeSeatConfigError::Io)?;
         }
-        let text = serde_json::to_string_pretty(&NativeSeatConfigFile::from_config(config))
-            .map_err(NativeSeatConfigError::Json)?;
+        let text = serde_json::to_string_pretty(config).map_err(NativeSeatConfigError::Json)?;
         fs::write(&self.path, text).map_err(NativeSeatConfigError::Io)
     }
 }
