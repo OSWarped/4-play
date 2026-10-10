@@ -221,12 +221,27 @@ function renderSession(session) {
   element.classList.add("clickable");
   element.innerHTML = `
     <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
-    <span class="pill good">${escapeHtml(session.state || "active")}</span>
+    <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>
+    ${destinationMismatchBadge(session)}
     <span class="pill">${escapeHtml(String(session.active_spectator_count || 0))} spectators</span>
     <div>${slots}</div>
+    ${session.failure_reason ? `<p class="muted">${escapeHtml(session.failure_reason)}</p>` : ""}
   `;
   element.addEventListener("click", () => renderSessionDetails(session));
   return element;
+}
+
+function sessionStateTone(sessionState) {
+  return ["active", "launching", "allocated"].includes(sessionState) ? "good"
+    : ["runtime_lost", "launch_failed", "allocation_failed"].includes(sessionState) ? "bad"
+      : ["stop_requested", "stopped"].includes(sessionState) ? "warn"
+        : "";
+}
+
+function destinationMismatchBadge(session) {
+  if (!session.destination_address || !state.destinationIp) return "";
+  if (session.destination_address === state.destinationIp) return "";
+  return `<span class="pill warn">streaming to ${escapeHtml(session.destination_address)}</span>`;
 }
 
 function renderGameDetails(game) {
@@ -323,6 +338,11 @@ function renderSessionDetails(session) {
     <div class="item">
       <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
       <p class="muted">Running on ${escapeHtml(session.runtime_host_id || "unknown host")}.</p>
+      <div>
+        <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>
+        ${destinationMismatchBadge(session)}
+      </div>
+      ${session.failure_reason ? `<p class="pill bad">${escapeHtml(session.failure_reason)}</p>` : ""}
       <div class="form-actions">
         ${ownOccupied.map((slot) => `<button type="button" data-leave-player="${escapeHtml(String(slot.player_number))}">Leave ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         ${ownDisconnected.map((slot) => `<button type="button" data-rejoin-player="${escapeHtml(String(slot.player_number))}">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}

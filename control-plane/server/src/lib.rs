@@ -1673,6 +1673,8 @@ mod tests {
         assert!(script_body.contains("publicSpectatorHandoff"));
         assert!(script_body.contains("destinationAddressWarning"));
         assert!(script_body.contains("This matches the 4-Play server IP"));
+        assert!(script_body.contains("destinationMismatchBadge"));
+        assert!(script_body.contains("sessionStateTone"));
         assert!(script_body.contains("playerRuntimePanel"));
         assert!(script_body.contains("spectatorRuntimeCommands"));
         assert!(script_body.contains("Input token is intentionally not displayed"));
