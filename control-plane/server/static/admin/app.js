@@ -387,7 +387,13 @@ async function loadMediaPreviews(root = document) {
         image.addEventListener("load", () => URL.revokeObjectURL(objectUrl), { once: true });
         preview.replaceChildren(image);
       } catch (error) {
-        preview.innerHTML = `<span class="muted">Preview unavailable</span>`;
+        preview.classList.add("missing-media");
+        preview.innerHTML = `
+          <span>
+            <strong>Media not uploaded</strong>
+            <small>${escapeHtml(path)}</small>
+          </span>
+        `;
         preview.title = String(error);
       }
     }),

@@ -264,6 +264,27 @@ button.danger:hover {
   background: rgba(0, 0, 0, 0.28);
 }
 
+.missing-media {
+  display: grid;
+  place-items: center;
+  min-height: 7rem;
+  padding: 0.85rem;
+  text-align: center;
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.missing-media strong {
+  display: block;
+  color: var(--warn);
+  margin-bottom: 0.35rem;
+}
+
+.missing-media small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .diagnostic-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

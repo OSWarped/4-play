@@ -150,6 +150,8 @@ available path in this order: screenshot, artwork, marquee, logo.
 Image previews are fetched by Admin/Producer JavaScript with the stored bearer
 token and rendered as browser-local blob URLs. This keeps the asset API
 authenticated while still allowing previews inside image elements.
+If the metadata path exists but the file has not been uploaded yet, the UI
+shows a deliberate missing-media placeholder instead of a broken image.
 
 ## Production spectator feed
 

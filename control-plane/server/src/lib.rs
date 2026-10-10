@@ -1416,6 +1416,7 @@ mod tests {
         assert!(script_body.contains("fourplay.adminToken"));
         assert!(script_body.contains("primaryMediaPath"));
         assert!(script_body.contains("loadMediaPreviews"));
+        assert!(script_body.contains("Media not uploaded"));
         assert!(script_body.contains("Upload asset"));
         assert!(script_body.contains("Save metadata"));
         assert!(script_body.contains("Player slot metadata"));
