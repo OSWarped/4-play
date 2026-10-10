@@ -137,14 +137,131 @@ function renderGames() {
 function renderGame(game) {
   const element = item();
   const metadata = game.metadata || {};
+  element.classList.add("clickable");
   element.innerHTML = `
     <h3>${escapeHtml(game.display_name || game.id)}</h3>
     <span class="pill">${escapeHtml(game.id)}</span>
     <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
     <span class="pill">${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))} players</span>
     <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
+    <button type="button">Edit metadata</button>
   `;
+  element.querySelector("button").addEventListener("click", () => renderGameEditor(game));
   return element;
+}
+
+function renderGameEditor(game) {
+  const metadata = game.metadata || {};
+  const editor = document.querySelector("#game-editor");
+  editor.classList.remove("muted");
+  editor.innerHTML = `
+    <form id="metadata-form" class="metadata-form">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Metadata editor</p>
+          <h3>${escapeHtml(game.display_name || game.id)}</h3>
+        </div>
+        <span class="pill">${escapeHtml(game.id)}</span>
+      </div>
+      ${metadataInput("Sort title", "sort_title", metadata.sort_title)}
+      ${metadataInput("Genre", "genre", metadata.genre)}
+      ${metadataInput("Manufacturer", "manufacturer", metadata.manufacturer)}
+      ${metadataInput("Release year", "release_year", metadata.release_year, "number", "e.g. 1989")}
+      ${metadataInput("Player count", "player_count", metadata.player_count, "number", "1-16")}
+      ${metadataTextarea("Description", "description", metadata.description)}
+      ${metadataTextarea("Control notes", "control_notes", metadata.control_notes)}
+      <div class="metadata-grid">
+        ${metadataInput("Artwork path", "artwork_path", metadata.artwork_path, "text", "media/game/artwork.png")}
+        ${metadataInput("Marquee path", "marquee_path", metadata.marquee_path, "text", "media/game/marquee.png")}
+        ${metadataInput("Screenshot path", "screenshot_path", metadata.screenshot_path, "text", "media/game/screenshot.png")}
+        ${metadataInput("Logo path", "logo_path", metadata.logo_path, "text", "media/game/logo.png")}
+      </div>
+      <div class="form-actions">
+        <button type="submit">Save metadata</button>
+        <button id="cancel-metadata-edit" type="button">Cancel</button>
+      </div>
+      <div id="metadata-result"></div>
+    </form>
+  `;
+  editor
+    .querySelector("#metadata-form")
+    .addEventListener("submit", (event) => saveGameMetadata(event, game));
+  editor.querySelector("#cancel-metadata-edit").addEventListener("click", () => {
+    editor.classList.add("muted");
+    editor.textContent = "Select a game to edit its metadata.";
+  });
+}
+
+function metadataInput(label, name, value, type = "text", placeholder = "") {
+  return `
+    <label>
+      <span>${escapeHtml(label)}</span>
+      <input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? "")}" placeholder="${escapeHtml(placeholder)}" />
+    </label>
+  `;
+}
+
+function metadataTextarea(label, name, value) {
+  return `
+    <label>
+      <span>${escapeHtml(label)}</span>
+      <textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value ?? "")}</textarea>
+    </label>
+  `;
+}
+
+async function saveGameMetadata(event, game) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const result = form.querySelector("#metadata-result");
+  const metadata = metadataFromForm(form);
+  result.innerHTML = `<p class="pill warn">Saving metadata...</p>`;
+  try {
+    const updated = await putJson(`/api/v1/games/${game.id}/metadata`, { metadata });
+    const index = state.games.findIndex((candidate) => candidate.id === updated.id);
+    if (index >= 0) {
+      state.games[index] = updated;
+    }
+    renderGames();
+    renderGameEditor(updated);
+    document.querySelector("#metadata-result").innerHTML = `
+      <div class="item">
+        <h3>Metadata saved</h3>
+        <span class="pill good">${escapeHtml(updated.id)}</span>
+        <p class="muted">The catalog view has been refreshed with the latest metadata.</p>
+      </div>
+    `;
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+function metadataFromForm(form) {
+  const data = new FormData(form);
+  const metadata = {};
+  for (const field of [
+    "sort_title",
+    "description",
+    "genre",
+    "manufacturer",
+    "artwork_path",
+    "marquee_path",
+    "screenshot_path",
+    "logo_path",
+    "control_notes",
+  ]) {
+    const value = String(data.get(field) || "").trim();
+    if (value) {
+      metadata[field] = value;
+    }
+  }
+  for (const field of ["release_year", "player_count"]) {
+    const value = String(data.get(field) || "").trim();
+    if (value) {
+      metadata[field] = Number(value);
+    }
+  }
+  return metadata;
 }
 
 function renderProduction(session) {
@@ -305,6 +422,10 @@ async function stopSession(session) {
 
 async function postJson(path, body) {
   return sendJson("POST", path, body);
+}
+
+async function putJson(path, body) {
+  return sendJson("PUT", path, body);
 }
 
 async function deleteJson(path, body) {
