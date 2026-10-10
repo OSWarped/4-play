@@ -1,6 +1,6 @@
 use std::{
-    io,
-    net::UdpSocket,
+    fs, io,
+    net::{AddrParseError, IpAddr, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
 };
@@ -111,6 +111,100 @@ pub enum NativeSeatAppError<ApiError, MediaError, InputError> {
     Controller(NativeClientError<ApiError>),
     Runtime(NativeRuntimeSupervisorError<MediaError, InputError>),
     NoRuntime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeSeatConfigFile {
+    pub control_plane_url: String,
+    pub seat_id: String,
+    pub destination_address: String,
+    pub ffplay_path: PathBuf,
+}
+
+impl NativeSeatConfigFile {
+    pub fn from_config(config: &SeatClientConfig) -> Self {
+        Self {
+            control_plane_url: config.control_plane_url.clone(),
+            seat_id: config.seat_id.clone(),
+            destination_address: config.destination_address.to_string(),
+            ffplay_path: config.ffplay_path.clone(),
+        }
+    }
+
+    pub fn into_config(
+        self,
+        seat_api_token: impl Into<String>,
+    ) -> Result<SeatClientConfig, NativeSeatConfigError> {
+        let config = SeatClientConfig {
+            control_plane_url: self.control_plane_url,
+            seat_id: self.seat_id,
+            destination_address: self
+                .destination_address
+                .parse::<IpAddr>()
+                .map_err(NativeSeatConfigError::Address)?,
+            seat_api_token: seat_api_token.into(),
+            ffplay_path: self.ffplay_path,
+        };
+        config.validate().map_err(NativeSeatConfigError::Config)?;
+        Ok(config)
+    }
+}
+
+#[derive(Debug)]
+pub enum NativeSeatConfigError {
+    Io(io::Error),
+    Json(serde_json::Error),
+    Address(AddrParseError),
+    Config(SeatClientConfigError),
+}
+
+impl std::fmt::Display for NativeSeatConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "seat config I/O error: {error}"),
+            Self::Json(error) => write!(formatter, "seat config JSON error: {error}"),
+            Self::Address(error) => write!(formatter, "seat destination address error: {error}"),
+            Self::Config(error) => write!(formatter, "seat config error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for NativeSeatConfigError {}
+
+pub struct NativeSeatConfigStore {
+    path: PathBuf,
+}
+
+impl NativeSeatConfigStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    pub fn load_with_token(
+        &self,
+        seat_api_token: impl Into<String>,
+    ) -> Result<SeatClientConfig, NativeSeatConfigError> {
+        let text = fs::read_to_string(&self.path).map_err(NativeSeatConfigError::Io)?;
+        serde_json::from_str::<NativeSeatConfigFile>(&text)
+            .map_err(NativeSeatConfigError::Json)?
+            .into_config(seat_api_token)
+    }
+
+    pub fn save(&self, config: &SeatClientConfig) -> Result<(), NativeSeatConfigError> {
+        config.validate().map_err(NativeSeatConfigError::Config)?;
+        if let Some(parent) = self.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(NativeSeatConfigError::Io)?;
+        }
+        let text = serde_json::to_string_pretty(&NativeSeatConfigFile::from_config(config))
+            .map_err(NativeSeatConfigError::Json)?;
+        fs::write(&self.path, text).map_err(NativeSeatConfigError::Io)
+    }
 }
 
 pub struct NativeSeatApp<A, M, I>
@@ -1207,34 +1301,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn native_seat_config_store_round_trips_config() {
+        let store = NativeSeatConfigStore::new(temp_config_path("round-trip"));
+        let config = seat_config();
+
+        store.save(&config).unwrap();
+        let loaded = store.load_with_token("seat-token").unwrap();
+
+        assert_eq!(loaded, config);
+        let text = std::fs::read_to_string(store.path()).unwrap();
+        assert!(text.contains("\"control_plane_url\""));
+        assert!(!text.contains("seat-token"));
+        assert!(!text.contains("seat_api_token"));
+        let _ = std::fs::remove_file(store.path());
+    }
+
+    #[test]
+    fn native_seat_config_file_rejects_invalid_destination_address() {
+        let config = NativeSeatConfigFile {
+            control_plane_url: "http://192.0.2.68:8080".to_owned(),
+            seat_id: "windows-seat-1".to_owned(),
+            destination_address: "not-an-ip".to_owned(),
+            ffplay_path: PathBuf::from("ffplay"),
+        };
+
+        assert!(matches!(
+            config.into_config("seat-token"),
+            Err(NativeSeatConfigError::Address(_))
+        ));
+    }
+
+    #[test]
+    fn native_seat_config_file_requires_runtime_token_overlay() {
+        let config = NativeSeatConfigFile {
+            control_plane_url: "http://192.0.2.68:8080".to_owned(),
+            seat_id: "windows-seat-1".to_owned(),
+            destination_address: "192.0.2.10".to_owned(),
+            ffplay_path: PathBuf::from("ffplay"),
+        };
+
+        assert!(matches!(
+            config.into_config(""),
+            Err(NativeSeatConfigError::Config(
+                SeatClientConfigError::MissingSeatApiToken
+            ))
+        ));
+    }
+
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
-        NativeSeatController::new(
-            SeatClientConfig {
-                control_plane_url: "http://192.0.2.68:8080".to_owned(),
-                seat_id: "windows-seat-1".to_owned(),
-                destination_address: "192.0.2.10".parse().unwrap(),
-                seat_api_token: "seat-token".to_owned(),
-                ffplay_path: PathBuf::from("ffplay"),
-            },
-            api,
-        )
-        .unwrap()
+        NativeSeatController::new(seat_config(), api).unwrap()
     }
 
     fn app(api: FakeApi) -> NativeSeatApp<FakeApi, FakeMediaSupervisor, FakeInputSender> {
         NativeSeatApp::new(
-            SeatClientConfig {
-                control_plane_url: "http://192.0.2.68:8080".to_owned(),
-                seat_id: "windows-seat-1".to_owned(),
-                destination_address: "192.0.2.10".parse().unwrap(),
-                seat_api_token: "seat-token".to_owned(),
-                ffplay_path: PathBuf::from("ffplay"),
-            },
+            seat_config(),
             api,
             FakeMediaSupervisor::default(),
             FakeInputSender::default(),
         )
         .unwrap()
+    }
+
+    fn seat_config() -> SeatClientConfig {
+        SeatClientConfig {
+            control_plane_url: "http://192.0.2.68:8080".to_owned(),
+            seat_id: "windows-seat-1".to_owned(),
+            destination_address: "192.0.2.10".parse().unwrap(),
+            seat_api_token: "seat-token".to_owned(),
+            ffplay_path: PathBuf::from("ffplay"),
+        }
+    }
+
+    fn temp_config_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "4play-seat-client-native-{label}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
     }
 
     #[derive(Debug, Clone, Default)]
