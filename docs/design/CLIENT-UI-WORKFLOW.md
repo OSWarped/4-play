@@ -494,6 +494,14 @@ It is intentionally still a low-level runtime command. The packaged client
 should eventually own this process invisibly, then replace terminal keyboard
 capture with the appropriate kiosk/window/gamepad input source.
 
+Validation note, 2026-10-10: this command was manually tested from the Windows
+development machine against a live Linux-hosted session and successfully drove
+gameplay through the authenticated input path. For that manual test, the session
+token had to be fetched from the admin-only session detail endpoint. That is
+acceptable for diagnostics, but not for the player UX. The packaged client must
+receive and use connection grants internally after start/join/rejoin without
+displaying or requiring the operator to copy tokens.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details
