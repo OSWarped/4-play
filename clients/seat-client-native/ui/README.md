@@ -60,6 +60,16 @@ keyboard state through the native bridge:
 The UI tracks held keys, sends button release events, and neutralizes input when
 the browser window loses focus.
 
+Gamepad support uses the browser Gamepad API:
+
+- left stick or D-pad: movement
+- buttons 0-5: action buttons 1-6
+- button 8: coin/select
+- button 9: start
+
+The UI forwards only state changes and neutralizes input when a gamepad
+disconnects.
+
 Security boundary:
 
 - do not render session input tokens;

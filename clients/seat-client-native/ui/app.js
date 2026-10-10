@@ -5,6 +5,10 @@ const state = {
   heldKeys: new Set(),
   lastAxis: { x: 0, y: 0 },
   inputEnabled: false,
+  lastGamepad: {
+    buttons: new Map(),
+    axis: { x: 0, y: 0 },
+  },
 };
 
 const elements = {
@@ -22,8 +26,18 @@ elements.refresh.addEventListener("click", () => runUiAction(() => refresh()));
 document.addEventListener("keydown", (event) => handleKey(event, true));
 document.addEventListener("keyup", (event) => handleKey(event, false));
 window.addEventListener("blur", () => neutralizeInput("Window focus lost"));
+window.addEventListener("gamepadconnected", (event) => {
+  showOverlay(`Gamepad connected: ${event.gamepad.id}`, ["Left stick/D-pad move", "Buttons mapped"]);
+});
+window.addEventListener("gamepaddisconnected", () => {
+  neutralizeInput("Gamepad disconnected");
+  state.lastGamepad.buttons.clear();
+  state.lastGamepad.axis = { x: 0, y: 0 };
+  showOverlay("Gamepad disconnected", ["Input neutralized"]);
+});
 
 runUiAction(() => refresh());
+requestAnimationFrame(pollGamepads);
 
 async function refresh() {
   setMessage("Refreshing seat state...");
@@ -143,7 +157,7 @@ function renderRuntimeActions(runtime) {
     return;
   }
   const actions = runtime.mode === "player"
-    ? ["WASD move", "J/K/L/M/,/. buttons", "1 coin", "2 start", "Esc stop"]
+    ? ["WASD/gamepad move", "J/K/L/M/,/. buttons", "1 coin", "2 start", "Esc stop"]
     : ["Spectating", "Join an open slot to play", "Esc stop local feed"];
   showOverlay(runtimeLabel(runtime), actions);
 }
@@ -194,6 +208,69 @@ async function handleKey(event, pressed) {
   }
 }
 
+async function pollGamepads() {
+  try {
+    if (state.inputEnabled && navigator.getGamepads) {
+      const gamepad = Array.from(navigator.getGamepads()).find(Boolean);
+      if (gamepad) {
+        await forwardGamepad(gamepad);
+      }
+    }
+  } finally {
+    requestAnimationFrame(pollGamepads);
+  }
+}
+
+async function forwardGamepad(gamepad) {
+  const axis = axisFromGamepad(gamepad);
+  if (axis.x !== state.lastGamepad.axis.x || axis.y !== state.lastGamepad.axis.y) {
+    state.lastGamepad.axis = axis;
+    await runUiAction(() => nativeCommand({ type: "set_axis", axis_x: axis.x, axis_y: axis.y }), false);
+  }
+
+  for (const [index, button] of gamepadButtonMap()) {
+    const pressed = Boolean(gamepad.buttons[index]?.pressed);
+    if (state.lastGamepad.buttons.get(index) !== pressed) {
+      state.lastGamepad.buttons.set(index, pressed);
+      await runUiAction(() => nativeCommand({ type: "set_button", button, pressed }), false);
+    }
+  }
+}
+
+function axisFromGamepad(gamepad) {
+  const leftStickX = axisDirection(gamepad.axes[0] ?? 0);
+  const leftStickY = axisDirection(gamepad.axes[1] ?? 0);
+  const dpadX = (gamepad.buttons[15]?.pressed ? 1 : 0) - (gamepad.buttons[14]?.pressed ? 1 : 0);
+  const dpadY = (gamepad.buttons[13]?.pressed ? 1 : 0) - (gamepad.buttons[12]?.pressed ? 1 : 0);
+  return {
+    x: dpadX || leftStickX,
+    y: dpadY || leftStickY,
+  };
+}
+
+function axisDirection(value) {
+  if (value <= -0.35) {
+    return -1;
+  }
+  if (value >= 0.35) {
+    return 1;
+  }
+  return 0;
+}
+
+function gamepadButtonMap() {
+  return new Map([
+    [0, "action1"],
+    [1, "action2"],
+    [2, "action3"],
+    [3, "action4"],
+    [4, "action5"],
+    [5, "action6"],
+    [8, "coin"],
+    [9, "start"],
+  ]);
+}
+
 async function setHeldKey(code, pressed) {
   if (pressed) {
     state.heldKeys.add(code);
@@ -203,13 +280,22 @@ async function setHeldKey(code, pressed) {
 }
 
 async function neutralizeInput(reason) {
-  if (!state.inputEnabled || state.heldKeys.size === 0) {
+  if (!state.inputEnabled || !hasTrackedInput()) {
     return;
   }
   state.heldKeys.clear();
   state.lastAxis = { x: 0, y: 0 };
+  state.lastGamepad.buttons.clear();
+  state.lastGamepad.axis = { x: 0, y: 0 };
   await runUiAction(() => nativeCommand({ type: "neutralize_input" }), false);
   showOverlay(reason, ["Input neutralized"]);
+}
+
+function hasTrackedInput() {
+  return state.heldKeys.size > 0
+    || state.lastGamepad.axis.x !== 0
+    || state.lastGamepad.axis.y !== 0
+    || Array.from(state.lastGamepad.buttons.values()).some(Boolean);
 }
 
 async function runUiAction(action, showSuccess = true) {
