@@ -9,6 +9,7 @@ const state = {
   token: localStorage.getItem("fourplay.clientToken") || "",
   seatId: localStorage.getItem("fourplay.seatId") || "windows-seat-1",
   destinationIp: localStorage.getItem("fourplay.destinationIp") || "",
+  lastRuntime: loadLastRuntime(),
   games: [],
   sessions: [],
 };
@@ -146,6 +147,7 @@ function renderHome() {
     setText("#primary-title", "Choose a game");
     setText("#primary-detail", `${state.games.length} games are available.`);
   }
+  renderLastRuntimeHint();
 }
 
 function findOwnDisconnectedSlot() {
@@ -235,7 +237,7 @@ function renderGameDetails(game) {
         <button type="button" id="start-game">Start game</button>
         ${running.length ? `<button type="button" data-client-action="running">Show running sessions</button>` : ""}
       </div>
-      <p class="muted">Start now requests a real session. Join, rejoin, spectate, and media/input launch are the next client increments.</p>
+      <p class="muted">Start now requests a real session and prepares the local runtime commands for media and input.</p>
       <div id="client-action-result"></div>
     </div>
   `);
@@ -252,15 +254,15 @@ async function startGame(game) {
   result.innerHTML = `<p class="pill warn">Requesting session...</p>`;
   try {
     const session = await clientApi.startGame(game.id, state.seatId, state.destinationIp);
+    rememberRuntime(playerRuntimeState(session, 1));
     result.innerHTML = `
       <div class="item">
         <h3>Session requested</h3>
         <span class="pill good">${escapeHtml(session.state || "allocating")}</span>
         <span class="pill">${escapeHtml(session.id)}</span>
-        <span class="pill">media ${escapeHtml(String(session.connection_grant?.media_udp_port || "unknown"))}</span>
-        <span class="pill">input ${escapeHtml(String(session.connection_grant?.input_udp_port || "unknown"))}</span>
-        <p class="muted">Gameplay still uses the proven seat-input path until the graphical client owns media/input launch.</p>
-        ${mediaReceiverCommands(session.connection_grant?.media_udp_port)}
+        ${runtimePills(session.connection_grant)}
+        <p class="muted">For now, use the media command below. Input forwarding requires the packaged client/native handoff so the session token stays hidden.</p>
+        ${playerRuntimePanel(session, 1)}
       </div>
     `;
     wireCopyButtons(result);
@@ -297,7 +299,7 @@ function renderSessionDetails(session) {
         ${openSlots.map((slot) => `<button type="button" data-join-player="${escapeHtml(String(slot.player_number))}">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         <button type="button" id="spectate-session">Spectate</button>
       </div>
-      <p class="muted">Join/rejoin/leave now update real player slots. Media/input launch is the next client increment.</p>
+      <p class="muted">Join/rejoin/leave update real player slots. Join/rejoin prepares safe media runtime details for this seat.</p>
       <div id="client-action-result"></div>
     </div>
   `);
@@ -334,6 +336,7 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
       await clientApi.reservePlayerSlot(session.id, playerNumber, state.seatId);
     }
     const connected = await clientApi.connectPlayerSlot(session.id, playerNumber, state.seatId);
+    rememberRuntime(playerRuntimeState(connected, playerNumber));
     const slot = (connected.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -342,10 +345,9 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
         <h3>${rejoin ? "Player slot rejoined" : "Player slot joined"}</h3>
         <span class="pill good">${escapeHtml(slot?.label || `P${playerNumber}`)}</span>
         <span class="pill">${escapeHtml(connected.id)}</span>
-        <span class="pill">media ${escapeHtml(String(connected.connection_grant?.media_udp_port || "unknown"))}</span>
-        <span class="pill">input ${escapeHtml(String(connected.connection_grant?.input_udp_port || "unknown"))}</span>
-        <p class="muted">Slot ownership is live. The next increment will launch or coordinate media and input from this graphical client.</p>
-        ${mediaReceiverCommands(connected.connection_grant?.media_udp_port)}
+        ${runtimePills(connected.connection_grant)}
+        <p class="muted">Slot ownership is live. Use the media command below until the packaged client owns process launch and internal input handoff.</p>
+        ${playerRuntimePanel(connected, playerNumber)}
       </div>
     `;
     wireCopyButtons(result);
@@ -365,6 +367,7 @@ async function leavePlayerSlot(session, playerNumber) {
   result.innerHTML = `<p class="pill warn">Leaving player ${escapeHtml(String(playerNumber))}...</p>`;
   try {
     const updated = await clientApi.disconnectPlayerSlot(session.id, playerNumber, state.seatId);
+    clearLastRuntimeFor(session.id, playerNumber);
     const slot = (updated.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -392,13 +395,14 @@ async function spectateSession(session) {
   result.innerHTML = `<p class="pill warn">Creating spectator feed...</p>`;
   try {
     const grant = await clientApi.spectate(session.id, state.seatId, state.destinationIp);
+    rememberRuntime(spectatorRuntimeState(session, grant));
     result.innerHTML = `
       <div class="item">
         <h3>Spectator feed created</h3>
         <span class="pill good">media ${escapeHtml(String(grant.media_udp_port))}</span>
         <span class="pill">${escapeHtml(grant.id)}</span>
         <p class="muted">Spectating does not reserve a player slot or send input.</p>
-        ${mediaReceiverCommands(grant.media_udp_port)}
+        ${spectatorRuntimeCommands(grant)}
       </div>
     `;
     wireCopyButtons(result);
@@ -408,17 +412,109 @@ async function spectateSession(session) {
   }
 }
 
+function runtimePills(grant) {
+  if (!grant) {
+    return `<span class="pill warn">runtime grant unavailable</span>`;
+  }
+  return `
+    <span class="pill">media ${escapeHtml(String(grant.media_udp_port || "unknown"))}</span>
+    <span class="pill">input ${escapeHtml(String(grant.input_udp_port || "unknown"))}</span>
+  `;
+}
+
+function playerRuntimeState(session, playerNumber) {
+  const grant = session.connection_grant || {};
+  return {
+    kind: "player",
+    sessionId: session.id,
+    gameId: session.game_id,
+    displayName: session.display_name || session.game_id,
+    playerNumber,
+    mediaUdpPort: grant.media_udp_port || null,
+    inputUdpPort: grant.input_udp_port || null,
+    runtimeHostAddress: grant.runtime_host_address || null,
+  };
+}
+
+function spectatorRuntimeState(session, grant) {
+  return {
+    kind: "spectator",
+    sessionId: session.id,
+    gameId: session.game_id,
+    displayName: session.display_name || session.game_id,
+    mediaUdpPort: grant.media_udp_port || null,
+    grantId: grant.id || null,
+  };
+}
+
+function rememberRuntime(runtime) {
+  state.lastRuntime = runtime;
+  localStorage.setItem("fourplay.lastRuntime", JSON.stringify(runtime));
+}
+
+function loadLastRuntime() {
+  try {
+    return JSON.parse(localStorage.getItem("fourplay.lastRuntime") || "null");
+  } catch {
+    return null;
+  }
+}
+
+function clearLastRuntimeFor(sessionId, playerNumber) {
+  if (
+    state.lastRuntime?.kind === "player" &&
+    state.lastRuntime.sessionId === sessionId &&
+    state.lastRuntime.playerNumber === playerNumber
+  ) {
+    state.lastRuntime = null;
+    localStorage.removeItem("fourplay.lastRuntime");
+  }
+}
+
+function playerRuntimePanel(session, playerNumber) {
+  const grant = session.connection_grant;
+  if (!grant?.media_udp_port || !grant?.runtime_host_address || !grant?.input_udp_port) {
+    return `<p class="pill bad">Runtime connection grant is missing; refresh or rejoin this slot.</p>`;
+  }
+  const destination = `${grant.runtime_host_address}:${grant.input_udp_port}`;
+  return `
+    <div class="runtime-panel player-mode">
+      <h4>Player runtime</h4>
+      ${mediaReceiverCommands(grant.media_udp_port)}
+      <p><strong>Input endpoint:</strong> ${escapeHtml(destination)} for player ${escapeHtml(String(playerNumber))}</p>
+      <p class="muted">Input token is intentionally not displayed or persisted. The packaged client/runtime handoff will consume it internally after start, join, or rejoin.</p>
+    </div>
+  `;
+}
+
+function spectatorRuntimeCommands(grant) {
+  if (!grant?.media_udp_port) {
+    return `<p class="pill bad">Spectator media grant is missing; try creating the spectator feed again.</p>`;
+  }
+  return `
+    <div class="runtime-panel spectator-mode">
+      <h4>Spectator runtime</h4>
+      ${mediaReceiverCommands(grant.media_udp_port)}
+      <p class="muted">Spectator mode opens media only; it does not reserve a player slot or send input.</p>
+    </div>
+  `;
+}
+
 function mediaReceiverCommands(mediaPort) {
   if (!mediaPort) {
     return "";
   }
   const receiverUrl = `udp://0.0.0.0:${mediaPort}?fifo_size=1000000&overrun_nonfatal=1`;
   const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${receiverUrl}"`;
+  const runtime = `cargo run -p seat-client-runtime -- media --port ${mediaPort} --ffplay-path .\\path\\to\\ffplay.exe`;
   return `
     <div class="receiver-commands">
       <p><strong>Receiver URL:</strong></p>
       <pre class="command">${escapeHtml(receiverUrl)}</pre>
       <button type="button" data-copy-text="${escapeHtml(receiverUrl)}">Copy receiver URL</button>
+      <p><strong>Seat runtime media command:</strong></p>
+      <pre class="command">${escapeHtml(runtime)}</pre>
+      <button type="button" data-copy-text="${escapeHtml(runtime)}">Copy runtime media command</button>
       <p><strong>ffplay command:</strong></p>
       <pre class="command">${escapeHtml(ffplay)}</pre>
       <button type="button" data-copy-text="${escapeHtml(ffplay)}">Copy ffplay command</button>
@@ -428,15 +524,38 @@ function mediaReceiverCommands(mediaPort) {
 
 function wireCopyButtons(container) {
   container.querySelectorAll("[data-copy-text]").forEach((button) => {
+    const originalText = button.textContent;
     button.addEventListener("click", async () => {
       await navigator.clipboard.writeText(button.dataset.copyText || "");
       button.textContent = "Copied";
       window.setTimeout(() => {
-        button.textContent = button.dataset.copyText?.startsWith("ffplay")
-          ? "Copy ffplay command"
-          : "Copy receiver URL";
+        button.textContent = originalText;
       }, 1400);
     });
+  });
+}
+
+function renderLastRuntimeHint() {
+  const runtime = state.lastRuntime;
+  const container = document.querySelector("#runtime-status");
+  if (!container || !runtime) {
+    if (container) container.innerHTML = "";
+    return;
+  }
+  const label =
+    runtime.kind === "player"
+      ? `Last player runtime: ${runtime.displayName || runtime.gameId} P${runtime.playerNumber}`
+      : `Last spectator runtime: ${runtime.displayName || runtime.gameId}`;
+  container.innerHTML = `
+    <div class="runtime-status">
+      <span class="pill warn">${escapeHtml(label)}</span>
+      <button type="button" id="clear-runtime-status">Clear</button>
+    </div>
+  `;
+  document.querySelector("#clear-runtime-status").addEventListener("click", () => {
+    state.lastRuntime = null;
+    localStorage.removeItem("fourplay.lastRuntime");
+    renderLastRuntimeHint();
   });
 }
 

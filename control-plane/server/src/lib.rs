@@ -1669,6 +1669,9 @@ mod tests {
         assert!(script_body.contains("async function joinPlayerSlot"));
         assert!(script_body.contains("async function leavePlayerSlot"));
         assert!(script_body.contains("async function spectateSession"));
+        assert!(script_body.contains("playerRuntimePanel"));
+        assert!(script_body.contains("spectatorRuntimeCommands"));
+        assert!(script_body.contains("Input token is intentionally not displayed"));
         assert!(script_body.contains("mediaReceiverCommands"));
         assert!(script_body.contains("POST"));
 

@@ -33,7 +33,8 @@ body {
 .hero,
 .hero-actions,
 .seat-panel,
-.form-actions {
+.form-actions,
+.runtime-status {
   display: flex;
   gap: 1rem;
 }
@@ -137,6 +138,7 @@ button:hover,
 
 .hero {
   min-height: 10rem;
+  flex-wrap: wrap;
 }
 
 .layout {
@@ -215,6 +217,34 @@ button:hover,
   display: grid;
   gap: 0.55rem;
   margin-top: 0.85rem;
+}
+
+.runtime-panel {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.runtime-panel h4 {
+  margin: 0;
+}
+
+.runtime-panel.player-mode {
+  border-color: rgba(124, 247, 200, 0.35);
+}
+
+.runtime-panel.spectator-mode {
+  border-color: rgba(142, 177, 255, 0.35);
+}
+
+.runtime-status {
+  align-items: center;
+  flex-basis: 100%;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 900px) {
