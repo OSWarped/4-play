@@ -110,11 +110,47 @@ The v0 console:
 The v0 console gates disruptive controls behind confirmation prompts. Production
 spectator grants remain non-disruptive because they do not reserve player slots.
 
-Next admin/producer increments:
+## Outstanding Admin/Producer backlog
 
-1. add asset replacement warnings;
-2. promote session notes into event/match records;
-3. add script-backed smoke/acceptance execution and artifact browsing inside the console.
+The Admin/Producer console is useful enough for current Phase 3 operation, but
+these features remain before calling it a complete production module:
+
+1. **Event and match bookkeeping**
+   - persistent events/tournaments;
+   - matches tied to games, players, seats, sessions, and results;
+   - winner/result entry;
+   - match notes promoted from ad hoc session notes;
+   - production spectator feed association.
+2. **Script-backed operations**
+   - run cleanup, diagnostics, strict smoke, and acceptance checks from the
+     console;
+   - return structured results instead of raw terminal output;
+   - keep disruptive actions behind confirmation prompts.
+3. **Artifact browser**
+   - list latest diagnostics, smoke, soak, and acceptance artifacts;
+   - show pass/fail summaries;
+   - link or download raw logs/support bundles.
+4. **Session recovery polish**
+   - retry/review failed launches;
+   - mark failures reviewed;
+   - release stale spectator grants;
+   - explain runtime failures in operator-friendly language.
+5. **Catalog and media management**
+   - drag/drop asset upload;
+   - bulk metadata import/export from the browser;
+   - ROM validation/import status;
+   - hide/show games;
+   - preferred ROM variant/region management.
+6. **Production and OBS polish**
+   - stream-safe overlay templates;
+   - player labels, match names, round labels, and score fields;
+   - active feed health;
+   - copy/open OBS-oriented URLs per feed;
+   - clean capture surfaces tied to event/match records.
+
+These items are intentionally separate from the player client UI. The player
+client can start now while Admin/Producer bookkeeping and operations continue in
+parallel.
 
 ## Game metadata workflow
 

@@ -379,6 +379,30 @@ input, and media pipeline.
 - launch existing media/input path
 - clean player-facing errors
 
+The first checked-in client UI slice is served by the control plane at:
+
+```text
+/client
+```
+
+It is intentionally dependency-free and browser-based for fast iteration. This
+slice provides:
+
+- local seat ID and bearer-token settings stored in browser local storage;
+- contextual home state based on active sessions and the configured seat ID;
+- catalog browsing from `/api/v1/games`;
+- active-session browsing from `/api/v1/active-sessions`;
+- game detail, control notes, and running-session awareness;
+- player-slot display with open/disconnected states;
+- start/join/rejoin/spectate action placeholders.
+
+The placeholders are deliberate. The proven `seat-input.exe` path remains the
+gameplay path until the graphical client owns the full reserve/connect/spectate,
+media receiver, and input forwarding lifecycle.
+
+The next client UI increment should wire those buttons to existing control-plane
+APIs and either launch or coordinate the existing media/input path.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details

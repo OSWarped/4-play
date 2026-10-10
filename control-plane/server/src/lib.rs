@@ -289,6 +289,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin/capture", get(admin_capture))
         .route("/admin/capture.js", get(admin_capture_script))
         .route("/admin/styles.css", get(admin_styles))
+        .route("/client", get(client_index))
+        .route("/client/", get(client_index))
+        .route("/client/app.js", get(client_script))
+        .route("/client/styles.css", get(client_styles))
         .route("/api/v1", get(api_info))
         .merge(protected)
         .with_state(state)
@@ -380,6 +384,27 @@ async fn admin_styles() -> Response {
     static_response(
         "text/css; charset=utf-8",
         include_str!("../static/admin/styles.css"),
+    )
+}
+
+async fn client_index() -> Response {
+    static_response(
+        "text/html; charset=utf-8",
+        include_str!("../static/client/index.html"),
+    )
+}
+
+async fn client_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client/app.js"),
+    )
+}
+
+async fn client_styles() -> Response {
+    static_response(
+        "text/css; charset=utf-8",
+        include_str!("../static/client/styles.css"),
     )
 }
 
@@ -1599,6 +1624,46 @@ mod tests {
                 .unwrap()
                 .contains("capture-title")
         );
+
+        assert_eq!(styles_status, 200);
+        assert_eq!(
+            styles_content_type.as_deref(),
+            Some("text/css; charset=utf-8")
+        );
+        assert!(String::from_utf8(styles_body).unwrap().contains("--accent"));
+    }
+
+    #[tokio::test]
+    async fn seat_client_assets_are_served_without_api_auth() {
+        let service = app().await.unwrap();
+
+        let (index_status, index_content_type, index_body) =
+            request_bytes(service.clone(), Method::GET, "/client").await;
+        let (script_status, script_content_type, script_body) =
+            request_bytes(service.clone(), Method::GET, "/client/app.js").await;
+        let (styles_status, styles_content_type, styles_body) =
+            request_bytes(service, Method::GET, "/client/styles.css").await;
+
+        assert_eq!(index_status, 200);
+        assert_eq!(
+            index_content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+        assert!(
+            String::from_utf8(index_body)
+                .unwrap()
+                .contains("Seat Client")
+        );
+
+        assert_eq!(script_status, 200);
+        assert_eq!(
+            script_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        let script_body = String::from_utf8(script_body).unwrap();
+        assert!(script_body.contains("fourplay.clientToken"));
+        assert!(script_body.contains("findOwnDisconnectedSlot"));
+        assert!(script_body.contains("Start/join actions are intentionally stubbed"));
 
         assert_eq!(styles_status, 200);
         assert_eq!(
