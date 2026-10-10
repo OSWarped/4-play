@@ -133,6 +133,7 @@ function renderGames() {
   });
   const container = document.querySelector("#games");
   replaceChildren(container, filtered.map(renderGame));
+  loadMediaPreviews(container);
 }
 
 function renderDiagnostics() {
@@ -322,6 +323,7 @@ function renderGameEditor(game) {
     editor.textContent = "Select a game to edit its metadata.";
   });
   editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
+  loadMediaPreviews(editor);
 }
 
 function primaryMediaPath(metadata) {
@@ -335,14 +337,14 @@ function primaryMediaPath(metadata) {
 }
 
 function assetUrl(path) {
-  return `/api/v1/assets/${encodeAssetPath(path)}`;
+  return `/assets/${encodeAssetPath(path)}`;
 }
 
 function mediaPreview(path, alt, className) {
   return `
-    <a class="${escapeHtml(className)}" href="${escapeHtml(assetUrl(path))}" target="_blank" rel="noreferrer">
-      <img src="${escapeHtml(assetUrl(path))}" alt="${escapeHtml(alt)} preview" loading="lazy" />
-    </a>
+    <span class="${escapeHtml(className)}" data-media-preview="${escapeHtml(path)}" data-media-alt="${escapeHtml(alt)} preview">
+      <span class="muted">Loading preview...</span>
+    </span>
   `;
 }
 
@@ -361,6 +363,35 @@ function mediaLinks(metadata) {
     `)
     .join("");
   return links || `<p class="muted">No media links available.</p>`;
+}
+
+async function loadMediaPreviews(root = document) {
+  const previews = root.querySelectorAll("[data-media-preview]");
+  await Promise.all(
+    Array.from(previews).map(async (preview) => {
+      const path = preview.dataset.mediaPreview;
+      if (!path) {
+        return;
+      }
+      try {
+        const response = await fetch(assetUrl(path), { headers: authHeaders() });
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const image = document.createElement("img");
+        image.src = objectUrl;
+        image.alt = preview.dataset.mediaAlt || "media preview";
+        image.loading = "lazy";
+        image.addEventListener("load", () => URL.revokeObjectURL(objectUrl), { once: true });
+        preview.replaceChildren(image);
+      } catch (error) {
+        preview.innerHTML = `<span class="muted">Preview unavailable</span>`;
+        preview.title = String(error);
+      }
+    }),
+  );
 }
 
 function metadataInput(label, name, value, type = "text", placeholder = "") {

@@ -147,6 +147,9 @@ reference.
 
 Catalog cards and the metadata editor preview configured media using the first
 available path in this order: screenshot, artwork, marquee, logo.
+Image previews are fetched by Admin/Producer JavaScript with the stored bearer
+token and rendered as browser-local blob URLs. This keeps the asset API
+authenticated while still allowing previews inside image elements.
 
 ## Production spectator feed
 
