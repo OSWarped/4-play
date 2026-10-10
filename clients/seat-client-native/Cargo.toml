@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 control-protocol = { path = "../../shared/control-protocol" }
 input-protocol = { path = "../../shared/input-protocol" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 seat-client-core = { path = "../seat-client-core" }
 serde = { version = "1", features = ["derive"] }
 
