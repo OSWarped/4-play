@@ -1330,9 +1330,9 @@ mod tests {
             script_content_type.as_deref(),
             Some("text/javascript; charset=utf-8")
         );
-        assert!(String::from_utf8(script_body)
-            .unwrap()
-            .contains("fourplay.adminToken"));
+        let script_body = String::from_utf8(script_body).unwrap();
+        assert!(script_body.contains("fourplay.adminToken"));
+        assert!(script_body.contains("Release production spectator feed"));
 
         assert_eq!(styles_status, 200);
         assert_eq!(

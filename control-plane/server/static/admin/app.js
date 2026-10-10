@@ -11,6 +11,7 @@ const state = {
   sessions: [],
   activeSessions: [],
   selectedSession: null,
+  productionGrants: [],
   producerDestination: localStorage.getItem("fourplay.producerDestination") || "",
 };
 
@@ -188,18 +189,64 @@ async function createProductionSpectatorGrant(session) {
       seat_id: "admin-producer",
       destination_address: destination,
     });
-    const udpUrl = `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`;
-    const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${udpUrl}"`;
+    rememberProductionGrant(grant);
+    renderProductionGrantResult(result, grant);
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+function rememberProductionGrant(grant) {
+  state.productionGrants = [
+    grant,
+    ...state.productionGrants.filter((candidate) => candidate.id !== grant.id),
+  ].slice(0, 10);
+}
+
+function renderProductionGrantResult(result, grant) {
+  const udpUrl = `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`;
+  const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${udpUrl}"`;
+  result.innerHTML = `
+    <div class="item">
+      <h3>Production spectator grant created</h3>
+      <span class="pill good">grant ${escapeHtml(grant.id)}</span>
+      <span class="pill">runtime ${escapeHtml(grant.runtime_host_id)}</span>
+      <span class="pill">media ${escapeHtml(String(grant.media_udp_port))}</span>
+      <p>Receiver URL:</p>
+      <pre class="command">${escapeHtml(udpUrl)}</pre>
+      <p>OBS Media Source:</p>
+      <ol class="muted">
+        <li>Add a <strong>Media Source</strong>.</li>
+        <li>Uncheck <strong>Local File</strong>.</li>
+        <li>Paste the receiver URL into <strong>Input</strong>.</li>
+        <li>Enable <strong>Restart playback when source becomes active</strong>.</li>
+      </ol>
+      <p>ffplay command:</p>
+      <pre class="command">${escapeHtml(ffplay)}</pre>
+      <button id="release-spectator-grant" type="button">Release production spectator feed</button>
+    </div>
+  `;
+  result
+    .querySelector("#release-spectator-grant")
+    .addEventListener("click", () => releaseProductionSpectatorGrant(grant));
+}
+
+async function releaseProductionSpectatorGrant(grant) {
+  const result = document.querySelector("#spectator-grant-result");
+  try {
+    await deleteJson(`/api/v1/sessions/${grant.session_id}/spectators/${grant.id}`, {
+      seat_id: grant.seat_id || "admin-producer",
+    });
+    state.productionGrants = state.productionGrants.filter(
+      (candidate) => candidate.id !== grant.id,
+    );
     result.innerHTML = `
       <div class="item">
-        <h3>Production spectator grant created</h3>
+        <h3>Production spectator feed released</h3>
         <span class="pill good">grant ${escapeHtml(grant.id)}</span>
-        <span class="pill">runtime ${escapeHtml(grant.runtime_host_id)}</span>
         <span class="pill">media ${escapeHtml(String(grant.media_udp_port))}</span>
-        <p>Receiver URL:</p>
-        <pre class="command">${escapeHtml(udpUrl)}</pre>
-        <p>ffplay command:</p>
-        <pre class="command">${escapeHtml(ffplay)}</pre>
+        <p class="muted">The OBS/producer media port has been returned to the runtime host pool.</p>
       </div>
     `;
     await refresh();
@@ -209,8 +256,16 @@ async function createProductionSpectatorGrant(session) {
 }
 
 async function postJson(path, body) {
+  return sendJson("POST", path, body);
+}
+
+async function deleteJson(path, body) {
+  return sendJson("DELETE", path, body);
+}
+
+async function sendJson(method, path, body) {
   const response = await fetch(path, {
-    method: "POST",
+    method,
     headers: {
       ...authHeaders(),
       "Content-Type": "application/json",

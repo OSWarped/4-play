@@ -89,6 +89,7 @@ The v0 console:
 - lists visible games and basic metadata;
 - includes a production panel for selected sessions;
 - creates production spectator grants for selected sessions;
+- releases production spectator grants when the producer is done with a feed;
 - prints receiver URLs and ffplay commands for OBS/producer machines;
 - shows a raw API snapshot for diagnostics.
 
@@ -97,11 +98,10 @@ spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. release spectator grants from the production panel;
-2. open a clean OBS capture window for a selected session;
-3. add session stop/cleanup controls with confirmation;
-4. add game metadata editing;
-5. add event/match notes.
+1. open a clean OBS capture window for a selected session;
+2. add session stop/cleanup controls with confirmation;
+3. add game metadata editing;
+4. add event/match notes.
 
 ## Production spectator feed
 
@@ -119,6 +119,30 @@ The production spectator feed should be intentionally capture-friendly:
 The first version may use the same underlying spectator media grants already
 supported by the control plane. The important product behavior is that the
 admin can choose a session and open a clean feed that OBS can capture.
+
+### Validated OBS workflow
+
+On 2026-10-09, the Admin/Producer v0 console successfully created a production
+spectator grant for an active `tmnt2` session. OBS on the Windows producer
+machine consumed the generated UDP MPEG-TS URL as a Media Source and displayed
+the live gameplay feed.
+
+Validated operator flow:
+
+1. Open `/admin`.
+2. Enter the bearer token.
+3. Enter the producer/OBS machine IP.
+4. Select an active session.
+5. Click **Create production spectator feed**.
+6. Copy the generated `udp://0.0.0.0:<port>?fifo_size=1000000&overrun_nonfatal=1`
+   URL into an OBS Media Source with **Local File** unchecked.
+7. When the production source is no longer needed, click
+   **Release production spectator feed** in the Admin/Producer console.
+
+This validates the first real Admin/Producer production use case: opening a
+separate spectator feed suitable for live-stream capture without consuming a
+player slot. The release action returns the dedicated media port to the
+runtime host pool.
 
 ## Tournament workflow
 
