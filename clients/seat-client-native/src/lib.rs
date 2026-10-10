@@ -1,11 +1,16 @@
-use std::path::PathBuf;
+use std::{
+    io,
+    net::UdpSocket,
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+};
 
 use control_protocol::{
     CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
     PlayerSlotState, ReservePlayerSlotRequest, Session, SessionSummary, SessionSummaryList,
     SpectatorGrant,
 };
-use input_protocol::SessionToken;
+use input_protocol::{AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken};
 use seat_client_core::{
     InputForwardingPlan, MediaReceiverPlan, PublicRuntimeHandoff, RuntimePlanError,
     SeatClientConfig, SeatClientConfigError, public_player_handoff, public_spectator_handoff,
@@ -92,6 +97,232 @@ pub enum NativeClientError<ApiError> {
     Api(ApiError),
     Config(SeatClientConfigError),
     RuntimePlan(RuntimePlanError),
+}
+
+#[derive(Debug)]
+pub enum NativeRuntimeSupervisorError<MediaError, InputError> {
+    Media(MediaError),
+    Input(InputError),
+    NoPlayerRuntime,
+}
+
+pub trait MediaProcessSupervisor {
+    type Error;
+    type Handle;
+
+    fn spawn_media(&mut self, spec: &ProcessSpec) -> Result<Self::Handle, Self::Error>;
+    fn stop_media(&mut self, handle: &mut Self::Handle) -> Result<(), Self::Error>;
+    fn media_running(&mut self, handle: &mut Self::Handle) -> Result<bool, Self::Error>;
+}
+
+pub trait InputPacketSender {
+    type Error;
+
+    fn send_input(
+        &mut self,
+        destination: &str,
+        token: SessionToken,
+        state: ControllerState,
+    ) -> Result<(), Self::Error>;
+}
+
+pub struct ChildMediaProcessSupervisor;
+
+impl MediaProcessSupervisor for ChildMediaProcessSupervisor {
+    type Error = io::Error;
+    type Handle = Child;
+
+    fn spawn_media(&mut self, spec: &ProcessSpec) -> Result<Self::Handle, Self::Error> {
+        Command::new(&spec.program)
+            .args(&spec.args)
+            .stdin(Stdio::null())
+            .spawn()
+    }
+
+    fn stop_media(&mut self, handle: &mut Self::Handle) -> Result<(), Self::Error> {
+        if handle.try_wait()?.is_none() {
+            handle.kill()?;
+        }
+        handle.wait()?;
+        Ok(())
+    }
+
+    fn media_running(&mut self, handle: &mut Self::Handle) -> Result<bool, Self::Error> {
+        Ok(handle.try_wait()?.is_none())
+    }
+}
+
+pub struct UdpInputPacketSender {
+    socket: UdpSocket,
+}
+
+impl UdpInputPacketSender {
+    pub fn bind_any() -> io::Result<Self> {
+        Ok(Self {
+            socket: UdpSocket::bind("0.0.0.0:0")?,
+        })
+    }
+}
+
+impl InputPacketSender for UdpInputPacketSender {
+    type Error = io::Error;
+
+    fn send_input(
+        &mut self,
+        destination: &str,
+        token: SessionToken,
+        state: ControllerState,
+    ) -> Result<(), Self::Error> {
+        self.socket.send_to(
+            &AuthenticatedControllerState { token, state }.encode(),
+            destination,
+        )?;
+        Ok(())
+    }
+}
+
+pub struct NativeRuntimeSupervisor<M, I>
+where
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    media: M,
+    input: I,
+    current: Option<RunningNativeRuntime<M::Handle>>,
+    sequence: u32,
+}
+
+enum RunningNativeRuntime<Handle> {
+    Player {
+        launch: NativePlayerLaunchPlan,
+        media: Handle,
+    },
+    Spectator {
+        launch: NativeSpectatorLaunchPlan,
+        media: Handle,
+    },
+}
+
+impl<M, I> NativeRuntimeSupervisor<M, I>
+where
+    M: MediaProcessSupervisor,
+    I: InputPacketSender,
+{
+    pub fn new(media: M, input: I) -> Self {
+        Self {
+            media,
+            input,
+            current: None,
+            sequence: 0,
+        }
+    }
+
+    pub fn start_player(
+        &mut self,
+        launch: NativePlayerLaunchPlan,
+    ) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        self.stop()?;
+        let media = self
+            .media
+            .spawn_media(&launch.media_process)
+            .map_err(NativeRuntimeSupervisorError::Media)?;
+        self.current = Some(RunningNativeRuntime::Player { launch, media });
+        self.sequence = 0;
+        Ok(())
+    }
+
+    pub fn start_spectator(
+        &mut self,
+        launch: NativeSpectatorLaunchPlan,
+    ) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        self.stop()?;
+        let media = self
+            .media
+            .spawn_media(&launch.media_process)
+            .map_err(NativeRuntimeSupervisorError::Media)?;
+        self.current = Some(RunningNativeRuntime::Spectator { launch, media });
+        self.sequence = 0;
+        Ok(())
+    }
+
+    pub fn stop(&mut self) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        if let Some(mut current) = self.current.take() {
+            let media = match &mut current {
+                RunningNativeRuntime::Player { media, .. }
+                | RunningNativeRuntime::Spectator { media, .. } => media,
+            };
+            self.media
+                .stop_media(media)
+                .map_err(NativeRuntimeSupervisorError::Media)?;
+        }
+        Ok(())
+    }
+
+    pub fn status(
+        &mut self,
+    ) -> Result<Option<NativeRuntimeStatus>, NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        let Some(current) = self.current.as_mut() else {
+            return Ok(None);
+        };
+        match current {
+            RunningNativeRuntime::Player { launch, media } => {
+                let mut status = launch.safe_status();
+                status.media_running = self
+                    .media
+                    .media_running(media)
+                    .map_err(NativeRuntimeSupervisorError::Media)?;
+                status.input_running = true;
+                Ok(Some(status))
+            }
+            RunningNativeRuntime::Spectator { launch, media } => {
+                let mut status = launch.safe_status();
+                status.media_running = self
+                    .media
+                    .media_running(media)
+                    .map_err(NativeRuntimeSupervisorError::Media)?;
+                Ok(Some(status))
+            }
+        }
+    }
+
+    pub fn send_player_input(
+        &mut self,
+        buttons: u16,
+        axis_x: i16,
+        axis_y: i16,
+    ) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        self.send_player_input_with_flags(buttons, axis_x, axis_y, 0)
+    }
+
+    pub fn send_player_stop(
+        &mut self,
+    ) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        self.send_player_input_with_flags(0, 0, 0, FLAG_STOP)
+    }
+
+    fn send_player_input_with_flags(
+        &mut self,
+        buttons: u16,
+        axis_x: i16,
+        axis_y: i16,
+        flags: u8,
+    ) -> Result<(), NativeRuntimeSupervisorError<M::Error, I::Error>> {
+        let Some(RunningNativeRuntime::Player { launch, .. }) = self.current.as_ref() else {
+            return Err(NativeRuntimeSupervisorError::NoPlayerRuntime);
+        };
+        self.sequence = self.sequence.wrapping_add(1);
+        let state = ControllerState {
+            sequence: self.sequence,
+            buttons,
+            axis_x,
+            axis_y,
+            flags,
+            player_slot: launch.input.player_number.try_into().unwrap_or(u8::MAX),
+        };
+        self.input
+            .send_input(&launch.input.destination, launch.input.token, state)
+            .map_err(NativeRuntimeSupervisorError::Input)
+    }
 }
 
 pub trait ControlPlaneApi {
@@ -648,6 +879,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn runtime_supervisor_starts_player_media_and_sends_input_without_process_token() {
+        let launch = plan_native_player_launch(&session(), 2, PathBuf::from("ffplay")).unwrap();
+        let token = launch.input.token;
+        let mut supervisor = NativeRuntimeSupervisor::new(
+            FakeMediaSupervisor::default(),
+            FakeInputSender::default(),
+        );
+
+        supervisor.start_player(launch).unwrap();
+        supervisor
+            .send_player_input(input_protocol::button::ACTION_1, -1, 0)
+            .unwrap();
+
+        let status = supervisor.status().unwrap().unwrap();
+        assert_eq!(status.mode, NativeRuntimeMode::Player);
+        assert_eq!(status.player_number, Some(2));
+        assert!(status.media_running);
+        assert!(status.input_running);
+
+        let spawned = &supervisor.media.spawned[0];
+        assert_eq!(spawned.program, PathBuf::from("ffplay"));
+        let process_json = serde_json::to_string(spawned).unwrap();
+        assert!(!process_json.contains("00112233-4455-6677-8899-aabbccddeeff"));
+        assert_eq!(supervisor.input.sent.len(), 1);
+        assert_eq!(supervisor.input.sent[0].destination, "192.0.2.68:42000");
+        assert_eq!(supervisor.input.sent[0].token, token);
+        assert_eq!(supervisor.input.sent[0].state.sequence, 1);
+        assert_eq!(
+            supervisor.input.sent[0].state.buttons,
+            input_protocol::button::ACTION_1
+        );
+        assert_eq!(supervisor.input.sent[0].state.axis_x, -1);
+        assert_eq!(supervisor.input.sent[0].state.player_slot, 2);
+    }
+
+    #[test]
+    fn runtime_supervisor_can_start_spectator_without_input() {
+        let launch =
+            plan_native_spectator_launch(&session(), &spectator_grant(), PathBuf::from("ffplay"));
+        let mut supervisor = NativeRuntimeSupervisor::new(
+            FakeMediaSupervisor::default(),
+            FakeInputSender::default(),
+        );
+
+        supervisor.start_spectator(launch).unwrap();
+
+        let status = supervisor.status().unwrap().unwrap();
+        assert_eq!(status.mode, NativeRuntimeMode::Spectator);
+        assert_eq!(status.media_udp_port, 41_002);
+        assert!(status.media_running);
+        assert!(!status.input_running);
+        assert!(matches!(
+            supervisor.send_player_input(0, 0, 0),
+            Err(NativeRuntimeSupervisorError::NoPlayerRuntime)
+        ));
+        assert!(supervisor.input.sent.is_empty());
+    }
+
+    #[test]
+    fn runtime_supervisor_stops_previous_runtime_before_switching() {
+        let player = plan_native_player_launch(&session(), 1, PathBuf::from("ffplay")).unwrap();
+        let spectator =
+            plan_native_spectator_launch(&session(), &spectator_grant(), PathBuf::from("ffplay"));
+        let mut supervisor = NativeRuntimeSupervisor::new(
+            FakeMediaSupervisor::default(),
+            FakeInputSender::default(),
+        );
+
+        supervisor.start_player(player).unwrap();
+        supervisor.start_spectator(spectator).unwrap();
+
+        assert_eq!(supervisor.media.spawned.len(), 2);
+        assert_eq!(supervisor.media.stopped, vec![1]);
+        assert_eq!(
+            supervisor.status().unwrap().unwrap().mode,
+            NativeRuntimeMode::Spectator
+        );
+    }
+
+    #[test]
+    fn runtime_supervisor_sends_stop_flag_to_player_runtime() {
+        let launch = plan_native_player_launch(&session(), 1, PathBuf::from("ffplay")).unwrap();
+        let mut supervisor = NativeRuntimeSupervisor::new(
+            FakeMediaSupervisor::default(),
+            FakeInputSender::default(),
+        );
+
+        supervisor.start_player(launch).unwrap();
+        supervisor.send_player_stop().unwrap();
+
+        assert_eq!(supervisor.input.sent[0].state.flags, FLAG_STOP);
+        assert_eq!(supervisor.input.sent[0].state.buttons, 0);
+        assert_eq!(supervisor.input.sent[0].state.axis_x, 0);
+        assert_eq!(supervisor.input.sent[0].state.axis_y, 0);
+    }
+
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
         NativeSeatController::new(
             SeatClientConfig {
@@ -660,6 +988,63 @@ mod tests {
             api,
         )
         .unwrap()
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct FakeMediaSupervisor {
+        spawned: Vec<ProcessSpec>,
+        stopped: Vec<u32>,
+        next_handle: u32,
+    }
+
+    impl MediaProcessSupervisor for FakeMediaSupervisor {
+        type Error = String;
+        type Handle = u32;
+
+        fn spawn_media(&mut self, spec: &ProcessSpec) -> Result<Self::Handle, Self::Error> {
+            self.spawned.push(spec.clone());
+            self.next_handle += 1;
+            Ok(self.next_handle)
+        }
+
+        fn stop_media(&mut self, handle: &mut Self::Handle) -> Result<(), Self::Error> {
+            self.stopped.push(*handle);
+            Ok(())
+        }
+
+        fn media_running(&mut self, _handle: &mut Self::Handle) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct FakeInputSender {
+        sent: Vec<SentInput>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SentInput {
+        destination: String,
+        token: SessionToken,
+        state: ControllerState,
+    }
+
+    impl InputPacketSender for FakeInputSender {
+        type Error = String;
+
+        fn send_input(
+            &mut self,
+            destination: &str,
+            token: SessionToken,
+            state: ControllerState,
+        ) -> Result<(), Self::Error> {
+            self.sent.push(SentInput {
+                destination: destination.to_owned(),
+                token,
+                state,
+            });
+            Ok(())
+        }
     }
 
     #[derive(Debug, Clone)]
