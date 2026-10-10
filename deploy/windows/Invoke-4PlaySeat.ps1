@@ -36,10 +36,14 @@ if (-not (Test-Path -LiteralPath $SeatInput)) {
 }
 
 $ControlPlane = Get-4PlaySetting "FOURPLAY_CONTROL_PLANE_URL" "http://192.168.20.68:8080"
-$ApiToken = Get-4PlaySetting "FOURPLAY_SEAT_API_TOKEN" "phase-1c-seat-token-2026"
+$ApiToken = Get-4PlaySetting "FOURPLAY_SEAT_API_TOKEN" ""
 $SeatAddress = Get-4PlaySetting "FOURPLAY_SEAT_ADDRESS" "192.168.20.10"
 $FfplayPath = Get-4PlaySetting "FOURPLAY_FFPLAY_PATH" ""
 $SeatId = Get-4PlaySetting "FOURPLAY_SEAT_ID" "windows-seat-$SeatNumber"
+
+if ([string]::IsNullOrWhiteSpace($ApiToken)) {
+  throw "FOURPLAY_SEAT_API_TOKEN is required. Set it in this PowerShell session before launching a 4-Play seat."
+}
 
 $Arguments = @(
   "--control-plane", $ControlPlane,

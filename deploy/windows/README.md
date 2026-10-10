@@ -53,13 +53,57 @@ machine or network:
 
 ```powershell
 $env:FOURPLAY_CONTROL_PLANE_URL = "http://192.168.20.68:8080"
-$env:FOURPLAY_SEAT_API_TOKEN = "phase-1c-seat-token-2026"
+$env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
 $env:FOURPLAY_SEAT_ADDRESS = "192.168.20.10"
 $env:FOURPLAY_FFPLAY_PATH = "C:\Users\blake\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0-full_build\bin\ffplay.exe"
 ```
 
 Leave `FOURPLAY_SEAT_ID` unset when launching several seats from one machine;
 the numbered launchers assign `windows-seat-1` through `windows-seat-4`.
+
+## Native seat UI bridge
+
+The newer packaged-client prototype uses `seat-client-native`. It serves a
+localhost UI and forwards UI commands to the Rust native backend.
+
+Build it:
+
+```powershell
+cd C:\Users\blake\source\repos\4-play
+cargo build -p seat-client-native
+```
+
+Set the seat API token in the current PowerShell session. The native config file
+does not store this token:
+
+```powershell
+$env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
+```
+
+Launch seat 1:
+
+```powershell
+.\deploy\windows\Start-4Play-NativeSeat1.ps1
+```
+
+The script writes `tmp\native-seat\seat-1.json`, starts the localhost bridge,
+and prints a URL such as:
+
+```text
+http://127.0.0.1:40704
+```
+
+For multiple native seats on the same Windows PC:
+
+```powershell
+.\deploy\windows\Start-4Play-NativeSeat1.ps1
+.\deploy\windows\Start-4Play-NativeSeat2.ps1
+.\deploy\windows\Start-4Play-NativeSeat3.ps1
+.\deploy\windows\Start-4Play-NativeSeat4.ps1
+```
+
+The native launchers use localhost ports `40704` through `40707` by default and
+seat IDs `windows-seat-1` through `windows-seat-4`.
 
 ## Recommended Phase 3 manual test
 
