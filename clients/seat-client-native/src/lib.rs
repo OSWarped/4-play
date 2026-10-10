@@ -10,7 +10,9 @@ use control_protocol::{
     PlayerSlotState, ReservePlayerSlotRequest, Session, SessionState, SessionSummary,
     SessionSummaryList, SpectatorGrant,
 };
-use input_protocol::{AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken};
+use input_protocol::{
+    AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
+};
 use seat_client_core::{
     InputForwardingPlan, MediaReceiverPlan, PublicRuntimeHandoff, RuntimePlanError,
     SeatClientConfig, SeatClientConfigError, public_player_handoff, public_spectator_handoff,
@@ -132,6 +134,80 @@ pub struct NativeSessionCard {
 pub struct NativeJoinableSlot {
     pub player_number: u32,
     pub state: PlayerSlotState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeControllerInput {
+    pub buttons: u16,
+    pub axis_x: i16,
+    pub axis_y: i16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeInputButton {
+    Action1,
+    Action2,
+    Action3,
+    Action4,
+    Action5,
+    Action6,
+    Coin,
+    Start,
+}
+
+impl NativeInputButton {
+    pub fn mask(self) -> u16 {
+        match self {
+            Self::Action1 => button::ACTION_1,
+            Self::Action2 => button::ACTION_2,
+            Self::Action3 => button::ACTION_3,
+            Self::Action4 => button::ACTION_4,
+            Self::Action5 => button::ACTION_5,
+            Self::Action6 => button::ACTION_6,
+            Self::Coin => button::COIN,
+            Self::Start => button::START,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NativeControllerStateTracker {
+    state: NativeControllerInput,
+}
+
+impl NativeControllerStateTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> NativeControllerInput {
+        self.state
+    }
+
+    pub fn set_button(
+        &mut self,
+        button: NativeInputButton,
+        pressed: bool,
+    ) -> NativeControllerInput {
+        if pressed {
+            self.state.buttons |= button.mask();
+        } else {
+            self.state.buttons &= !button.mask();
+        }
+        self.state
+    }
+
+    pub fn set_axis(&mut self, axis_x: i16, axis_y: i16) -> NativeControllerInput {
+        self.state.axis_x = clamp_axis(axis_x);
+        self.state.axis_y = clamp_axis(axis_y);
+        self.state
+    }
+
+    pub fn neutralize(&mut self) -> NativeControllerInput {
+        self.state = NativeControllerInput::default();
+        self.state
+    }
 }
 
 #[derive(Debug)]
@@ -401,6 +477,13 @@ where
             .map_err(NativeSeatAppError::Runtime)
     }
 
+    pub fn send_controller_state(
+        &mut self,
+        state: NativeControllerInput,
+    ) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
+        self.send_player_input(state.buttons, state.axis_x, state.axis_y)
+    }
+
     pub fn send_player_stop(
         &mut self,
     ) -> Result<(), NativeSeatAppError<A::Error, M::Error, I::Error>> {
@@ -408,6 +491,10 @@ where
             .send_player_stop()
             .map_err(NativeSeatAppError::Runtime)
     }
+}
+
+fn clamp_axis(value: i16) -> i16 {
+    value.clamp(-1, 1)
 }
 
 pub trait MediaProcessSupervisor {
@@ -1542,6 +1629,50 @@ mod tests {
         );
 
         assert!(!view_model.active_sessions[0].can_spectate);
+    }
+
+    #[test]
+    fn native_controller_tracker_preserves_simultaneous_buttons_and_axes() {
+        let mut tracker = NativeControllerStateTracker::new();
+
+        tracker.set_button(NativeInputButton::Action1, true);
+        let state = tracker.set_button(NativeInputButton::Action2, true);
+        assert_eq!(
+            state.buttons,
+            input_protocol::button::ACTION_1 | input_protocol::button::ACTION_2
+        );
+
+        let state = tracker.set_axis(-10, 2);
+        assert_eq!(state.axis_x, -1);
+        assert_eq!(state.axis_y, 1);
+        assert_eq!(
+            state.buttons,
+            input_protocol::button::ACTION_1 | input_protocol::button::ACTION_2
+        );
+
+        let state = tracker.set_button(NativeInputButton::Action1, false);
+        assert_eq!(state.buttons, input_protocol::button::ACTION_2);
+
+        let state = tracker.neutralize();
+        assert_eq!(state, NativeControllerInput::default());
+    }
+
+    #[test]
+    fn native_seat_app_sends_controller_tracker_state() {
+        let mut app = app(FakeApi::default());
+        let mut tracker = NativeControllerStateTracker::new();
+
+        app.start_game("tmnt").unwrap();
+        tracker.set_button(NativeInputButton::Start, true);
+        tracker.set_axis(1, 0);
+        app.send_controller_state(tracker.state()).unwrap();
+
+        assert_eq!(app.supervisor.input.sent[0].state.player_slot, 1);
+        assert_eq!(
+            app.supervisor.input.sent[0].state.buttons,
+            input_protocol::button::START
+        );
+        assert_eq!(app.supervisor.input.sent[0].state.axis_x, 1);
     }
 
     fn controller(api: FakeApi) -> NativeSeatController<FakeApi> {
