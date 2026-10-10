@@ -260,10 +260,54 @@ function renderGameDetails(game) {
         ${running.length ? `<button type="button" data-client-action="running">Show running sessions</button>` : ""}
       </div>
       <p class="muted">Start now requests a real session and prepares the local runtime commands for media and input.</p>
+      <div id="running-game-sessions" class="stack compact" hidden></div>
       <div id="client-action-result"></div>
     </div>
   `);
   document.querySelector("#start-game").addEventListener("click", () => startGame(game));
+  const runningButton = document.querySelector("[data-client-action='running']");
+  if (runningButton) {
+    runningButton.addEventListener("click", () => renderRunningGameSessions(running));
+  }
+}
+
+function renderRunningGameSessions(sessions) {
+  const container = document.querySelector("#running-game-sessions");
+  if (!container) return;
+  container.hidden = false;
+  replaceChildren(container, sessions.map(renderInlineSession));
+}
+
+function renderInlineSession(session) {
+  const element = item();
+  const openSlots = (session.player_slots || []).filter((slot) => slot.state === "open");
+  const ownDisconnected = (session.player_slots || []).filter(
+    (slot) => slot.state === "disconnected" && slot.seat_id === state.seatId,
+  );
+  element.innerHTML = `
+    <h4>${escapeHtml(session.display_name || session.game_id)}</h4>
+    <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>
+    ${destinationMismatchBadge(session)}
+    <div class="form-actions">
+      ${ownDisconnected.map((slot) => `<button type="button" data-inline-rejoin="${escapeHtml(String(slot.player_number))}">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
+      ${openSlots.map((slot) => `<button type="button" data-inline-join="${escapeHtml(String(slot.player_number))}">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
+      <button type="button" data-inline-spectate="true">Spectate</button>
+    </div>
+  `;
+  element.querySelectorAll("[data-inline-join]").forEach((button) => {
+    button.addEventListener("click", () =>
+      joinPlayerSlot(session, Number(button.dataset.inlineJoin), false),
+    );
+  });
+  element.querySelectorAll("[data-inline-rejoin]").forEach((button) => {
+    button.addEventListener("click", () =>
+      joinPlayerSlot(session, Number(button.dataset.inlineRejoin), true),
+    );
+  });
+  element
+    .querySelector("[data-inline-spectate]")
+    .addEventListener("click", () => spectateSession(session));
+  return element;
 }
 
 async function startGame(game) {

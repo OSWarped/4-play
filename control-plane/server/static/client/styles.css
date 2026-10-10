@@ -173,6 +173,11 @@ button:hover,
   margin-top: 1rem;
 }
 
+.stack.compact {
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
 .item {
   padding: 0.95rem;
 }
