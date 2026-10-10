@@ -43,6 +43,9 @@ For Version 1:
 - browser-visible status and handoff data must be sanitized;
 - session input tokens must not be rendered, copied, logged, persisted, or placed
   in process arguments;
+- local config files may store seat identity, destination address, control-plane
+  URL, and ffplay path, but must not store bearer tokens until an
+  OS-protected credential store is selected;
 - the existing control-plane/session/input APIs remain the source of truth.
 
 The initial framework choice remains intentionally narrow: build framework-neutral
@@ -84,3 +87,38 @@ browser keyboard/gamepad/touch
 
 That future work should reuse the same control-plane APIs, player-slot model,
 catalog metadata, and public/private runtime handoff boundary.
+
+## Implementation notes
+
+As of 2026-10-10, `clients/seat-client-native` contains the first native backend
+foundation:
+
+- token-safe launch plans for player and spectator runtimes;
+- a media process supervisor for ffplay-compatible receivers;
+- in-process authenticated UDP input forwarding;
+- an app facade for refresh, start, join, rejoin, spectate, join-from-spectator,
+  leave, stop, status, and controller-state send operations;
+- JSON view models for game cards, active session cards, joinable player slots,
+  spectator counts, preview assets, and current runtime status;
+- local non-secret config save/load. The API token is intentionally supplied at
+  runtime rather than stored in the config file;
+- a simple `seat-client-native` CLI for writing a token-safe config file and
+  printing a token-safe snapshot view model.
+
+Useful development commands:
+
+```powershell
+cargo run -p seat-client-native -- init-config `
+  --config .\tmp\seat-native.json `
+  --control-plane http://192.168.20.68:8080 `
+  --seat-id windows-seat-1 `
+  --destination-ip 192.168.20.10 `
+  --ffplay-path .\path\to\ffplay.exe
+
+$env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
+cargo run -p seat-client-native -- snapshot --config .\tmp\seat-native.json
+```
+
+The snapshot command is a backend smoke test and frontend integration aid. It
+does not launch media or input yet; the app facade and runtime supervisor provide
+that lower-level capability for the packaged UI shell.

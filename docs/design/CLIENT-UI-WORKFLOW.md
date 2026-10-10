@@ -555,6 +555,46 @@ backend may hold the private `Session`/`ConnectionGrant` in memory long enough
 to start media and input forwarding, but it should expose only sanitized runtime
 status back to the web UI.
 
+### Native backend foundation
+
+`clients/seat-client-native` is now the Version 1 packaged-client backend
+foundation. It remains desktop-shell agnostic, so it can be bound to Tauri, Wry,
+WebView2, or another wrapper after the Rust boundary stabilizes.
+
+The current native backend provides:
+
+- a token-safe local config file for non-secret seat settings: control-plane URL,
+  seat ID, seat media destination IP, and ffplay path;
+- runtime token overlay from a safer runtime source such as environment,
+  pairing, or future OS credential storage;
+- control-plane browsing/start/join/rejoin/spectate/leave calls;
+- local ffplay-compatible media process supervision;
+- in-process authenticated UDP input forwarding, keeping input tokens out of
+  child process arguments;
+- controller-state tracking for graphical keyboard/gamepad events, including
+  simultaneous buttons, axis clamping, and neutralize behavior;
+- safe JSON view models for games, active sessions, joinable slots, spectator
+  counts, previews, and current runtime status.
+
+Development smoke commands:
+
+```powershell
+cargo run -p seat-client-native -- init-config `
+  --config .\tmp\seat-native.json `
+  --control-plane http://192.168.20.68:8080 `
+  --seat-id windows-seat-1 `
+  --destination-ip 192.168.20.10 `
+  --ffplay-path .\path\to\ffplay.exe
+
+$env:FOURPLAY_SEAT_API_TOKEN = "<provisioned-seat-token>"
+cargo run -p seat-client-native -- snapshot --config .\tmp\seat-native.json
+```
+
+The config file intentionally does not contain `FOURPLAY_SEAT_API_TOKEN` or any
+session input token. This is a deliberate security boundary. A later packaging
+slice should add pairing or OS credential storage instead of plaintext token
+persistence.
+
 `seat-client-runtime` includes diagnostic handoff-preview commands that read
 private JSON from files and print only the public/sanitized handoff:
 
