@@ -1,10 +1,4 @@
-use std::{
-    env,
-    error::Error,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{env, error::Error, net::SocketAddr, path::PathBuf, sync::mpsc, thread};
 
 use axum::{
     Json, Router,
@@ -16,17 +10,16 @@ use axum::{
 use seat_client_native::{
     BlockingControlPlaneClient, ChildMediaProcessSupervisor, ControlPlaneApi, NativeSeatApp,
     NativeSeatConfigFile, NativeSeatConfigStore, NativeSeatUiSession, NativeUiCommand,
-    UdpInputPacketSender, build_native_seat_view_model,
+    NativeUiResponse, UdpInputPacketSender, build_native_seat_view_model,
 };
 use serde::Serialize;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().collect::<Vec<_>>();
     match args.get(1).map(String::as_str) {
         Some("init-config") => init_config(&args[2..]),
         Some("snapshot") => snapshot(&args[2..]),
-        Some("serve-ui") => serve_ui(&args[2..]).await,
+        Some("serve-ui") => serve_ui(&args[2..]),
         Some("-h") | Some("--help") | None => {
             print_usage(&args[0]);
             Ok(())
@@ -79,7 +72,7 @@ fn snapshot(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn serve_ui(args: &[String]) -> Result<(), Box<dyn Error>> {
+fn serve_ui(args: &[String]) -> Result<(), Box<dyn Error>> {
     let options = NativeCliOptions::parse(args)?;
     let api_token = options
         .api_token
@@ -91,6 +84,17 @@ async fn serve_ui(args: &[String]) -> Result<(), Box<dyn Error>> {
         .parse::<SocketAddr>()?;
     let store = NativeSeatConfigStore::new(required(options.config, "--config")?);
     let config = store.load_with_token(api_token.clone())?;
+    let sender = spawn_native_worker(config, api_token)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(serve_ui_server(bind_address, sender))
+}
+
+fn spawn_native_worker(
+    config: seat_client_core::SeatClientConfig,
+    api_token: String,
+) -> Result<mpsc::Sender<NativeBridgeRequest>, Box<dyn Error>> {
     let api = BlockingControlPlaneClient::new(&config.control_plane_url, api_token);
     let app = NativeSeatApp::new(
         config,
@@ -99,9 +103,34 @@ async fn serve_ui(args: &[String]) -> Result<(), Box<dyn Error>> {
         UdpInputPacketSender::bind_any()?,
     )
     .map_err(|error| format!("native app configuration failed: {error:?}"))?;
-    let state = NativeBridgeState {
-        session: Arc::new(Mutex::new(NativeSeatUiSession::new(app))),
-    };
+    let (sender, receiver) = mpsc::channel::<NativeBridgeRequest>();
+    thread::Builder::new()
+        .name("4play-native-seat-worker".to_owned())
+        .spawn(move || run_native_worker(NativeSeatUiSession::new(app), receiver))?;
+    Ok(sender)
+}
+
+fn run_native_worker(
+    mut session: NativeSeatUiSession<
+        BlockingControlPlaneClient,
+        ChildMediaProcessSupervisor,
+        UdpInputPacketSender,
+    >,
+    receiver: mpsc::Receiver<NativeBridgeRequest>,
+) {
+    for request in receiver {
+        let result = session
+            .handle_command(request.command)
+            .map_err(|error| format!("native command failed: {error:?}"));
+        let _ = request.response.send(result);
+    }
+}
+
+async fn serve_ui_server(
+    bind_address: SocketAddr,
+    sender: mpsc::Sender<NativeBridgeRequest>,
+) -> Result<(), Box<dyn Error>> {
+    let state = NativeBridgeState { sender };
     let router = Router::new()
         .route("/", get(ui_index))
         .route("/index.html", get(ui_index))
@@ -183,15 +212,12 @@ fn print_usage(program: &str) {
 
 #[derive(Clone)]
 struct NativeBridgeState {
-    session: Arc<
-        Mutex<
-            NativeSeatUiSession<
-                BlockingControlPlaneClient,
-                ChildMediaProcessSupervisor,
-                UdpInputPacketSender,
-            >,
-        >,
-    >,
+    sender: mpsc::Sender<NativeBridgeRequest>,
+}
+
+struct NativeBridgeRequest {
+    command: NativeUiCommand,
+    response: mpsc::Sender<Result<NativeUiResponse, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,15 +250,19 @@ async fn native_command(
     State(state): State<NativeBridgeState>,
     Json(command): Json<NativeUiCommand>,
 ) -> Response {
-    let result = state
-        .session
-        .lock()
-        .map_err(|error| format!("native session lock failed: {error}"))
-        .and_then(|mut session| {
-            session
-                .handle_command(command)
-                .map_err(|error| format!("native command failed: {error:?}"))
-        });
+    let result = tokio::task::spawn_blocking(move || {
+        let (response, receiver) = mpsc::channel();
+        state
+            .sender
+            .send(NativeBridgeRequest { command, response })
+            .map_err(|error| format!("native worker unavailable: {error}"))?;
+        receiver
+            .recv()
+            .map_err(|error| format!("native worker response failed: {error}"))?
+    })
+    .await
+    .map_err(|error| format!("native bridge task failed: {error}"))
+    .and_then(|result| result);
     match result {
         Ok(response) => Json(response).into_response(),
         Err(message) => (
