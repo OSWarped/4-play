@@ -80,7 +80,7 @@ button:hover {
 
 .token-panel {
   display: grid;
-  grid-template-columns: auto minmax(14rem, 22rem) auto auto;
+  grid-template-columns: auto minmax(12rem, 20rem) auto minmax(10rem, 16rem) auto auto;
   gap: 0.6rem;
   align-items: center;
 }
@@ -187,6 +187,15 @@ pre {
   max-height: 28rem;
   margin-bottom: 0;
   color: #d7e1ff;
+}
+
+code {
+  color: var(--accent);
+}
+
+.command {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 900px) {

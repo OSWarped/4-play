@@ -82,20 +82,22 @@ free. The control plane serves embedded static assets at:
 The v0 console:
 
 - accepts a bearer token in the browser and stores it in local storage;
+- accepts a producer/OBS destination IP and stores it in local storage;
 - shows control-plane health;
 - lists runtime hosts;
 - lists active sessions and player-slot state;
 - lists visible games and basic metadata;
 - includes a production panel for selected sessions;
+- creates production spectator grants for selected sessions;
+- prints receiver URLs and ffplay commands for OBS/producer machines;
 - shows a raw API snapshot for diagnostics.
 
-The v0 console does not yet mutate state or create spectator grants. That is
-intentional: the first milestone proves the admin/producer information
-architecture before adding disruptive controls.
+The v0 console intentionally keeps disruptive controls out of scope. Production
+spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. create/release spectator grants from the production panel;
+1. release spectator grants from the production panel;
 2. open a clean OBS capture window for a selected session;
 3. add session stop/cleanup controls with confirmation;
 4. add game metadata editing;

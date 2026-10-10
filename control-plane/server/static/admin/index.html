@@ -15,6 +15,8 @@
       <div class="token-panel">
         <label for="api-token">API token</label>
         <input id="api-token" type="password" autocomplete="off" placeholder="Bearer token" />
+        <label for="producer-destination">Producer IP</label>
+        <input id="producer-destination" type="text" placeholder="OBS/producer IP" />
         <button id="save-token" type="button">Save</button>
         <button id="refresh" type="button">Refresh</button>
       </div>
@@ -84,12 +86,11 @@
           <div id="production" class="stack">
             <p>
               Select an active session to inspect its media/input ports and open a production
-              spectator workflow. This v0 console does not reserve a spectator grant yet; it
-              documents the operator flow while we keep session control explicit.
+              spectator workflow.
             </p>
             <p class="muted">
-              Future versions should create spectator grants, open clean OBS capture windows, and
-              attach player/match metadata.
+              Production spectator grants do not reserve player slots. Use the generated media
+              target in OBS, ffplay, or another receiver.
             </p>
           </div>
         </article>

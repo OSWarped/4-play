@@ -1,4 +1,5 @@
 const tokenInput = document.querySelector("#api-token");
+const producerDestinationInput = document.querySelector("#producer-destination");
 const saveTokenButton = document.querySelector("#save-token");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
@@ -9,13 +10,18 @@ const state = {
   hosts: [],
   sessions: [],
   activeSessions: [],
+  selectedSession: null,
+  producerDestination: localStorage.getItem("fourplay.producerDestination") || "",
 };
 
 tokenInput.value = state.token;
+producerDestinationInput.value = state.producerDestination;
 
 saveTokenButton.addEventListener("click", () => {
   state.token = tokenInput.value.trim();
+  state.producerDestination = producerDestinationInput.value.trim();
   localStorage.setItem("fourplay.adminToken", state.token);
+  localStorage.setItem("fourplay.producerDestination", state.producerDestination);
   refresh();
 });
 
@@ -94,6 +100,7 @@ function renderActiveSessions() {
 
 function renderActiveSession(session) {
   const element = item();
+  const fullSession = state.sessions.find((candidate) => candidate.id === session.id);
   const slots = (session.player_slots || [])
     .map((slot) => {
       const label = slot.label || `P${slot.player_number}`;
@@ -108,6 +115,7 @@ function renderActiveSession(session) {
     <span class="pill good">${escapeHtml(session.state || "active")}</span>
     <span class="pill">${escapeHtml(session.runtime_host_id || "")}</span>
     <span class="pill">${escapeHtml(String(session.active_spectator_count ?? 0))} spectators</span>
+    <span class="pill">media ${escapeHtml(String(fullSession?.connection_grant?.media_udp_port || "unknown"))}</span>
     <div>${slots}</div>
     <button type="button" data-session-id="${escapeHtml(session.id)}">Production notes</button>
   `;
@@ -139,6 +147,10 @@ function renderGame(game) {
 }
 
 function renderProduction(session) {
+  state.selectedSession = session;
+  const fullSession = state.sessions.find((candidate) => candidate.id === session.id);
+  const mediaPort = fullSession?.connection_grant?.media_udp_port || "unknown";
+  const inputPort = fullSession?.connection_grant?.input_udp_port || "unknown";
   const container = document.querySelector("#production");
   container.innerHTML = `
     <div class="item">
@@ -148,13 +160,68 @@ function renderProduction(session) {
         <code>${escapeHtml(session.runtime_host_id || "")}</code>.
       </p>
       <p class="muted">
-        Production v0: use this panel to identify the match/session. Next step is
-        creating a spectator grant and opening a clean OBS capture window.
+        Create a production spectator grant to reserve a separate media port for OBS
+        or another receiver. This does not reserve a player slot.
       </p>
-      <span class="pill">media ${escapeHtml(String(session.media_udp_port || "unknown"))}</span>
-      <span class="pill">input ${escapeHtml(String(session.input_udp_port || "unknown"))}</span>
+      <span class="pill">player media ${escapeHtml(String(mediaPort))}</span>
+      <span class="pill">input ${escapeHtml(String(inputPort))}</span>
+      <button id="create-spectator-grant" type="button">Create production spectator feed</button>
+      <div id="spectator-grant-result"></div>
     </div>
   `;
+  document
+    .querySelector("#create-spectator-grant")
+    .addEventListener("click", () => createProductionSpectatorGrant(session));
+}
+
+async function createProductionSpectatorGrant(session) {
+  const destination = producerDestinationInput.value.trim();
+  state.producerDestination = destination;
+  localStorage.setItem("fourplay.producerDestination", destination);
+  const result = document.querySelector("#spectator-grant-result");
+  if (!destination) {
+    result.innerHTML = `<p class="pill bad">Producer IP is required.</p>`;
+    return;
+  }
+  try {
+    const grant = await postJson(`/api/v1/sessions/${session.id}/spectators`, {
+      seat_id: "admin-producer",
+      destination_address: destination,
+    });
+    const udpUrl = `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`;
+    const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${udpUrl}"`;
+    result.innerHTML = `
+      <div class="item">
+        <h3>Production spectator grant created</h3>
+        <span class="pill good">grant ${escapeHtml(grant.id)}</span>
+        <span class="pill">runtime ${escapeHtml(grant.runtime_host_id)}</span>
+        <span class="pill">media ${escapeHtml(String(grant.media_udp_port))}</span>
+        <p>Receiver URL:</p>
+        <pre class="command">${escapeHtml(udpUrl)}</pre>
+        <p>ffplay command:</p>
+        <pre class="command">${escapeHtml(ffplay)}</pre>
+      </div>
+    `;
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+async function postJson(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+  }
+  return response.json();
 }
 
 function renderSnapshot(snapshot) {
