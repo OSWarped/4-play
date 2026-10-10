@@ -200,6 +200,17 @@ button:hover,
   color: var(--muted);
 }
 
+.command {
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: rgba(0, 0, 0, 0.22);
+  padding: 0.8rem;
+  color: var(--accent);
+}
+
 @media (max-width: 900px) {
   .topbar,
   .hero,

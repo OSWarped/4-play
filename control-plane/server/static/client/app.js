@@ -256,7 +256,7 @@ function renderSessionDetails(session) {
       <div class="form-actions">
         ${ownDisconnected.map((slot) => `<button type="button" data-rejoin-player="${escapeHtml(String(slot.player_number))}">Rejoin ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
         ${openSlots.map((slot) => `<button type="button" data-join-player="${escapeHtml(String(slot.player_number))}">Join ${escapeHtml(slot.label || `P${slot.player_number}`)}</button>`).join("")}
-        <button type="button">Spectate</button>
+        <button type="button" id="spectate-session">Spectate</button>
       </div>
       <p class="muted">Join/rejoin now reserves and connects a real player slot. Media/input launch is the next client increment.</p>
       <div id="client-action-result"></div>
@@ -272,6 +272,9 @@ function renderSessionDetails(session) {
       joinPlayerSlot(session, Number(button.dataset.rejoinPlayer), true),
     );
   });
+  document
+    .querySelector("#spectate-session")
+    .addEventListener("click", () => spectateSession(session));
 }
 
 async function joinPlayerSlot(session, playerNumber, rejoin) {
@@ -303,6 +306,39 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
         <span class="pill">media ${escapeHtml(String(connected.connection_grant?.media_udp_port || "unknown"))}</span>
         <span class="pill">input ${escapeHtml(String(connected.connection_grant?.input_udp_port || "unknown"))}</span>
         <p class="muted">Slot ownership is live. The next increment will launch or coordinate media and input from this graphical client.</p>
+      </div>
+    `;
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+async function spectateSession(session) {
+  const result = document.querySelector("#client-action-result");
+  syncSettingsFromInputs();
+  if (!state.destinationIp) {
+    result.innerHTML = `<p class="pill bad">Enter this seat's Media IP before spectating.</p>`;
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Creating spectator feed...</p>`;
+  try {
+    const grant = await postJson(`/api/v1/sessions/${session.id}/spectators`, {
+      seat_id: state.seatId,
+      destination_address: state.destinationIp,
+    });
+    const receiverUrl = `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`;
+    const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${receiverUrl}"`;
+    result.innerHTML = `
+      <div class="item">
+        <h3>Spectator feed created</h3>
+        <span class="pill good">media ${escapeHtml(String(grant.media_udp_port))}</span>
+        <span class="pill">${escapeHtml(grant.id)}</span>
+        <p class="muted">Spectating does not reserve a player slot or send input.</p>
+        <p><strong>Receiver URL:</strong></p>
+        <pre class="command">${escapeHtml(receiverUrl)}</pre>
+        <p><strong>ffplay command:</strong></p>
+        <pre class="command">${escapeHtml(ffplay)}</pre>
       </div>
     `;
     await refresh();
