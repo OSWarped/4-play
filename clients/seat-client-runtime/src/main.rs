@@ -89,48 +89,52 @@ fn run_input(command: InputCommand) -> io::Result<()> {
         command.axis_y
     );
     for sequence in 1..=ticks {
-        send_controller_state(
-            &socket,
-            command.destination,
-            command.token,
-            ControllerState {
-                sequence: sequence.try_into().unwrap_or(u32::MAX),
-                buttons: command.buttons,
-                axis_x: command.axis_x,
-                axis_y: command.axis_y,
-                player_slot: command.player,
-                ..ControllerState::default()
-            },
-        )?;
+        send_input_packet(&socket, command.packet(sequence, 0))?;
         thread::sleep(interval);
     }
     if command.stop {
-        send_controller_state(
-            &socket,
-            command.destination,
-            command.token,
-            ControllerState {
-                sequence: ticks.saturating_add(1).try_into().unwrap_or(u32::MAX),
-                flags: FLAG_STOP,
-                player_slot: command.player,
-                ..ControllerState::default()
-            },
-        )?;
+        send_input_packet(&socket, command.packet(ticks.saturating_add(1), FLAG_STOP))?;
         println!("Sent stop packet.");
     }
     Ok(())
 }
 
-fn send_controller_state(
-    socket: &UdpSocket,
+impl InputCommand {
+    fn packet(&self, sequence: u64, flags: u8) -> InputPacket {
+        InputPacket {
+            destination: self.destination,
+            token: self.token,
+            state: ControllerState {
+                sequence: sequence.try_into().unwrap_or(u32::MAX),
+                buttons: self.buttons,
+                axis_x: self.axis_x,
+                axis_y: self.axis_y,
+                flags,
+                player_slot: self.player,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InputPacket {
     destination: SocketAddr,
     token: SessionToken,
     state: ControllerState,
-) -> io::Result<()> {
-    socket.send_to(
-        &AuthenticatedControllerState { token, state }.encode(),
-        destination,
-    )?;
+}
+
+impl InputPacket {
+    fn encode(self) -> [u8; input_protocol::AUTHENTICATED_PACKET_SIZE] {
+        AuthenticatedControllerState {
+            token: self.token,
+            state: self.state,
+        }
+        .encode()
+    }
+}
+
+fn send_input_packet(socket: &UdpSocket, packet: InputPacket) -> io::Result<()> {
+    socket.send_to(&packet.encode(), packet.destination)?;
     Ok(())
 }
 
@@ -433,6 +437,36 @@ mod tests {
             ])
             .unwrap_err()
             .contains("unknown button")
+        );
+    }
+
+    #[test]
+    fn builds_authenticated_input_packet() {
+        let command = InputCommand {
+            destination: "192.0.2.68:42000".parse().unwrap(),
+            token: "00112233-4455-6677-8899-aabbccddeeff".parse().unwrap(),
+            player: 3,
+            seconds: 1,
+            buttons: button::ACTION_1 | button::START,
+            axis_x: -1,
+            axis_y: 1,
+            stop: false,
+        };
+
+        let packet = command.packet(42, 0);
+        assert_eq!(packet.destination, "192.0.2.68:42000".parse().unwrap());
+        assert_eq!(
+            AuthenticatedControllerState::decode(&packet.encode())
+                .unwrap()
+                .state,
+            ControllerState {
+                sequence: 42,
+                buttons: button::ACTION_1 | button::START,
+                axis_x: -1,
+                axis_y: 1,
+                flags: 0,
+                player_slot: 3,
+            }
         );
     }
 
