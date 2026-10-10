@@ -46,6 +46,7 @@ $ControlPlane = Get-4PlaySetting "FOURPLAY_CONTROL_PLANE_URL" "http://192.168.20
 $ApiToken = Get-4PlaySetting "FOURPLAY_SEAT_API_TOKEN" ""
 $SeatAddress = Get-4PlaySetting "FOURPLAY_SEAT_ADDRESS" "192.168.20.10"
 $FfplayPath = Get-4PlaySetting "FOURPLAY_FFPLAY_PATH" ""
+$FfplayScale = Get-4PlaySetting "FOURPLAY_FFPLAY_SCALE" "3"
 $SeatId = Get-4PlaySetting "FOURPLAY_SEAT_ID" "windows-seat-$SeatNumber"
 $ConfigDir = Join-Path $RepoRoot "tmp\native-seat"
 $ConfigPath = Join-Path $ConfigDir "seat-$SeatNumber.json"
@@ -64,7 +65,8 @@ $InitArguments = @(
   "--config", $ConfigPath,
   "--control-plane", $ControlPlane,
   "--seat-id", $SeatId,
-  "--destination-ip", $SeatAddress
+  "--destination-ip", $SeatAddress,
+  "--ffplay-scale", $FfplayScale
 )
 
 if (-not [string]::IsNullOrWhiteSpace($FfplayPath)) {
@@ -79,6 +81,7 @@ Write-Host "Starting 4-Play native seat UI $SeatNumber as $SeatId"
 Write-Host "  native bridge: $NativeSeat"
 Write-Host "  control plane: $ControlPlane"
 Write-Host "  media destination: $SeatAddress"
+Write-Host "  ffplay scale: ${FfplayScale}x"
 Write-Host "  local UI: http://$Bind"
 if (-not [string]::IsNullOrWhiteSpace($FfplayPath)) {
   Write-Host "  ffplay: $FfplayPath"

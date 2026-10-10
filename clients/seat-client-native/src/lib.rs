@@ -237,6 +237,8 @@ pub struct NativeSeatConfigFile {
     pub seat_id: String,
     pub destination_address: String,
     pub ffplay_path: PathBuf,
+    #[serde(default)]
+    pub media_window_scale: Option<u32>,
 }
 
 impl NativeSeatConfigFile {
@@ -246,6 +248,7 @@ impl NativeSeatConfigFile {
             seat_id: config.seat_id.clone(),
             destination_address: config.destination_address.to_string(),
             ffplay_path: config.ffplay_path.clone(),
+            media_window_scale: config.media_window_scale,
         }
     }
 
@@ -262,6 +265,7 @@ impl NativeSeatConfigFile {
                 .map_err(NativeSeatConfigError::Address)?,
             seat_api_token: seat_api_token.into(),
             ffplay_path: self.ffplay_path,
+            media_window_scale: self.media_window_scale,
         };
         config.validate().map_err(NativeSeatConfigError::Config)?;
         Ok(config)
@@ -1069,8 +1073,12 @@ impl<A: ControlPlaneApi> NativeSeatController<A> {
             .api
             .get_session(session_id)
             .map_err(NativeClientError::Api)?;
-        let launch =
-            plan_native_spectator_launch(&session, &grant, self.config.ffplay_path.clone());
+        let launch = plan_native_spectator_launch(
+            &session,
+            &grant,
+            self.config.ffplay_path.clone(),
+            self.config.media_window_scale,
+        );
         self.current_runtime = Some(NativeRuntime::Spectator(launch.clone()));
         Ok(launch)
     }
@@ -1095,9 +1103,13 @@ impl<A: ControlPlaneApi> NativeSeatController<A> {
         session: &Session,
         player_number: u32,
     ) -> Result<NativePlayerLaunchPlan, NativeClientError<A::Error>> {
-        let launch =
-            plan_native_player_launch(session, player_number, self.config.ffplay_path.clone())
-                .map_err(NativeClientError::RuntimePlan)?;
+        let launch = plan_native_player_launch(
+            session,
+            player_number,
+            self.config.ffplay_path.clone(),
+            self.config.media_window_scale,
+        )
+        .map_err(NativeClientError::RuntimePlan)?;
         self.current_runtime = Some(NativeRuntime::Player(launch.clone()));
         Ok(launch)
     }
@@ -1338,11 +1350,16 @@ pub fn plan_native_player_launch(
     session: &Session,
     player_number: u32,
     ffplay_path: PathBuf,
+    media_window_scale: Option<u32>,
 ) -> Result<NativePlayerLaunchPlan, RuntimePlanError> {
     let private_plan = seat_client_core::player_runtime_plan(session, player_number)?;
     Ok(NativePlayerLaunchPlan {
         public_handoff: public_player_handoff(session, player_number)?,
-        media_process: media_process_spec(&private_plan.media, ffplay_path),
+        media_process: media_process_spec(
+            &private_plan.media,
+            ffplay_path,
+            scaled_media_window(session, media_window_scale),
+        ),
         input: private_plan.input.into(),
     })
 }
@@ -1351,20 +1368,51 @@ pub fn plan_native_spectator_launch(
     session: &Session,
     grant: &SpectatorGrant,
     ffplay_path: PathBuf,
+    media_window_scale: Option<u32>,
 ) -> NativeSpectatorLaunchPlan {
     let private_plan = spectator_runtime_plan(grant);
     NativeSpectatorLaunchPlan {
         grant_id: grant.id.clone(),
         public_handoff: public_spectator_handoff(session, grant),
-        media_process: media_process_spec(&private_plan.media, ffplay_path),
+        media_process: media_process_spec(
+            &private_plan.media,
+            ffplay_path,
+            scaled_media_window(session, media_window_scale),
+        ),
     }
 }
 
-pub fn media_process_spec(plan: &MediaReceiverPlan, ffplay_path: PathBuf) -> ProcessSpec {
+pub fn media_process_spec(
+    plan: &MediaReceiverPlan,
+    ffplay_path: PathBuf,
+    window_size: Option<(u32, u32)>,
+) -> ProcessSpec {
+    let mut args = plan.ffplay_args.clone();
+    if let Some((width, height)) = window_size {
+        let receiver_index = args.len().saturating_sub(1);
+        args.splice(
+            receiver_index..receiver_index,
+            [
+                "-x".to_owned(),
+                width.to_string(),
+                "-y".to_owned(),
+                height.to_string(),
+            ],
+        );
+    }
     ProcessSpec {
         program: ffplay_path,
-        args: plan.ffplay_args.clone(),
+        args,
     }
+}
+
+fn scaled_media_window(session: &Session, media_window_scale: Option<u32>) -> Option<(u32, u32)> {
+    media_window_scale.map(|scale| {
+        (
+            session.runtime_profile.width.saturating_mul(scale),
+            session.runtime_profile.height.saturating_mul(scale),
+        )
+    })
 }
 
 impl NativePlayerLaunchPlan {
@@ -1407,7 +1455,8 @@ mod tests {
 
     #[test]
     fn player_launch_plan_keeps_input_token_out_of_process_args_and_status() {
-        let launch = plan_native_player_launch(&session(), 1, PathBuf::from("ffplay.exe")).unwrap();
+        let launch =
+            plan_native_player_launch(&session(), 1, PathBuf::from("ffplay.exe"), None).unwrap();
 
         assert_eq!(launch.media_process.program, PathBuf::from("ffplay.exe"));
         assert!(
@@ -1431,9 +1480,38 @@ mod tests {
     }
 
     #[test]
-    fn spectator_launch_plan_has_media_only_status() {
+    fn player_launch_plan_scales_ffplay_window_when_configured() {
         let launch =
-            plan_native_spectator_launch(&session(), &spectator_grant(), PathBuf::from("ffplay"));
+            plan_native_player_launch(&session(), 1, PathBuf::from("ffplay.exe"), Some(3)).unwrap();
+
+        assert!(
+            launch
+                .media_process
+                .args
+                .windows(2)
+                .any(|pair| pair == ["-x", "960"])
+        );
+        assert!(
+            launch
+                .media_process
+                .args
+                .windows(2)
+                .any(|pair| pair == ["-y", "672"])
+        );
+        assert_eq!(
+            launch.media_process.args.last(),
+            Some(&"udp://0.0.0.0:41000?fifo_size=1000000&overrun_nonfatal=1".to_owned())
+        );
+    }
+
+    #[test]
+    fn spectator_launch_plan_has_media_only_status() {
+        let launch = plan_native_spectator_launch(
+            &session(),
+            &spectator_grant(),
+            PathBuf::from("ffplay"),
+            None,
+        );
         let status = launch.safe_status();
 
         assert_eq!(status.mode, NativeRuntimeMode::Spectator);
@@ -1547,7 +1625,8 @@ mod tests {
 
     #[test]
     fn runtime_supervisor_starts_player_media_and_sends_input_without_process_token() {
-        let launch = plan_native_player_launch(&session(), 2, PathBuf::from("ffplay")).unwrap();
+        let launch =
+            plan_native_player_launch(&session(), 2, PathBuf::from("ffplay"), None).unwrap();
         let token = launch.input.token;
         let mut supervisor = NativeRuntimeSupervisor::new(
             FakeMediaSupervisor::default(),
@@ -1583,8 +1662,12 @@ mod tests {
 
     #[test]
     fn runtime_supervisor_can_start_spectator_without_input() {
-        let launch =
-            plan_native_spectator_launch(&session(), &spectator_grant(), PathBuf::from("ffplay"));
+        let launch = plan_native_spectator_launch(
+            &session(),
+            &spectator_grant(),
+            PathBuf::from("ffplay"),
+            None,
+        );
         let mut supervisor = NativeRuntimeSupervisor::new(
             FakeMediaSupervisor::default(),
             FakeInputSender::default(),
@@ -1606,9 +1689,14 @@ mod tests {
 
     #[test]
     fn runtime_supervisor_stops_previous_runtime_before_switching() {
-        let player = plan_native_player_launch(&session(), 1, PathBuf::from("ffplay")).unwrap();
-        let spectator =
-            plan_native_spectator_launch(&session(), &spectator_grant(), PathBuf::from("ffplay"));
+        let player =
+            plan_native_player_launch(&session(), 1, PathBuf::from("ffplay"), None).unwrap();
+        let spectator = plan_native_spectator_launch(
+            &session(),
+            &spectator_grant(),
+            PathBuf::from("ffplay"),
+            None,
+        );
         let mut supervisor = NativeRuntimeSupervisor::new(
             FakeMediaSupervisor::default(),
             FakeInputSender::default(),
@@ -1627,7 +1715,8 @@ mod tests {
 
     #[test]
     fn runtime_supervisor_sends_stop_flag_to_player_runtime() {
-        let launch = plan_native_player_launch(&session(), 1, PathBuf::from("ffplay")).unwrap();
+        let launch =
+            plan_native_player_launch(&session(), 1, PathBuf::from("ffplay"), None).unwrap();
         let mut supervisor = NativeRuntimeSupervisor::new(
             FakeMediaSupervisor::default(),
             FakeInputSender::default(),
@@ -1737,6 +1826,7 @@ mod tests {
             seat_id: "windows-seat-1".to_owned(),
             destination_address: "not-an-ip".to_owned(),
             ffplay_path: PathBuf::from("ffplay"),
+            media_window_scale: Some(3),
         };
 
         assert!(matches!(
@@ -1752,6 +1842,7 @@ mod tests {
             seat_id: "windows-seat-1".to_owned(),
             destination_address: "192.0.2.10".to_owned(),
             ffplay_path: PathBuf::from("ffplay"),
+            media_window_scale: Some(3),
         };
 
         assert!(matches!(
@@ -2045,6 +2136,7 @@ mod tests {
             destination_address: "192.0.2.10".parse().unwrap(),
             seat_api_token: "seat-token".to_owned(),
             ffplay_path: PathBuf::from("ffplay"),
+            media_window_scale: Some(3),
         }
     }
 

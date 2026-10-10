@@ -577,6 +577,9 @@ The current native backend provides:
   to be transmitted even when the graphical UI only emits key/button transitions;
 - stop handling that sends the runtime stop flag and tears down the supervised
   local media receiver, preventing frozen ffplay windows after `Esc`;
+- configurable FFplay window scaling for the external media receiver. The
+  Windows launcher defaults to `3x`, making arcade-native resolutions playable
+  on modern displays while keeping the browser UI focused for keyboard input;
 - safe JSON view models for games, active sessions, joinable slots, spectator
   counts, previews, and current runtime status.
 - a localhost `serve-ui` bridge that serves the native UI scaffold and forwards
@@ -602,6 +605,13 @@ The config file intentionally does not contain `FOURPLAY_SEAT_API_TOKEN` or any
 session input token. This is a deliberate security boundary. A later packaging
 slice should add pairing or OS credential storage instead of plaintext token
 persistence.
+
+The current media receiver should remain windowed during Version 1 testing.
+Fullscreen FFplay may steal focus from the browser-hosted UI, which would stop
+keyboard events from reaching the JavaScript input bridge. Fullscreen or
+borderless player video should wait until gameplay input is captured by the
+native Rust client rather than by the browser page. Until then, scaled windowed
+FFplay is the safe compromise.
 
 `serve-ui` is an operational development bridge, not the final desktop package.
 It binds to localhost by default, serves the static native UI scaffold, and

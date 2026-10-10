@@ -11,6 +11,7 @@ pub struct SeatClientConfig {
     pub destination_address: IpAddr,
     pub seat_api_token: String,
     pub ffplay_path: PathBuf,
+    pub media_window_scale: Option<u32>,
 }
 
 impl SeatClientConfig {
@@ -23,6 +24,11 @@ impl SeatClientConfig {
         if self.ffplay_path.as_os_str().is_empty() {
             return Err(SeatClientConfigError::MissingFfplayPath);
         }
+        if let Some(scale) = self.media_window_scale
+            && !(1..=8).contains(&scale)
+        {
+            return Err(SeatClientConfigError::InvalidMediaWindowScale);
+        }
         Ok(())
     }
 }
@@ -33,6 +39,7 @@ pub enum SeatClientConfigError {
     InvalidIdentifier { field: &'static str },
     MissingSeatApiToken,
     MissingFfplayPath,
+    InvalidMediaWindowScale,
 }
 
 impl std::fmt::Display for SeatClientConfigError {
@@ -45,6 +52,9 @@ impl std::fmt::Display for SeatClientConfigError {
             ),
             Self::MissingSeatApiToken => write!(formatter, "seat API token is required"),
             Self::MissingFfplayPath => write!(formatter, "ffplay path is required"),
+            Self::InvalidMediaWindowScale => {
+                write!(formatter, "media window scale must be between 1 and 8")
+            }
         }
     }
 }
@@ -335,9 +345,27 @@ mod tests {
             destination_address: "192.0.2.10".parse().unwrap(),
             seat_api_token: "token".to_owned(),
             ffplay_path: PathBuf::from("ffplay.exe"),
+            media_window_scale: Some(3),
         };
 
         assert_eq!(config.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validates_media_window_scale_range() {
+        let config = SeatClientConfig {
+            control_plane_url: "http://192.0.2.68:8080".to_owned(),
+            seat_id: "windows-seat-1".to_owned(),
+            destination_address: "192.0.2.10".parse().unwrap(),
+            seat_api_token: "token".to_owned(),
+            ffplay_path: PathBuf::from("ffplay.exe"),
+            media_window_scale: Some(99),
+        };
+
+        assert_eq!(
+            config.validate(),
+            Err(SeatClientConfigError::InvalidMediaWindowScale)
+        );
     }
 
     #[test]

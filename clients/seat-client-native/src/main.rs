@@ -50,6 +50,12 @@ fn init_config(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ffplay_path
                 .unwrap_or_else(|| default_ffplay_path().to_owned()),
         ),
+        media_window_scale: Some(parse_media_scale(
+            options
+                .ffplay_scale
+                .or_else(|| env::var("FOURPLAY_FFPLAY_SCALE").ok())
+                .unwrap_or_else(|| "3".to_owned()),
+        )?),
     };
     store.save_file(&config)?;
     println!(
@@ -169,6 +175,7 @@ struct NativeCliOptions {
     seat_id: Option<String>,
     destination_address: Option<String>,
     ffplay_path: Option<String>,
+    ffplay_scale: Option<String>,
     api_token: Option<String>,
     bind_address: Option<String>,
 }
@@ -190,6 +197,7 @@ impl NativeCliOptions {
                     options.destination_address = Some(value(args, &mut index, option)?);
                 }
                 "--ffplay-path" => options.ffplay_path = Some(value(args, &mut index, option)?),
+                "--ffplay-scale" => options.ffplay_scale = Some(value(args, &mut index, option)?),
                 "--api-token" => options.api_token = Some(value(args, &mut index, option)?),
                 "--bind" => options.bind_address = Some(value(args, &mut index, option)?),
                 "-h" | "--help" => return Err("help requested".to_owned()),
@@ -198,6 +206,17 @@ impl NativeCliOptions {
         }
         Ok(options)
     }
+}
+
+fn parse_media_scale(value: String) -> Result<u32, Box<dyn Error>> {
+    let scale = value
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("--ffplay-scale must be a number between 1 and 8, got '{value}'"))?;
+    if !(1..=8).contains(&scale) {
+        return Err(format!("--ffplay-scale must be between 1 and 8, got {scale}").into());
+    }
+    Ok(scale)
 }
 
 fn value(args: &[String], index: &mut usize, option: &str) -> Result<String, String> {
@@ -224,7 +243,7 @@ fn default_ffplay_path() -> &'static str {
 
 fn print_usage(program: &str) {
     println!(
-        "Usage:\n  {program} init-config --config <path> --control-plane <url> --seat-id <id> --destination-ip <seat-ip> [--ffplay-path <path>]\n  {program} snapshot --config <path> [--api-token <token>]\n  {program} serve-ui --config <path> [--api-token <token>] [--bind 127.0.0.1:40704]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token for snapshot and serve-ui."
+        "Usage:\n  {program} init-config --config <path> --control-plane <url> --seat-id <id> --destination-ip <seat-ip> [--ffplay-path <path>] [--ffplay-scale <1-8>]\n  {program} snapshot --config <path> [--api-token <token>]\n  {program} serve-ui --config <path> [--api-token <token>] [--bind 127.0.0.1:40704]\n\nEnvironment:\n  FOURPLAY_SEAT_API_TOKEN     Seat control-plane bearer token for snapshot and serve-ui.\n  FOURPLAY_FFPLAY_SCALE       Default media window scale for init-config; defaults to 3."
     );
 }
 
@@ -308,11 +327,15 @@ mod tests {
             "192.0.2.10".to_owned(),
             "--ffplay-path".to_owned(),
             "ffplay-custom".to_owned(),
+            "--ffplay-scale".to_owned(),
+            "4".to_owned(),
         ])
         .unwrap();
 
         assert_eq!(options.config, Some("seat.json".to_owned()));
         assert_eq!(options.ffplay_path, Some("ffplay-custom".to_owned()));
+        assert_eq!(options.ffplay_scale, Some("4".to_owned()));
+        assert_eq!(parse_media_scale("4".to_owned()).unwrap(), 4);
     }
 
     #[test]

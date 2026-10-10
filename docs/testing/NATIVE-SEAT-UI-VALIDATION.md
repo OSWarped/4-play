@@ -28,6 +28,13 @@ If needed, set the FFplay path:
 $env:FOURPLAY_FFPLAY_PATH = "C:\path\to\ffplay.exe"
 ```
 
+The native launcher defaults to a 3x FFplay window scale. Override it only if
+the window is too small or too large:
+
+```powershell
+$env:FOURPLAY_FFPLAY_SCALE = "4"
+```
+
 ## Launch
 
 ```powershell
@@ -50,7 +57,8 @@ http://127.0.0.1:40704
 ## Validate play
 
 1. Click **Start** on a known-good game such as TMNT.
-2. FFplay opens and receives media.
+2. FFplay opens, receives media, and appears scaled larger than the original
+   arcade resolution.
 3. The UI status changes to player mode.
 4. Keyboard input works:
    - `W/A/S/D` or arrow keys move.

@@ -97,6 +97,8 @@ foundation:
 - a media process supervisor for ffplay-compatible receivers;
 - in-process authenticated UDP input forwarding, including a backend heartbeat
   for held controller state while a player runtime is active;
+- optional FFplay window scaling so low-resolution arcade video opens at a
+  usable size without forcing fullscreen focus away from the UI;
 - an app facade for refresh, start, join, rejoin, spectate, join-from-spectator,
   leave, stop, status, and controller-state send operations;
 - JSON view models for game cards, active session cards, joinable player slots,
@@ -139,3 +141,9 @@ state at a short interval. This preserves continuous walking and held attacks
 without requiring the browser layer to spam HTTP requests. Stop commands also
 shut down the supervised media receiver after sending the player stop flag, so
 the local ffplay window should not remain frozen on the last frame.
+
+During the browser-hosted development bridge, FFplay should not default to
+fullscreen. Keyboard capture still belongs to the browser UI, so a fullscreen
+media window can steal focus and break gameplay controls. The launcher therefore
+uses a scaled windowed FFplay receiver by default. Fullscreen/borderless playback
+becomes safe after native keyboard/gamepad capture moves into the Rust client.
