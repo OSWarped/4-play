@@ -215,3 +215,6 @@ physical-table observations: control ergonomics, audio isolation, and recovery
 behavior during longer family/party use.
 Use `docs/testing/PHASE-3-PHYSICAL-CHECKLIST.md` for the final observation pass
 and `docs/testing/PHASE-3-CLOSEOUT-TEMPLATE.md` when marking Phase 3 complete.
+Client UI workflow planning has started in `docs/design/CLIENT-UI-WORKFLOW.md`;
+that workflow should drive eventual technology selection rather than assuming a
+stack upfront.
