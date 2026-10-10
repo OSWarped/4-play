@@ -311,6 +311,20 @@ button.danger:hover {
   color: var(--warn);
 }
 
+.runbook-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.runbook-card {
+  align-content: start;
+}
+
+.runbook-card pre {
+  max-height: 14rem;
+}
+
 .metadata-editor {
   margin-top: 1rem;
 }

@@ -1572,6 +1572,7 @@ mod tests {
         assert!(script_body.contains("Stale >10m"));
         assert!(script_body.contains("Request stale cleanup"));
         assert!(script_body.contains("Request stop"));
+        assert!(script_body.contains("Strict idle smoke"));
         assert!(script_body.contains("Release production spectator feed"));
         assert!(script_body.contains("Stop session"));
         assert!(script_body.contains("/admin/capture?"));

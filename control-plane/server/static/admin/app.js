@@ -28,6 +28,7 @@ saveTokenButton.addEventListener("click", () => {
 
 refreshButton.addEventListener("click", refresh);
 gameFilter.addEventListener("input", renderGames);
+renderOperationsRunbook();
 
 function authHeaders() {
   if (!state.token) return {};
@@ -227,6 +228,87 @@ function renderCleanupResult(cleanup) {
           : `<p class="muted">No stale non-terminal sessions needed cleanup.</p>`
       }
     </div>
+  `;
+}
+
+function renderOperationsRunbook() {
+  const container = document.querySelector("#operations-runbook");
+  if (!container) return;
+  const steps = [
+    {
+      title: "Cleanup + smoke",
+      description: "Gracefully clean stale sessions, then run the normal Phase 3 smoke check.",
+      command: `cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \\
+FOURPLAY_SEAT_API_TOKEN=<seat-api-token> \\
+tools/phase-3-cleanup-sessions.sh --smoke`,
+    },
+    {
+      title: "Strict idle smoke",
+      description: "Use before/after physical table testing when no sessions should be active.",
+      command: `cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \\
+FOURPLAY_SEAT_API_TOKEN=<seat-api-token> \\
+FOURPLAY_PHASE3_STRICT_IDLE=1 \\
+FOURPLAY_PHASE3_STRICT_METADATA=1 \\
+tools/phase-3-systemd-smoke.sh`,
+    },
+    {
+      title: "Diagnostics bundle",
+      description: "Collect the server state, listeners, services, child processes, and recent logs.",
+      command: `cd ~/src/4-play
+tools/phase-3-diagnostics.sh`,
+    },
+    {
+      title: "Soak monitor",
+      description: "Observe a family/party play session without controlling games or seats.",
+      command: `cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \\
+FOURPLAY_SEAT_API_TOKEN=<seat-api-token> \\
+tools/phase-3-soak-monitor.sh \\
+  --seconds 7200 \\
+  --sample-seconds 30`,
+    },
+    {
+      title: "Acceptance check",
+      description: "Create a compact acceptance artifact after a soak run.",
+      command: `cd ~/src/4-play
+FOURPLAY_CONTROL_PLANE_URL=http://127.0.0.1:8080 \\
+FOURPLAY_SEAT_API_TOKEN=<seat-api-token> \\
+tools/phase-3-acceptance-check.sh \\
+  --soak-results /tmp/4play-phase-3-soak-YYYYMMDD-HHMMSS`,
+    },
+  ];
+  container.innerHTML = `
+    <p class="muted">
+      These commands are intentionally shown before browser execution is wired in. Run them from SSH on the Linux server.
+    </p>
+    <div class="runbook-grid">
+      ${steps.map(renderRunbookStep).join("")}
+    </div>
+  `;
+  container.querySelectorAll("[data-copy-command]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const index = Number(button.dataset.copyCommand || -1);
+      const command = steps[index]?.command;
+      if (!command) return;
+      await navigator.clipboard.writeText(command);
+      button.textContent = "Copied";
+      window.setTimeout(() => {
+        button.textContent = "Copy";
+      }, 1400);
+    });
+  });
+}
+
+function renderRunbookStep(step, index) {
+  return `
+    <article class="item runbook-card">
+      <h3>${escapeHtml(step.title)}</h3>
+      <p class="muted">${escapeHtml(step.description)}</p>
+      <pre class="command">${escapeHtml(step.command)}</pre>
+      <button type="button" data-copy-command="${escapeHtml(String(index))}">Copy</button>
+    </article>
   `;
 }
 

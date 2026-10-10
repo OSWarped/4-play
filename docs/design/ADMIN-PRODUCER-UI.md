@@ -102,6 +102,8 @@ The v0 console:
 - summarizes session diagnostics for active, stopping, failed, and stale sessions;
 - requests stop for stale non-terminal sessions from diagnostics;
 - requests a graceful stale-session cleanup and reports structured results;
+- shows copyable Phase 3 operations commands for cleanup, smoke, diagnostics,
+  soak monitoring, and acceptance artifacts;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console gates disruptive controls behind confirmation prompts. Production
@@ -303,6 +305,24 @@ than the configured threshold and returns structured requested/skipped results.
 It does not kill processes directly; the runtime host remains responsible for
 orderly emulator, encoder, virtual-controller, and temporary-resource cleanup.
 
+## Phase 3 operations runbook
+
+The console includes a copyable Phase 3 runbook panel for the commands that are
+still intentionally executed over SSH:
+
+- cleanup with smoke;
+- strict idle smoke;
+- diagnostics bundle;
+- soak monitor;
+- acceptance check with soak artifacts.
+
+This gives operators one place to find the canonical commands while preserving a
+safe boundary: the browser shows and copies commands, but does not yet run shell
+scripts on the server. Future script-backed endpoints should return structured
+artifacts and should keep destructive or disruptive operations behind explicit
+confirmation prompts. The client-served runbook must use placeholders such as
+`<seat-api-token>` instead of embedding live bearer tokens.
+
 ## Relationship to existing tools
 
 The admin app can initially wrap existing APIs and scripts:
@@ -315,7 +335,8 @@ The admin app can initially wrap existing APIs and scripts:
 - spectator grants for production feeds.
 
 Over time, script-backed operations should become first-class API endpoints
-with structured results.
+with structured results. The browser console should be a control surface, not a
+shell emulator.
 
 ## Technology implications
 
