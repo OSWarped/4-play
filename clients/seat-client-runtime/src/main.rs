@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    env, io,
+    env, fs, io,
     net::{SocketAddr, UdpSocket},
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -16,7 +16,7 @@ use crossterm::{
 use input_protocol::{
     AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
 };
-use seat_client_core::media_receiver_plan;
+use seat_client_core::{media_receiver_plan, public_player_handoff, public_spectator_handoff};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeConfig {
@@ -29,6 +29,8 @@ enum RuntimeCommand {
     Media { port: u16 },
     Input(InputCommand),
     Keyboard(KeyboardCommand),
+    PublicPlayerHandoff(PublicPlayerHandoffCommand),
+    PublicSpectatorHandoff(PublicSpectatorHandoffCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +51,18 @@ struct KeyboardCommand {
     token: SessionToken,
     player: u8,
     debug: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublicPlayerHandoffCommand {
+    session_json: PathBuf,
+    player: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublicSpectatorHandoffCommand {
+    session_json: PathBuf,
+    spectator_grant_json: PathBuf,
 }
 
 fn main() {
@@ -87,6 +101,8 @@ fn run(config: RuntimeConfig) -> io::Result<()> {
         }
         RuntimeCommand::Input(command) => run_input(command),
         RuntimeCommand::Keyboard(command) => run_keyboard(command),
+        RuntimeCommand::PublicPlayerHandoff(command) => run_public_player_handoff(command),
+        RuntimeCommand::PublicSpectatorHandoff(command) => run_public_spectator_handoff(command),
     }
 }
 
@@ -321,6 +337,32 @@ fn spawn_ffplay(path: &PathBuf, args: &[String]) -> io::Result<Child> {
     Command::new(path).args(args).stdin(Stdio::null()).spawn()
 }
 
+fn run_public_player_handoff(command: PublicPlayerHandoffCommand) -> io::Result<()> {
+    let session = read_json_file::<control_protocol::Session>(&command.session_json)?;
+    let handoff = public_player_handoff(&session, command.player)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    print_json(&handoff)
+}
+
+fn run_public_spectator_handoff(command: PublicSpectatorHandoffCommand) -> io::Result<()> {
+    let session = read_json_file::<control_protocol::Session>(&command.session_json)?;
+    let grant = read_json_file::<control_protocol::SpectatorGrant>(&command.spectator_grant_json)?;
+    let handoff = public_spectator_handoff(&session, &grant);
+    print_json(&handoff)
+}
+
+fn read_json_file<T: serde::de::DeserializeOwned>(path: &PathBuf) -> io::Result<T> {
+    let raw = fs::read_to_string(path)?;
+    serde_json::from_str(&raw).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn print_json<T: serde::Serialize>(value: &T) -> io::Result<()> {
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    println!("{json}");
+    Ok(())
+}
+
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, String> {
     let mut args = args.into_iter().peekable();
     let mut ffplay_path = env::var("FOURPLAY_FFPLAY_PATH")
@@ -430,6 +472,49 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<RuntimeConfig, S
                 debug,
             })
         }
+        "handoff-player" => {
+            let mut session_json = None;
+            let mut player = None;
+            while let Some(option) = args.next() {
+                match option.as_str() {
+                    "--session-json" => {
+                        session_json = Some(PathBuf::from(value(&mut args, &option)?));
+                    }
+                    "--player" => {
+                        player = Some(parse_player_u32(value(&mut args, &option)?)?);
+                    }
+                    "--help" | "-h" => return Err("help requested".to_owned()),
+                    other => return Err(format!("unknown option {other}")),
+                }
+            }
+            RuntimeCommand::PublicPlayerHandoff(PublicPlayerHandoffCommand {
+                session_json: session_json
+                    .ok_or_else(|| "missing --session-json <path>".to_owned())?,
+                player: player.ok_or_else(|| "missing --player <player-number>".to_owned())?,
+            })
+        }
+        "handoff-spectator" => {
+            let mut session_json = None;
+            let mut spectator_grant_json = None;
+            while let Some(option) = args.next() {
+                match option.as_str() {
+                    "--session-json" => {
+                        session_json = Some(PathBuf::from(value(&mut args, &option)?));
+                    }
+                    "--spectator-grant-json" => {
+                        spectator_grant_json = Some(PathBuf::from(value(&mut args, &option)?));
+                    }
+                    "--help" | "-h" => return Err("help requested".to_owned()),
+                    other => return Err(format!("unknown option {other}")),
+                }
+            }
+            RuntimeCommand::PublicSpectatorHandoff(PublicSpectatorHandoffCommand {
+                session_json: session_json
+                    .ok_or_else(|| "missing --session-json <path>".to_owned())?,
+                spectator_grant_json: spectator_grant_json
+                    .ok_or_else(|| "missing --spectator-grant-json <path>".to_owned())?,
+            })
+        }
         "--help" | "-h" => return Err("help requested".to_owned()),
         other => return Err(format!("unknown command {other}")),
     };
@@ -469,6 +554,19 @@ fn parse_player(value: String) -> Result<u8, String> {
         .and_then(|player| {
             if player == 0 {
                 Err("player number must be greater than zero".to_owned())
+            } else {
+                Ok(player)
+            }
+        })
+}
+
+fn parse_player_u32(value: String) -> Result<u32, String> {
+    value
+        .parse::<u32>()
+        .map_err(|_| format!("invalid player number {value}"))
+        .and_then(|player| {
+            if player == 0 || player > u32::from(u8::MAX) {
+                Err("player number must be between 1 and 255".to_owned())
             } else {
                 Ok(player)
             }
@@ -531,7 +629,7 @@ fn value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String
 
 fn usage(program: &str) -> String {
     format!(
-        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--buttons <names>] [--axis-x <-1|0|1>] [--axis-y <-1|0|1>] [--stop]\n  {program} keyboard --destination <host:port> --token <uuid> --player <number> [--debug-input]\n\nInput buttons:\n  action1/b1/attack, action2/b2/jump, action3/b3, action4/b4, action5/b5, action6/b6, coin/select, start\n\nKeyboard map:\n  W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start; Esc stops.\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
+        "Usage:\n  {program} media --port <udp-port> [--ffplay-path <path>]\n  {program} input --destination <host:port> --token <uuid> --player <number> [--seconds <seconds>] [--buttons <names>] [--axis-x <-1|0|1>] [--axis-y <-1|0|1>] [--stop]\n  {program} keyboard --destination <host:port> --token <uuid> --player <number> [--debug-input]\n  {program} handoff-player --session-json <path> --player <number>\n  {program} handoff-spectator --session-json <path> --spectator-grant-json <path>\n\nInput buttons:\n  action1/b1/attack, action2/b2/jump, action3/b3, action4/b4, action5/b5, action6/b6, coin/select, start\n\nKeyboard map:\n  W/A/S/D move; J/K/L high attacks; M/,/. low attacks; 1 coin; 2 start; Esc stops.\n\nEnvironment:\n  FOURPLAY_FFPLAY_PATH    Default ffplay executable path."
     )
 }
 
@@ -675,6 +773,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_public_player_handoff_command() {
+        let config = parse_args([
+            "handoff-player".to_owned(),
+            "--session-json".to_owned(),
+            "session.json".to_owned(),
+            "--player".to_owned(),
+            "2".to_owned(),
+        ])
+        .unwrap();
+
+        match config.command {
+            RuntimeCommand::PublicPlayerHandoff(command) => {
+                assert_eq!(command.session_json, PathBuf::from("session.json"));
+                assert_eq!(command.player, 2);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_public_spectator_handoff_command() {
+        let config = parse_args([
+            "handoff-spectator".to_owned(),
+            "--session-json".to_owned(),
+            "session.json".to_owned(),
+            "--spectator-grant-json".to_owned(),
+            "grant.json".to_owned(),
+        ])
+        .unwrap();
+
+        match config.command {
+            RuntimeCommand::PublicSpectatorHandoff(command) => {
+                assert_eq!(command.session_json, PathBuf::from("session.json"));
+                assert_eq!(command.spectator_grant_json, PathBuf::from("grant.json"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
     fn builds_authenticated_input_packet() {
         let command = InputCommand {
             destination: "192.0.2.68:42000".parse().unwrap(),
@@ -733,5 +871,6 @@ mod tests {
     fn usage_mentions_media_command() {
         assert!(usage("seat-client-runtime").contains("media --port"));
         assert!(usage("seat-client-runtime").contains("input --destination"));
+        assert!(usage("seat-client-runtime").contains("handoff-player"));
     }
 }

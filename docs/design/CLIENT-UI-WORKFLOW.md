@@ -519,6 +519,18 @@ backend may hold the private `Session`/`ConnectionGrant` in memory long enough
 to start media and input forwarding, but it should expose only sanitized runtime
 status back to the web UI.
 
+`seat-client-runtime` includes diagnostic handoff-preview commands that read
+private JSON from files and print only the public/sanitized handoff:
+
+```powershell
+cargo run -p seat-client-runtime -- handoff-player --session-json .\session.json --player 1
+cargo run -p seat-client-runtime -- handoff-spectator --session-json .\session.json --spectator-grant-json .\grant.json
+```
+
+These commands are not a final IPC design. They are a testable bridge that
+keeps the public/private boundary explicit while we develop the packaged client
+backend.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details

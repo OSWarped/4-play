@@ -957,9 +957,12 @@ dependencies = [
 name = "seat-client-runtime"
 version = "0.1.0"
 dependencies = [
+ "control-protocol",
  "crossterm",
  "input-protocol",
  "seat-client-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
