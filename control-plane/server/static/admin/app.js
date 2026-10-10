@@ -164,6 +164,16 @@ function renderDiagnostics() {
       }
     </div>
   `;
+  container.querySelectorAll("[data-stop-diagnostic-session]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const session = state.sessions.find(
+        (candidate) => candidate.id === button.dataset.stopDiagnosticSession,
+      );
+      if (session) {
+        stopSession(session);
+      }
+    });
+  });
 }
 
 function terminalSessionStates() {
@@ -188,6 +198,7 @@ function diagnosticMetric(label, value, description) {
 function renderDiagnosticSession(session) {
   const updated = Number(session.updated_unix_ms || 0);
   const age = updated ? `${Math.round((Date.now() - updated) / 1000)}s since update` : "unknown age";
+  const canStop = !terminalSessionStates().has(session.state);
   return `
     <div class="item">
       <h3>${escapeHtml(session.game_id || session.id)}</h3>
@@ -195,6 +206,11 @@ function renderDiagnosticSession(session) {
       <span class="pill">${escapeHtml(session.runtime_host_id || "unknown host")}</span>
       <span class="pill">${escapeHtml(age)}</span>
       <p class="muted">${escapeHtml(session.failure_reason || "No failure reason recorded.")}</p>
+      ${
+        canStop
+          ? `<button class="danger" type="button" data-stop-diagnostic-session="${escapeHtml(session.id)}">Request stop</button>`
+          : ""
+      }
     </div>
   `;
 }
@@ -609,7 +625,8 @@ async function releaseProductionSpectatorGrant(grant) {
 }
 
 async function stopSession(session) {
-  const result = document.querySelector("#session-action-result");
+  const result =
+    document.querySelector("#session-action-result") || document.querySelector("#diagnostics");
   const label = session.display_name || session.game_id || session.id;
   const confirmed = window.confirm(
     `Stop ${label}?\n\nThis will end gameplay for every connected player and spectator in this session.`,
@@ -617,20 +634,20 @@ async function stopSession(session) {
   if (!confirmed) {
     return;
   }
-  result.innerHTML = `<p class="pill warn">Stopping ${escapeHtml(label)}...</p>`;
+  result.insertAdjacentHTML("afterbegin", `<p class="pill warn">Stopping ${escapeHtml(label)}...</p>`);
   try {
     const updated = await postJson(`/api/v1/sessions/${session.id}/stop`);
-    result.innerHTML = `
+    result.insertAdjacentHTML("afterbegin", `
       <div class="item">
         <h3>Session stop requested</h3>
         <span class="pill warn">${escapeHtml(updated.state || "stopping")}</span>
         <span class="pill">${escapeHtml(updated.id || session.id)}</span>
         <p class="muted">The runtime host will shut down the emulator and release session resources.</p>
       </div>
-    `;
+    `);
     await refresh();
   } catch (error) {
-    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+    result.insertAdjacentHTML("afterbegin", `<p class="pill bad">${escapeHtml(String(error))}</p>`);
   }
 }
 

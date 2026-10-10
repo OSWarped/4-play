@@ -98,6 +98,7 @@ The v0 console:
 - requests active session shutdown with a confirmation prompt;
 - stores local producer notes for selected sessions;
 - summarizes session diagnostics for active, stopping, failed, and stale sessions;
+- requests stop for stale non-terminal sessions from diagnostics;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console intentionally keeps disruptive controls out of scope. Production
@@ -107,7 +108,7 @@ Next admin/producer increments:
 
 1. add artwork preview thumbnails and replacement warnings;
 2. persist event/match notes server-side;
-3. add cleanup execution/results inside the console.
+3. add deeper cleanup execution/results inside the console.
 
 ## Game metadata workflow
 
@@ -269,8 +270,10 @@ session APIs:
 - non-terminal sessions with no updates for more than ten minutes.
 
 This gives an operator a quick triage view before reaching for cleanup tools.
-The next increment is to wire cleanup execution and structured cleanup results
-directly into the console.
+For stale non-terminal sessions, the diagnostics list exposes **Request stop**,
+which uses the same confirmed stop-session workflow as the production panel.
+The next increment is to wire deeper cleanup execution and structured cleanup
+results directly into the console.
 
 ## Relationship to existing tools
 
