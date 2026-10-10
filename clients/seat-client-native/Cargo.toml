@@ -1,0 +1,13 @@
+[package]
+name = "seat-client-native"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+control-protocol = { path = "../../shared/control-protocol" }
+input-protocol = { path = "../../shared/input-protocol" }
+seat-client-core = { path = "../seat-client-core" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
