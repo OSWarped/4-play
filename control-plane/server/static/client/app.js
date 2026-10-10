@@ -1,5 +1,6 @@
 const tokenInput = document.querySelector("#api-token");
 const seatInput = document.querySelector("#seat-id");
+const destinationInput = document.querySelector("#destination-ip");
 const saveSettingsButton = document.querySelector("#save-settings");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
@@ -7,18 +8,22 @@ const gameFilter = document.querySelector("#game-filter");
 const state = {
   token: localStorage.getItem("fourplay.clientToken") || "",
   seatId: localStorage.getItem("fourplay.seatId") || "windows-seat-1",
+  destinationIp: localStorage.getItem("fourplay.destinationIp") || "",
   games: [],
   sessions: [],
 };
 
 tokenInput.value = state.token;
 seatInput.value = state.seatId;
+destinationInput.value = state.destinationIp;
 
 saveSettingsButton.addEventListener("click", () => {
   state.token = tokenInput.value.trim();
   state.seatId = seatInput.value.trim() || "windows-seat-1";
+  state.destinationIp = destinationInput.value.trim();
   localStorage.setItem("fourplay.clientToken", state.token);
   localStorage.setItem("fourplay.seatId", state.seatId);
+  localStorage.setItem("fourplay.destinationIp", state.destinationIp);
   refresh();
 });
 
@@ -41,6 +46,22 @@ async function fetchJson(path) {
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
+  }
+  return response.json();
+}
+
+async function postJson(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const responseBody = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${responseBody}`);
   }
   return response.json();
 }
@@ -174,12 +195,53 @@ function renderGameDetails(game) {
       <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
       <p><strong>Controls:</strong> ${escapeHtml(metadata.control_notes || "No control notes yet.")}</p>
       <div class="form-actions">
-        <button type="button" data-client-action="start">Start game</button>
+        <button type="button" id="start-game">Start game</button>
         ${running.length ? `<button type="button" data-client-action="running">Show running sessions</button>` : ""}
       </div>
-      <p class="muted">Start/join actions are intentionally stubbed in this first UI slice; the proven terminal seat client remains the gameplay path until the graphical shell owns media and input launch.</p>
+      <p class="muted">Start now requests a real session. Join, rejoin, spectate, and media/input launch are the next client increments.</p>
+      <div id="client-action-result"></div>
     </div>
   `);
+  document.querySelector("#start-game").addEventListener("click", () => startGame(game));
+}
+
+async function startGame(game) {
+  const result = document.querySelector("#client-action-result");
+  syncSettingsFromInputs();
+  if (!state.destinationIp) {
+    result.innerHTML = `<p class="pill bad">Enter this seat's Media IP before starting a game.</p>`;
+    return;
+  }
+  result.innerHTML = `<p class="pill warn">Requesting session...</p>`;
+  try {
+    const session = await postJson("/api/v1/sessions", {
+      game_id: game.id,
+      seat_id: state.seatId,
+      destination_address: state.destinationIp,
+    });
+    result.innerHTML = `
+      <div class="item">
+        <h3>Session requested</h3>
+        <span class="pill good">${escapeHtml(session.state || "allocating")}</span>
+        <span class="pill">${escapeHtml(session.id)}</span>
+        <span class="pill">media ${escapeHtml(String(session.connection_grant?.media_udp_port || "unknown"))}</span>
+        <span class="pill">input ${escapeHtml(String(session.connection_grant?.input_udp_port || "unknown"))}</span>
+        <p class="muted">Gameplay still uses the proven seat-input path until the graphical client owns media/input launch.</p>
+      </div>
+    `;
+    await refresh();
+  } catch (error) {
+    result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  }
+}
+
+function syncSettingsFromInputs() {
+  state.token = tokenInput.value.trim();
+  state.seatId = seatInput.value.trim() || "windows-seat-1";
+  state.destinationIp = destinationInput.value.trim();
+  localStorage.setItem("fourplay.clientToken", state.token);
+  localStorage.setItem("fourplay.seatId", state.seatId);
+  localStorage.setItem("fourplay.destinationIp", state.destinationIp);
 }
 
 function renderSessionDetails(session) {

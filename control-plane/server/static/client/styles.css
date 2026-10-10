@@ -100,7 +100,11 @@ button:hover,
 
 .seat-panel {
   display: grid;
-  grid-template-columns: auto minmax(9rem, 14rem) auto minmax(10rem, 16rem) auto auto;
+  grid-template-columns:
+    auto minmax(9rem, 14rem)
+    auto minmax(8rem, 12rem)
+    auto minmax(10rem, 16rem)
+    auto auto;
   align-items: center;
   gap: 0.6rem;
 }
