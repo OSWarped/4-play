@@ -440,6 +440,15 @@ spectate(sessionId, seatId, destinationAddress)
 This keeps the UI flow portable while moving native process and input work out
 of the browser sandbox.
 
+The first Rust foundation for this direction is `clients/seat-client-core`.
+It intentionally has no desktop-framework dependency yet. It defines:
+
+- validated seat-client configuration;
+- user-facing seat actions;
+- media receiver plans and low-latency FFplay arguments;
+- input forwarding plans derived from control-plane connection grants;
+- a `SeatRuntimeBackend` trait for the future native process/input owner.
+
 ### UI v1 — arcade browser
 
 - artwork-backed game cards/details

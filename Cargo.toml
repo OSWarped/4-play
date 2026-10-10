@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "clients/seat-client-core",
     "clients/seat-input",
     "control-plane/server",
     "runtime/host-agent",
