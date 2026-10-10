@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>4-Play Production Capture</title>
+    <link rel="stylesheet" href="/admin/styles.css" />
+  </head>
+  <body class="capture-body">
+    <main class="capture-shell">
+      <section class="capture-card" aria-label="Production capture helper">
+        <p class="eyebrow">4-Play Production</p>
+        <h1 id="capture-title">Production Feed</h1>
+        <p id="capture-session" class="muted">No session selected.</p>
+
+        <div class="capture-grid">
+          <article>
+            <span class="label">Receiver URL</span>
+            <pre id="capture-url" class="command">Waiting for media port...</pre>
+          </article>
+          <article>
+            <span class="label">OBS Media Source</span>
+            <ol class="muted">
+              <li>Add a Media Source.</li>
+              <li>Uncheck Local File.</li>
+              <li>Paste the receiver URL into Input.</li>
+              <li>Enable Restart playback when source becomes active.</li>
+            </ol>
+          </article>
+        </div>
+
+        <footer class="capture-footer">
+          <span id="capture-port" class="pill">media unknown</span>
+          <span id="capture-grant" class="pill">grant unknown</span>
+        </footer>
+      </section>
+    </main>
+
+    <script src="/admin/capture.js" defer></script>
+  </body>
+</html>

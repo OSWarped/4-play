@@ -91,6 +91,7 @@ The v0 console:
 - creates production spectator grants for selected sessions;
 - releases production spectator grants when the producer is done with a feed;
 - prints receiver URLs and ffplay commands for OBS/producer machines;
+- opens a clean production capture helper page for OBS setup/overlay use;
 - shows a raw API snapshot for diagnostics.
 
 The v0 console intentionally keeps disruptive controls out of scope. Production
@@ -98,10 +99,9 @@ spectator grants are safe because they do not reserve player slots.
 
 Next admin/producer increments:
 
-1. open a clean OBS capture window for a selected session;
-2. add session stop/cleanup controls with confirmation;
-3. add game metadata editing;
-4. add event/match notes.
+1. add session stop/cleanup controls with confirmation;
+2. add game metadata editing;
+3. add event/match notes.
 
 ## Production spectator feed
 
@@ -116,9 +116,11 @@ The production spectator feed should be intentionally capture-friendly:
 - optional future overlay region for player names, scores, round labels, or
   bracket context.
 
-The first version may use the same underlying spectator media grants already
-supported by the control plane. The important product behavior is that the
-admin can choose a session and open a clean feed that OBS can capture.
+The first version uses the same underlying spectator media grants already
+supported by the control plane. OBS receives gameplay through the generated UDP
+Media Source URL. The admin console also provides a clean `/admin/capture`
+helper page that can be opened in a separate window or OBS Browser Source for
+session identity, setup instructions, and future stream overlays.
 
 ### Validated OBS workflow
 
@@ -136,7 +138,9 @@ Validated operator flow:
 5. Click **Create production spectator feed**.
 6. Copy the generated `udp://0.0.0.0:<port>?fifo_size=1000000&overrun_nonfatal=1`
    URL into an OBS Media Source with **Local File** unchecked.
-7. When the production source is no longer needed, click
+7. Optionally open **Open clean production capture helper** for a clean
+   producer/overlay surface tied to the generated media port.
+8. When the production source is no longer needed, click
    **Release production spectator feed** in the Admin/Producer console.
 
 This validates the first real Admin/Producer production use case: opening a

@@ -273,6 +273,8 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin", get(admin_index))
         .route("/admin/", get(admin_index))
         .route("/admin/app.js", get(admin_script))
+        .route("/admin/capture", get(admin_capture))
+        .route("/admin/capture.js", get(admin_capture_script))
         .route("/admin/styles.css", get(admin_styles))
         .route("/api/v1", get(api_info))
         .merge(protected)
@@ -344,6 +346,20 @@ async fn admin_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/admin/app.js"),
+    )
+}
+
+async fn admin_capture() -> Response {
+    static_response(
+        "text/html; charset=utf-8",
+        include_str!("../static/admin/capture.html"),
+    )
+}
+
+async fn admin_capture_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/admin/capture.js"),
     )
 }
 
@@ -1313,6 +1329,10 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/admin").await;
         let (script_status, script_content_type, script_body) =
             request_bytes(service.clone(), Method::GET, "/admin/app.js").await;
+        let (capture_status, capture_content_type, capture_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/capture").await;
+        let (capture_script_status, capture_script_content_type, capture_script_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/capture.js").await;
         let (styles_status, styles_content_type, styles_body) =
             request_bytes(service, Method::GET, "/admin/styles.css").await;
 
@@ -1333,6 +1353,25 @@ mod tests {
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("fourplay.adminToken"));
         assert!(script_body.contains("Release production spectator feed"));
+        assert!(script_body.contains("/admin/capture?"));
+
+        assert_eq!(capture_status, 200);
+        assert_eq!(
+            capture_content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+        assert!(String::from_utf8(capture_body)
+            .unwrap()
+            .contains("4-Play Production Capture"));
+
+        assert_eq!(capture_script_status, 200);
+        assert_eq!(
+            capture_script_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert!(String::from_utf8(capture_script_body)
+            .unwrap()
+            .contains("capture-title"));
 
         assert_eq!(styles_status, 200);
         assert_eq!(

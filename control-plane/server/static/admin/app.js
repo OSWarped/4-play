@@ -207,6 +207,7 @@ function rememberProductionGrant(grant) {
 function renderProductionGrantResult(result, grant) {
   const udpUrl = `udp://0.0.0.0:${grant.media_udp_port}?fifo_size=1000000&overrun_nonfatal=1`;
   const ffplay = `ffplay -f mpegts -fflags nobuffer -flags low_delay -framedrop -probesize 32768 -analyzeduration 0 "${udpUrl}"`;
+  const captureUrl = productionCaptureUrl(grant);
   result.innerHTML = `
     <div class="item">
       <h3>Production spectator grant created</h3>
@@ -224,12 +225,28 @@ function renderProductionGrantResult(result, grant) {
       </ol>
       <p>ffplay command:</p>
       <pre class="command">${escapeHtml(ffplay)}</pre>
+      <p>
+        <a class="button-link" href="${escapeHtml(captureUrl)}" target="_blank" rel="noreferrer">
+          Open clean production capture helper
+        </a>
+      </p>
       <button id="release-spectator-grant" type="button">Release production spectator feed</button>
     </div>
   `;
   result
     .querySelector("#release-spectator-grant")
     .addEventListener("click", () => releaseProductionSpectatorGrant(grant));
+}
+
+function productionCaptureUrl(grant) {
+  const selected = state.selectedSession;
+  const params = new URLSearchParams({
+    session: grant.session_id,
+    grant: grant.id,
+    port: String(grant.media_udp_port),
+    game: selected?.display_name || selected?.game_id || "Production Feed",
+  });
+  return `/admin/capture?${params.toString()}`;
 }
 
 async function releaseProductionSpectatorGrant(grant) {
