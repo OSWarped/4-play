@@ -268,6 +268,13 @@ those checks are accepted, copy
 [Phase 3 Closeout Template](../testing/PHASE-3-CLOSEOUT-TEMPLATE.md) into a
 dated closeout note and mark Phase 3 complete.
 
+To create a dated closeout draft from an acceptance artifact:
+
+```bash
+tools/phase-3-create-closeout.sh \
+  /tmp/4play-phase-3-acceptance-YYYYMMDD-HHMMSS/acceptance-summary.json
+```
+
 ## Acceptance target
 
 Phase 3 exits when the reference table can:
