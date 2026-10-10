@@ -23,6 +23,7 @@ use control_protocol::{
     SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
     UpdateSessionState,
 };
+use serde_json::{Value, json};
 use store::RuntimeHostStore;
 pub use store::StoreError;
 
@@ -208,13 +209,20 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/games/{game_id}/metadata",
             get(get_game_metadata).put(update_game_metadata),
         )
-        .route("/api/v1/assets/{*asset_path}", get(get_asset).put(put_asset))
+        .route(
+            "/api/v1/assets/{*asset_path}",
+            get(get_asset).put(put_asset),
+        )
         .route(
             "/api/v1/active-sessions",
             get(list_active_session_summaries),
         )
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route("/api/v1/sessions/{session_id}", get(get_session))
+        .route(
+            "/api/v1/sessions/{session_id}/notes",
+            get(get_session_notes).put(update_session_notes),
+        )
         .route(
             "/api/v1/sessions/{session_id}/spectators",
             post(create_spectator_grant),
@@ -678,6 +686,46 @@ async fn get_session(
         .map_err(ApiError::store)
 }
 
+async fn get_session_notes(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    let (notes, updated_unix_ms) = state
+        .runtime_hosts
+        .get_session_notes(session_id.clone())
+        .await
+        .map_err(ApiError::store)?;
+    Ok(Json(json!({
+        "session_id": session_id,
+        "notes": notes,
+        "updated_unix_ms": updated_unix_ms,
+    })))
+}
+
+async fn update_session_notes(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(request): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let notes = request
+        .get("notes")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::bad_request("invalid_session_notes", "notes must be a string"))?
+        .trim()
+        .to_owned();
+    validate_session_notes(&notes)?;
+    let (notes, updated_unix_ms) = state
+        .runtime_hosts
+        .update_session_notes(session_id.clone(), notes, unix_time_ms())
+        .await
+        .map_err(ApiError::store)?;
+    Ok(Json(json!({
+        "session_id": session_id,
+        "notes": notes,
+        "updated_unix_ms": updated_unix_ms,
+    })))
+}
+
 async fn request_session_stop(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<String>,
@@ -1043,6 +1091,25 @@ fn validate_game_metadata(metadata: &GameMetadata) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn validate_session_notes(notes: &str) -> Result<(), ApiError> {
+    if notes.len() > 16_384 {
+        return Err(ApiError::bad_request(
+            "session_notes_too_long",
+            "session notes must not exceed 16384 bytes",
+        ));
+    }
+    if notes
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(ApiError::bad_request(
+            "invalid_session_notes",
+            "session notes must not contain control characters",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_asset_path(field: &str, value: &str) -> Result<(), ApiError> {
     let invalid = value.is_empty()
         || value.len() > 512
@@ -1346,7 +1413,10 @@ mod tests {
         if path.starts_with("/api/v1/") {
             request = request.header("authorization", "Bearer test-seat-token");
         }
-        let response = app.oneshot(request.body(body.into()).unwrap()).await.unwrap();
+        let response = app
+            .oneshot(request.body(body.into()).unwrap())
+            .await
+            .unwrap();
         let status = response.status().as_u16();
         let body = response.into_body().collect().await.unwrap().to_bytes();
         (status, body.to_vec())
@@ -1403,9 +1473,11 @@ mod tests {
             index_content_type.as_deref(),
             Some("text/html; charset=utf-8")
         );
-        assert!(String::from_utf8(index_body)
-            .unwrap()
-            .contains("Admin / Producer Console"));
+        assert!(
+            String::from_utf8(index_body)
+                .unwrap()
+                .contains("Admin / Producer Console")
+        );
 
         assert_eq!(script_status, 200);
         assert_eq!(
@@ -1422,6 +1494,7 @@ mod tests {
         assert!(script_body.contains("Save metadata"));
         assert!(script_body.contains("Player slot metadata"));
         assert!(script_body.contains("Producer notes"));
+        assert!(script_body.contains("Server notes loaded"));
         assert!(script_body.contains("Stale >10m"));
         assert!(script_body.contains("Request stop"));
         assert!(script_body.contains("Release production spectator feed"));
@@ -1433,18 +1506,22 @@ mod tests {
             capture_content_type.as_deref(),
             Some("text/html; charset=utf-8")
         );
-        assert!(String::from_utf8(capture_body)
-            .unwrap()
-            .contains("4-Play Production Capture"));
+        assert!(
+            String::from_utf8(capture_body)
+                .unwrap()
+                .contains("4-Play Production Capture")
+        );
 
         assert_eq!(capture_script_status, 200);
         assert_eq!(
             capture_script_content_type.as_deref(),
             Some("text/javascript; charset=utf-8")
         );
-        assert!(String::from_utf8(capture_script_body)
-            .unwrap()
-            .contains("capture-title"));
+        assert!(
+            String::from_utf8(capture_script_body)
+                .unwrap()
+                .contains("capture-title")
+        );
 
         assert_eq!(styles_status, 200);
         assert_eq!(
@@ -2636,6 +2713,72 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn session_notes_are_persisted_by_session() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let session_id = created["id"].as_str().unwrap();
+        let notes_path = format!("/api/v1/sessions/{session_id}/notes");
+
+        let (initial_status, initial_notes) =
+            request_json(service.clone(), Method::GET, &notes_path, None).await;
+        assert_eq!(initial_status, 200);
+        assert_eq!(initial_notes["notes"], "");
+
+        let (update_status, updated_notes) = request_json(
+            service.clone(),
+            Method::PUT,
+            &notes_path,
+            Some(json!({ "notes": "Winner: Leo\nGood audio sync." })),
+        )
+        .await;
+        assert_eq!(update_status, 200);
+        assert_eq!(updated_notes["notes"], "Winner: Leo\nGood audio sync.");
+
+        let (_, loaded_notes) = request_json(service, Method::GET, &notes_path, None).await;
+        assert_eq!(loaded_notes["notes"], "Winner: Leo\nGood audio sync.");
+    }
+
+    #[tokio::test]
+    async fn session_notes_reject_unknown_sessions_and_invalid_payloads() {
+        let service = app().await.unwrap();
+        let (missing_status, missing) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/sessions/missing/notes",
+            Some(json!({ "notes": "no session" })),
+        )
+        .await;
+        assert_eq!(missing_status, 404);
+        assert_eq!(missing["code"], "session_not_found");
+
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let notes_path = format!("/api/v1/sessions/{}/notes", created["id"].as_str().unwrap());
+        let (invalid_status, invalid) = request_json(
+            service,
+            Method::PUT,
+            &notes_path,
+            Some(json!({ "notes": 42 })),
+        )
+        .await;
+        assert_eq!(invalid_status, 400);
+        assert_eq!(invalid["code"], "invalid_session_notes");
     }
 
     #[tokio::test]

@@ -98,6 +98,7 @@ The v0 console:
 - opens a clean production capture helper page for OBS setup/overlay use;
 - requests active session shutdown with a confirmation prompt;
 - stores local producer notes for selected sessions;
+- persists producer notes on the control plane when the session exists;
 - summarizes session diagnostics for active, stopping, failed, and stale sessions;
 - requests stop for stale non-terminal sessions from diagnostics;
 - shows a raw API snapshot for diagnostics.
@@ -108,7 +109,7 @@ spectator grants are safe because they do not reserve player slots.
 Next admin/producer increments:
 
 1. add asset replacement warnings;
-2. persist event/match notes server-side;
+2. promote session notes into event/match records;
 3. add deeper cleanup execution/results inside the console.
 
 ## Game metadata workflow
@@ -262,10 +263,16 @@ releases runtime resources.
 
 ## Producer notes
 
-The production panel includes local producer notes for a selected session. This
-is intentionally browser-local in v0, using `localStorage`, so producers can
-quickly record match callouts, winners, technical issues, or stream reminders
-without introducing a server-side event model prematurely.
+The production panel includes producer notes for a selected session. Notes are
+stored on the control plane through:
+
+```text
+GET /api/v1/sessions/{session_id}/notes
+PUT /api/v1/sessions/{session_id}/notes
+```
+
+The browser still keeps a local fallback copy so producers can keep typing if
+the session note endpoint is unavailable.
 
 Future persisted notes should attach to an event/match/session record and
 become part of the Admin/Producer bookkeeping workflow.

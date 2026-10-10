@@ -93,6 +93,12 @@ const SCHEMA: &str = "
         detail TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS session_notes (
+        session_id TEXT PRIMARY KEY NOT NULL,
+        notes TEXT NOT NULL,
+        updated_unix_ms INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
 ";
 
 type AssignmentRow = (
@@ -178,6 +184,15 @@ impl RuntimeHostStore {
                         [],
                     )?;
                 }
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS session_notes (
+                        session_id TEXT PRIMARY KEY NOT NULL,
+                        notes TEXT NOT NULL,
+                        updated_unix_ms INTEGER NOT NULL,
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )",
+                    [],
+                )?;
                 Ok(())
             })
             .await
@@ -745,6 +760,78 @@ impl RuntimeHostStore {
             .map_err(StoreError::database)?
             .ok_or(StoreError::SessionNotFound)?;
         stored.into_session()
+    }
+
+    pub async fn get_session_notes(&self, session_id: String) -> Result<(String, u64), StoreError> {
+        let notes_session_id = session_id.clone();
+        let row = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Option<(String, i64)>> {
+                    let exists = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                        [&session_id],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !exists {
+                        return Ok(None);
+                    }
+                    let notes = connection
+                    .query_row(
+                        "SELECT notes, updated_unix_ms FROM session_notes WHERE session_id = ?1",
+                        [&notes_session_id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .optional()?
+                    .unwrap_or_else(|| ("".to_owned(), 0));
+                    Ok(Some(notes))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::SessionNotFound)?;
+        let updated = u64::try_from(row.1)
+            .map_err(|_| StoreError::data("session note timestamp is negative"))?;
+        Ok((row.0, updated))
+    }
+
+    pub async fn update_session_notes(
+        &self,
+        session_id: String,
+        notes: String,
+        now_unix_ms: u64,
+    ) -> Result<(String, u64), StoreError> {
+        let now = to_sql_integer(now_unix_ms, "session notes timestamp")?;
+        let stored_notes = notes.clone();
+        let updated = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<bool> {
+                    let exists = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                        [&session_id],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !exists {
+                        return Ok(false);
+                    }
+                    connection.execute(
+                        "INSERT INTO session_notes (session_id, notes, updated_unix_ms)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(session_id) DO UPDATE SET
+                        notes = excluded.notes,
+                        updated_unix_ms = excluded.updated_unix_ms",
+                        params![session_id, stored_notes, now],
+                    )?;
+                    Ok(true)
+                },
+            )
+            .await
+            .map_err(StoreError::database)?;
+        if !updated {
+            return Err(StoreError::SessionNotFound);
+        }
+        Ok((notes, now_unix_ms))
     }
 
     pub async fn create_spectator_grant(

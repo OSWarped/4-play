@@ -614,6 +614,7 @@ function renderProduction(session) {
   document
     .querySelector("#clear-producer-notes")
     .addEventListener("click", () => clearProducerNotes(session.id));
+  loadSessionNotes(session.id);
 }
 
 function producerNotesForSession(sessionId) {
@@ -627,17 +628,40 @@ function producerNotesKey(sessionId) {
 function saveProducerNotes(sessionId) {
   const notes = document.querySelector("#producer-notes").value.trim();
   localStorage.setItem(producerNotesKey(sessionId), notes);
-  document.querySelector("#producer-notes-result").innerHTML = `
-    <p class="pill good">Notes saved locally</p>
-  `;
+  saveSessionNotes(sessionId, notes);
 }
 
 function clearProducerNotes(sessionId) {
   localStorage.removeItem(producerNotesKey(sessionId));
   document.querySelector("#producer-notes").value = "";
-  document.querySelector("#producer-notes-result").innerHTML = `
-    <p class="pill warn">Notes cleared locally</p>
-  `;
+  saveSessionNotes(sessionId, "");
+}
+
+async function loadSessionNotes(sessionId) {
+  const result = document.querySelector("#producer-notes-result");
+  try {
+    const response = await fetchJson(`/api/v1/sessions/${sessionId}/notes`);
+    const textarea = document.querySelector("#producer-notes");
+    if (textarea && typeof response.notes === "string") {
+      textarea.value = response.notes;
+      localStorage.setItem(producerNotesKey(sessionId), response.notes);
+    }
+    result.innerHTML = `<p class="pill good">Server notes loaded</p>`;
+  } catch (error) {
+    result.innerHTML = `<p class="pill warn">Using browser-local notes; ${escapeHtml(String(error))}</p>`;
+  }
+}
+
+async function saveSessionNotes(sessionId, notes) {
+  const result = document.querySelector("#producer-notes-result");
+  result.innerHTML = `<p class="pill warn">Saving notes...</p>`;
+  try {
+    await putJson(`/api/v1/sessions/${sessionId}/notes`, { notes });
+    result.innerHTML = `<p class="pill good">Notes saved to server</p>`;
+  } catch (error) {
+    localStorage.setItem(producerNotesKey(sessionId), notes);
+    result.innerHTML = `<p class="pill warn">Saved locally only; ${escapeHtml(String(error))}</p>`;
+  }
 }
 
 async function createProductionSpectatorGrant(session) {
