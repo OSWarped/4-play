@@ -67,6 +67,32 @@ python3 tools/webrtc-gst-test-pattern.py \
 Leave this command running. It owns the live GStreamer publisher and its
 temporary `/offer` signaling endpoint.
 
+If Windows cannot reach `http://192.168.20.68:18080/health`, open the temporary
+spike port from the Windows seat:
+
+```bash
+cd ~/src/4-play
+deploy/systemd/open-webrtc-spike-port.sh --seat-ip 192.168.20.10 --apply
+```
+
+Or apply the equivalent rule directly:
+
+```bash
+sudo iptables -I INPUT -p tcp -s 192.168.20.10 --dport 18080 -j ACCEPT
+```
+
+Verify from Windows:
+
+```powershell
+Invoke-WebRequest http://192.168.20.68:18080/health
+```
+
+Expected response:
+
+```text
+4-Play WebRTC spike publisher ready
+```
+
 ## Signal from the browser
 
 Then click:
@@ -167,11 +193,32 @@ python3 tools/webrtc-gst-test-pattern.py \
 Expected first-pass result:
 
 - the video surface starts showing a GStreamer test pattern;
+- for video-only baseline, this appears as a white ball/circle moving on a
+  black background;
 - connection state moves toward `connected`;
 - receiver stats begin increasing;
 - decoded frames increase;
 - dropped frames may increase occasionally, but playback should not drift into a
   larger and larger delay.
+
+## Validated result
+
+On 2026-10-11, the automated VP8 video-only path succeeded on the reference
+network:
+
+- Windows seat `192.168.20.10`
+- Linux runtime host `192.168.20.68`
+- publisher URL `http://192.168.20.68:18080/offer`
+- temporary TCP firewall opening for port `18080`
+- visible browser result: white circle moving on black background
+
+Detailed record:
+
+- `docs/testing/WEBRTC-BROWSER-MEDIA-VALIDATION.md`
+
+Latency/stability checklist:
+
+- `docs/testing/WEBRTC-BROWSER-MEDIA-LATENCY-CHECK.md`
 
 ## Stop the test
 
