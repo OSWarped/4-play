@@ -105,6 +105,14 @@ h2 {
   margin-top: 20px;
 }
 
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  margin-top: 18px;
+}
+
 button {
   border: 1px solid #466183;
   border-radius: 12px;

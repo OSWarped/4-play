@@ -28,6 +28,8 @@
           <dl class="facts">
             <dt>Signaling</dt>
             <dd id="signaling-state">not started</dd>
+            <dt>ICE gathering</dt>
+            <dd id="ice-gathering-state">not started</dd>
             <dt>ICE</dt>
             <dd id="ice-state">not started</dd>
             <dt>Peer</dt>
@@ -35,6 +37,10 @@
             <dt>Remote tracks</dt>
             <dd id="remote-tracks">0</dd>
           </dl>
+          <label class="check-row">
+            <input id="include-audio" type="checkbox" />
+            Include audio in this spike offer
+          </label>
           <div class="actions">
             <button id="create-peer" type="button">Create local peer</button>
             <button id="create-offer" type="button" disabled>Create SDP offer</button>

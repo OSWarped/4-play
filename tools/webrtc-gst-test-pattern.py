@@ -34,6 +34,10 @@ videotestsrc is-live=true pattern={pattern}
   ! {video_payloader}
   ! application/x-rtp,media=video,encoding-name={video_encoding},payload=96,clock-rate=90000
   ! webrtc.
+{audio_pipeline}
+"""
+
+AUDIO_PIPELINE_TEMPLATE = """
 audiotestsrc is-live=true wave=ticks tick-interval=1000000000
   ! audio/x-raw,rate=48000,channels=2
   ! audioconvert
@@ -53,6 +57,9 @@ class WebRtcTestPatternPublisher:
         self.answer_written = False
         self.ice_timeout_id: int | None = None
         video_encoder, video_payloader, video_encoding = video_pipeline(args)
+        audio_pipeline = ""
+        if not args.video_only:
+            audio_pipeline = AUDIO_PIPELINE_TEMPLATE.format(audio_bitrate_bps=args.audio_bitrate_bps)
         self.pipeline = Gst.parse_launch(
             PIPELINE_TEMPLATE.format(
                 pattern=args.pattern,
@@ -62,7 +69,7 @@ class WebRtcTestPatternPublisher:
                 video_encoder=video_encoder,
                 video_payloader=video_payloader,
                 video_encoding=video_encoding,
-                audio_bitrate_bps=args.audio_bitrate_bps,
+                audio_pipeline=audio_pipeline,
             )
         )
         self.webrtc = self.pipeline.get_by_name("webrtc")
@@ -241,6 +248,11 @@ def parse_args() -> argparse.Namespace:
         choices=["vp8", "h264"],
         default="vp8",
         help="Video codec for the test publisher. VP8 is the default because browsers usually offer it first.",
+    )
+    parser.add_argument(
+        "--video-only",
+        action="store_true",
+        help="Publish only video. This is the recommended first connectivity test.",
     )
     parser.add_argument("--video-bitrate-kbps", type=int, default=1400)
     parser.add_argument("--audio-bitrate-bps", type=int, default=64000)

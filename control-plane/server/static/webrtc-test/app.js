@@ -1,9 +1,11 @@
 const elements = {
   capabilities: document.querySelector("#capabilities"),
   signalingState: document.querySelector("#signaling-state"),
+  iceGatheringState: document.querySelector("#ice-gathering-state"),
   iceState: document.querySelector("#ice-state"),
   peerState: document.querySelector("#peer-state"),
   remoteTracks: document.querySelector("#remote-tracks"),
+  includeAudio: document.querySelector("#include-audio"),
   createPeer: document.querySelector("#create-peer"),
   createOffer: document.querySelector("#create-offer"),
   resetPeer: document.querySelector("#reset-peer"),
@@ -30,10 +32,23 @@ elements.createPeer.addEventListener("click", () => {
     iceServers: [],
   });
   peer.addTransceiver("video", { direction: "recvonly" });
-  peer.addTransceiver("audio", { direction: "recvonly" });
+  if (elements.includeAudio.checked) {
+    peer.addTransceiver("audio", { direction: "recvonly" });
+  }
   peer.addEventListener("signalingstatechange", updatePeerState);
+  peer.addEventListener("icegatheringstatechange", updatePeerState);
   peer.addEventListener("iceconnectionstatechange", updatePeerState);
   peer.addEventListener("connectionstatechange", updatePeerState);
+  peer.addEventListener("icecandidateerror", (event) => {
+    log(`ICE candidate error url=${event.url || "n/a"} code=${event.errorCode} text=${event.errorText}`);
+  });
+  peer.addEventListener("icecandidate", (event) => {
+    if (event.candidate) {
+      log(`Local ICE candidate gathered: ${event.candidate.type}/${event.candidate.protocol}`);
+    } else {
+      log("Local ICE gathering complete.");
+    }
+  });
   peer.addEventListener("track", (event) => {
     const [stream] = event.streams;
     if (stream) {
@@ -171,6 +186,7 @@ function renderCapabilities() {
 
 function updatePeerState() {
   elements.signalingState.textContent = peer?.signalingState ?? "not started";
+  elements.iceGatheringState.textContent = peer?.iceGatheringState ?? "not started";
   elements.iceState.textContent = peer?.iceConnectionState ?? "not started";
   elements.peerState.textContent = peer?.connectionState ?? "not started";
   elements.remoteTracks.textContent = remoteTrackCount.toString();
@@ -222,17 +238,24 @@ async function updateStats() {
 }
 
 function renderStats(report) {
-  const inbound = Array.from(report.values()).filter((item) => item.type === "inbound-rtp");
+  const values = Array.from(report.values());
+  const inbound = values.filter((item) => item.type === "inbound-rtp");
   const candidatePair = Array.from(report.values()).find(
     (item) => item.type === "candidate-pair" && item.state === "succeeded",
   );
+  const anyCandidatePair = values.find((item) => item.type === "candidate-pair");
+  const selectedPair = candidatePair ?? anyCandidatePair;
   const selected = [
+    ["Inbound RTP reports", inbound.length || "n/a"],
+    ["Candidate pairs", values.filter((item) => item.type === "candidate-pair").length || "n/a"],
+    ["Best candidate state", selectedPair?.state ?? "n/a"],
+    ["Best candidate nominated", selectedPair?.nominated ?? "n/a"],
     ["Video frames decoded", sum(inbound, "framesDecoded")],
     ["Video frames dropped", sum(inbound, "framesDropped")],
     ["Audio samples decoded", sum(inbound, "totalSamplesDecoded")],
     ["Packets lost", sum(inbound, "packetsLost")],
     ["Jitter seconds", formatMax(inbound, "jitter", 3)],
-    ["Current RTT seconds", formatNumber(candidatePair?.currentRoundTripTime, 3)],
+    ["Current RTT seconds", formatNumber(selectedPair?.currentRoundTripTime, 3)],
     ["Bytes received", sum(inbound, "bytesReceived")],
   ];
   elements.stats.replaceChildren(

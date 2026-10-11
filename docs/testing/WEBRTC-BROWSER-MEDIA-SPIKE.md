@@ -59,6 +59,9 @@ Then click:
 2. `Create SDP offer`
 3. `Copy offer`
 
+Leave `Include audio in this spike offer` unchecked for the first video-only
+connectivity test. Add audio only after video packets are flowing.
+
 ## Send the offer to the Linux publisher
 
 In SSH on the Linux host, paste the offer into a file:
@@ -74,6 +77,7 @@ Start the test-pattern publisher:
 ```bash
 cd ~/src/4-play
 python3 tools/webrtc-gst-test-pattern.py \
+  --video-only \
   --offer-file /tmp/4play-webrtc-offer.sdp \
   --answer-file /tmp/4play-webrtc-answer.sdp
 ```
@@ -125,9 +129,9 @@ direction:
 grep -n 'a=sendonly\|a=recvonly\|a=inactive\|rtpmap' /tmp/4play-webrtc-answer.sdp
 ```
 
-For this test, the answer should contain `a=sendonly` for video/audio. If it
-contains `a=inactive`, the publisher did not match an offered browser codec or
-track direction.
+For the first video-only test, the answer should contain one video `a=sendonly`
+section and no audio section. If video contains `a=inactive`, the publisher did
+not match an offered browser codec or track direction.
 
 Expected first-pass result:
 
