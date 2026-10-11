@@ -38,7 +38,9 @@ check_gst_element webrtcbin
 check_gst_element x264enc
 check_gst_element avenc_aac
 check_gst_element opusenc
+check_gst_element vp8enc
 check_gst_element rtph264pay
+check_gst_element rtpvp8pay
 check_gst_element rtpopuspay
 check_gst_element h264parse
 check_gst_element audiotestsrc

@@ -80,6 +80,17 @@ python3 tools/webrtc-gst-test-pattern.py \
 
 Leave this command running. It owns the live GStreamer publisher.
 
+The publisher defaults to VP8 because Chrome/Edge typically offer VP8 first.
+That keeps the manual SDP test simple and avoids dynamic payload-type mismatch
+while we are still proving the transport. H.264 can be tested later with:
+
+```bash
+python3 tools/webrtc-gst-test-pattern.py \
+  --codec h264 \
+  --offer-file /tmp/4play-webrtc-offer.sdp \
+  --answer-file /tmp/4play-webrtc-answer.sdp
+```
+
 ## Apply the answer in the browser
 
 In another SSH terminal, print the answer:
@@ -106,6 +117,17 @@ print(repr(answer.splitlines()[0]))
 print("lines", len(answer.splitlines()))
 PY
 ```
+
+If the browser accepts the answer but no tracks/stats appear, check media
+direction:
+
+```bash
+grep -n 'a=sendonly\|a=recvonly\|a=inactive\|rtpmap' /tmp/4play-webrtc-answer.sdp
+```
+
+For this test, the answer should contain `a=sendonly` for video/audio. If it
+contains `a=inactive`, the publisher did not match an offered browser codec or
+track direction.
 
 Expected first-pass result:
 

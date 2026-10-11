@@ -30,12 +30,9 @@ videotestsrc is-live=true pattern={pattern}
   ! video/x-raw,width={width},height={height},framerate={fps}/1
   ! videoconvert
   ! queue leaky=downstream max-size-buffers=2 max-size-time=0 max-size-bytes=0
-  ! x264enc tune=zerolatency speed-preset=ultrafast bitrate={video_bitrate_kbps}
-      key-int-max={key_interval} bframes=0 byte-stream=true
-  ! video/x-h264,profile=baseline
-  ! h264parse config-interval=-1
-  ! rtph264pay pt=96 config-interval=-1
-  ! application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000
+  ! {video_encoder}
+  ! {video_payloader}
+  ! application/x-rtp,media=video,encoding-name={video_encoding},payload=96,clock-rate=90000
   ! webrtc.
 audiotestsrc is-live=true wave=ticks tick-interval=1000000000
   ! audio/x-raw,rate=48000,channels=2
@@ -55,14 +52,16 @@ class WebRtcTestPatternPublisher:
         self.loop = GLib.MainLoop()
         self.answer_written = False
         self.ice_timeout_id: int | None = None
+        video_encoder, video_payloader, video_encoding = video_pipeline(args)
         self.pipeline = Gst.parse_launch(
             PIPELINE_TEMPLATE.format(
                 pattern=args.pattern,
                 width=args.width,
                 height=args.height,
                 fps=args.fps,
-                video_bitrate_kbps=args.video_bitrate_kbps,
-                key_interval=max(1, args.fps // 4),
+                video_encoder=video_encoder,
+                video_payloader=video_payloader,
+                video_encoding=video_encoding,
                 audio_bitrate_bps=args.audio_bitrate_bps,
             )
         )
@@ -196,6 +195,24 @@ def normalize_sdp(text: str) -> str:
     return "\r\n".join(normalized_lines) + "\r\n"
 
 
+def video_pipeline(args: argparse.Namespace) -> tuple[str, str, str]:
+    if args.codec == "vp8":
+        encoder = (
+            f"vp8enc deadline=1 cpu-used=8 target-bitrate={args.video_bitrate_kbps * 1000} "
+            f"keyframe-max-dist={max(1, args.fps // 2)}"
+        )
+        return encoder, "rtpvp8pay pt=96", "VP8"
+    if args.codec == "h264":
+        encoder = (
+            "x264enc tune=zerolatency speed-preset=ultrafast "
+            f"bitrate={args.video_bitrate_kbps} key-int-max={max(1, args.fps // 4)} "
+            "bframes=0 byte-stream=true ! video/x-h264,profile=baseline "
+            "! h264parse config-interval=-1"
+        )
+        return encoder, "rtph264pay pt=96 config-interval=-1", "H264"
+    raise RuntimeError(f"unsupported codec: {args.codec}")
+
+
 def install_signal_handlers(loop: GLib.MainLoop) -> None:
     def stop(_signum: int, _frame: object) -> None:
         loop.quit()
@@ -219,6 +236,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=224)
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--pattern", default="ball")
+    parser.add_argument(
+        "--codec",
+        choices=["vp8", "h264"],
+        default="vp8",
+        help="Video codec for the test publisher. VP8 is the default because browsers usually offer it first.",
+    )
     parser.add_argument("--video-bitrate-kbps", type=int, default=1400)
     parser.add_argument("--audio-bitrate-bps", type=int, default=64000)
     parser.add_argument("--verbose", action="store_true")
