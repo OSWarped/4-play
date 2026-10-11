@@ -85,6 +85,8 @@ class WebRtcTestPatternPublisher:
 
     def run(self) -> None:
         offer_text = read_offer(self.args.offer_file)
+        if self.args.browser_host_ip:
+            offer_text = replace_mdns_candidates(offer_text, self.args.browser_host_ip)
         self.pipeline.set_state(Gst.State.PLAYING)
         self.apply_offer_and_create_answer(offer_text)
         install_signal_handlers(self.loop)
@@ -202,6 +204,33 @@ def normalize_sdp(text: str) -> str:
     return "\r\n".join(normalized_lines) + "\r\n"
 
 
+def replace_mdns_candidates(text: str, browser_host_ip: str) -> str:
+    """Replace browser mDNS ICE candidate hostnames with a LAN IP.
+
+    Chrome/Edge often hide local IPs behind `.local` mDNS candidates. That is
+    correct browser behavior, but the manual copy/paste spike can fail if the
+    Linux publisher cannot resolve those names. This spike-only helper lets us
+    prove the media path with a known browser host IP before we build proper
+    signaling/trickle ICE.
+    """
+    output_lines: list[str] = []
+    replacements = 0
+    for line in text.splitlines():
+        if line.startswith("a=candidate:"):
+            parts = line.split(" ")
+            if len(parts) >= 5 and parts[4].endswith(".local"):
+                parts[4] = browser_host_ip
+                line = " ".join(parts)
+                replacements += 1
+        output_lines.append(line)
+    if replacements:
+        print(
+            f"Replaced {replacements} browser mDNS ICE candidate(s) with {browser_host_ip}.",
+            file=sys.stderr,
+        )
+    return "\n".join(output_lines) + "\n"
+
+
 def video_pipeline(args: argparse.Namespace) -> tuple[str, str, str]:
     if args.codec == "vp8":
         encoder = (
@@ -243,6 +272,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=224)
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--pattern", default="ball")
+    parser.add_argument(
+        "--browser-host-ip",
+        help=(
+            "Spike-only workaround: replace browser .local ICE candidates in the "
+            "offer with this LAN IP, for example the Windows seat IP."
+        ),
+    )
     parser.add_argument(
         "--codec",
         choices=["vp8", "h264"],

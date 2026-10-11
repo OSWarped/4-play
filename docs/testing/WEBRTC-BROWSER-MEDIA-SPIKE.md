@@ -78,11 +78,19 @@ Start the test-pattern publisher:
 cd ~/src/4-play
 python3 tools/webrtc-gst-test-pattern.py \
   --video-only \
+  --browser-host-ip 192.168.20.10 \
   --offer-file /tmp/4play-webrtc-offer.sdp \
   --answer-file /tmp/4play-webrtc-answer.sdp
 ```
 
 Leave this command running. It owns the live GStreamer publisher.
+
+`--browser-host-ip` is a manual-spike workaround for browser mDNS ICE
+candidates. Chrome/Edge may put a `.local` hostname in the copied offer instead
+of the Windows LAN IP. If the Linux publisher cannot resolve that mDNS name, it
+may receive STUN packets but never answer them. Replacing the candidate hostname
+with the known seat IP lets us prove the media path before building proper
+signaling/trickle ICE.
 
 The publisher defaults to VP8 because Chrome/Edge typically offer VP8 first.
 That keeps the manual SDP test simple and avoids dynamic payload-type mismatch
@@ -132,6 +140,24 @@ grep -n 'a=sendonly\|a=recvonly\|a=inactive\|rtpmap' /tmp/4play-webrtc-answer.sd
 For the first video-only test, the answer should contain one video `a=sendonly`
 section and no audio section. If video contains `a=inactive`, the publisher did
 not match an offered browser codec or track direction.
+
+If `tcpdump` shows repeated inbound UDP packets from Windows to the Linux ICE
+port but no outbound packets, inspect the offer candidate:
+
+```bash
+grep -n 'candidate\|ice-ufrag\|ice-pwd' /tmp/4play-webrtc-offer.sdp
+```
+
+If the candidate address ends in `.local`, rerun the publisher with the Windows
+seat IP:
+
+```bash
+python3 tools/webrtc-gst-test-pattern.py \
+  --video-only \
+  --browser-host-ip 192.168.20.10 \
+  --offer-file /tmp/4play-webrtc-offer.sdp \
+  --answer-file /tmp/4play-webrtc-answer.sdp
+```
 
 Expected first-pass result:
 
