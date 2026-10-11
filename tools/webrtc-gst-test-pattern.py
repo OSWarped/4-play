@@ -46,8 +46,8 @@ audiotestsrc is-live=true wave=ticks tick-interval=1000000000
   ! audioresample
   ! queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0
   ! opusenc audio-type=restricted-lowdelay bitrate={audio_bitrate_bps}
-  ! rtpopuspay pt=97
-  ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97,clock-rate=48000
+  ! rtpopuspay pt={audio_payload_type}
+  ! application/x-rtp,media=audio,encoding-name=OPUS,payload={audio_payload_type},clock-rate=48000
   ! webrtc.
 """
 
@@ -63,7 +63,10 @@ class WebRtcTestPatternPublisher:
         video_encoder, video_payloader, video_encoding = video_pipeline(args)
         audio_pipeline = ""
         if not args.video_only:
-            audio_pipeline = AUDIO_PIPELINE_TEMPLATE.format(audio_bitrate_bps=args.audio_bitrate_bps)
+            audio_pipeline = AUDIO_PIPELINE_TEMPLATE.format(
+                audio_bitrate_bps=args.audio_bitrate_bps,
+                audio_payload_type=args.audio_payload_type,
+            )
         self.pipeline = Gst.parse_launch(
             PIPELINE_TEMPLATE.format(
                 pattern=args.pattern,
@@ -145,6 +148,8 @@ class WebRtcTestPatternPublisher:
         answer = context.get("answer")
         if not isinstance(answer, str):
             raise RuntimeError("GStreamer did not produce an SDP answer")
+        if self.args.answer_file:
+            Path(self.args.answer_file).write_text(answer, encoding="utf-8")
         return answer
 
     def apply_offer_and_create_answer(
@@ -441,6 +446,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--video-bitrate-kbps", type=int, default=1400)
     parser.add_argument("--audio-bitrate-bps", type=int, default=64000)
+    parser.add_argument(
+        "--audio-payload-type",
+        type=int,
+        default=111,
+        help=(
+            "RTP payload type for Opus audio. Browsers normally offer Opus as "
+            "dynamic payload type 111, so 111 is the default."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 

@@ -77,7 +77,8 @@ After video-only passes, restart the publisher without `--video-only`:
 
 ```bash
 python3 tools/webrtc-gst-test-pattern.py \
-  --http-signal 0.0.0.0:18080
+  --http-signal 0.0.0.0:18080 \
+  --answer-file /tmp/4play-webrtc-answer.sdp
 ```
 
 In the browser:
@@ -92,8 +93,18 @@ Expected:
 
 - video renders;
 - audio tick/beep is audible;
+- remote track count reaches 2;
+- audio samples decoded increases in the receiver stats;
 - audio/video remain plausibly synchronized;
 - no growing delay.
 
-If audio causes negotiation or playback failure, keep the production plan
-video-first and isolate audio in the next spike.
+If audio causes negotiation or playback failure, inspect the publisher answer:
+
+```bash
+grep -n 'm=audio\|a=sendonly\|a=inactive\|rtpmap:111' /tmp/4play-webrtc-answer.sdp
+```
+
+The expected successful audio section includes `a=rtpmap:111 OPUS/48000/2` and
+`a=sendonly`. If it instead shows `a=inactive`, reset the browser test page,
+make sure `Include audio in this spike offer` is checked before creating the
+local peer, then create a fresh offer.

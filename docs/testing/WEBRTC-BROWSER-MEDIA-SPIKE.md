@@ -126,6 +126,45 @@ python3 tools/webrtc-gst-test-pattern.py \
   --http-signal 0.0.0.0:18080
 ```
 
+## Add audio after video works
+
+Stop the video-only publisher with `Ctrl-C`, then restart it without
+`--video-only`:
+
+```bash
+cd ~/src/4-play
+python3 tools/webrtc-gst-test-pattern.py \
+  --http-signal 0.0.0.0:18080 \
+  --answer-file /tmp/4play-webrtc-answer.sdp
+```
+
+In the browser:
+
+1. click `Reset`
+2. check `Include audio in this spike offer`
+3. `Create local peer`
+4. `Create SDP offer`
+5. `Signal publisher`
+
+Expected result:
+
+- the moving video pattern still appears;
+- the browser attaches two remote tracks, video and audio;
+- an audio tick/beep is audible;
+- receiver stats show increasing audio samples decoded.
+
+The test publisher defaults Opus to RTP payload type `111`, matching the
+payload type Chrome/Edge normally offer for browser WebRTC audio. If the answer
+shows `a=inactive` in the audio section, confirm that the browser checkbox was
+enabled before `Create local peer` and inspect the saved answer:
+
+```bash
+grep -n 'm=audio\|a=sendonly\|a=inactive\|rtpmap:111' /tmp/4play-webrtc-answer.sdp
+```
+
+For a successful audio negotiation, the audio section should include
+`a=rtpmap:111 OPUS/48000/2` and `a=sendonly`.
+
 ## Manual fallback
 
 If the automated endpoint fails, manual SDP copy/paste is still available:

@@ -75,7 +75,10 @@ real session-runtime media.
 
 ## Remaining spike checks
 
-- Audio test with `Include audio in this spike offer` enabled.
+- Audio test with `Include audio in this spike offer` enabled. The publisher
+  now defaults Opus to browser payload type `111`; save the generated HTTP
+  answer with `--answer-file /tmp/4play-webrtc-answer.sdp` and confirm the
+  audio section answers `a=sendonly`.
 - 5-10 minute latency/buffer stability observation.
 - Browser stats recording during the test.
 - CPU observation on the Linux host.

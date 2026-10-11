@@ -55,13 +55,23 @@ elements.createPeer.addEventListener("click", () => {
     const [stream] = event.streams;
     if (stream) {
       elements.remoteVideo.srcObject = stream;
+      elements.remoteVideo
+        .play()
+        .catch((error) => log(`Remote media play() did not start automatically: ${error.message}`));
       log(`Attached remote ${event.track.kind} track.`);
     }
+    event.track.addEventListener("mute", () => log(`Remote ${event.track.kind} track muted.`));
+    event.track.addEventListener("unmute", () => log(`Remote ${event.track.kind} track unmuted.`));
+    event.track.addEventListener("ended", () => log(`Remote ${event.track.kind} track ended.`));
     remoteTrackCount += 1;
     updatePeerState();
   });
   updatePeerState();
-  log("Created local recvonly RTCPeerConnection.");
+  log(
+    `Created local recvonly RTCPeerConnection with ${
+      elements.includeAudio.checked ? "video + audio" : "video only"
+    }.`,
+  );
   log("Next step: create an SDP offer and send it to a test publisher.");
 });
 
