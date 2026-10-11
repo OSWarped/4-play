@@ -104,12 +104,29 @@ async function applyAnswer() {
     return;
   }
   try {
-    await peer.setRemoteDescription({ type: "answer", sdp });
+    await peer.setRemoteDescription({ type: "answer", sdp: sanitizeSdp(sdp) });
     startStatsLoop();
     log("Applied remote SDP answer.");
   } catch (error) {
     log(`Failed to apply answer: ${error.message}`);
   }
+}
+
+function sanitizeSdp(text) {
+  const lines = text
+    .replace(/\u2010|\u2011|\u2012|\u2013|\u2014|\u2212/g, "-")
+    .replace(/\u200b|\u200c|\u200d|\ufeff/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("-----BEGIN") && !line.startsWith("-----END"))
+    .map((line) =>
+      line.replace(
+        /^a=fingerprint:([A-Za-z0-9-]+)\s+([0-9A-Fa-f:]+)$/,
+        (_match, algorithm, fingerprint) =>
+          `a=fingerprint:${algorithm.toLowerCase()} ${fingerprint.toLowerCase()}`,
+      ),
+    );
+  return `${lines.join("\r\n")}\r\n`;
 }
 
 function waitForIceGathering(connection) {

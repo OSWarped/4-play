@@ -94,6 +94,19 @@ Paste the full SDP answer into the browser page's `Remote answer` box and click:
 Apply answer
 ```
 
+If the browser reports an invalid SDP line, first confirm that the answer file
+contains only SDP and no terminal prompts/markers:
+
+```bash
+grep -n 'fingerprint\|^v=\|^m=' /tmp/4play-webrtc-answer.sdp
+python3 - <<'PY'
+from pathlib import Path
+answer = Path("/tmp/4play-webrtc-answer.sdp").read_text()
+print(repr(answer.splitlines()[0]))
+print("lines", len(answer.splitlines()))
+PY
+```
+
 Expected first-pass result:
 
 - the video surface starts showing a GStreamer test pattern;

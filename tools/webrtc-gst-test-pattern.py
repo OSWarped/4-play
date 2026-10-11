@@ -139,7 +139,7 @@ class WebRtcTestPatternPublisher:
         if description is None:
             return True
 
-        answer_text = description.sdp.as_text()
+        answer_text = normalize_sdp(description.sdp.as_text())
         if self.args.answer_file:
             Path(self.args.answer_file).write_text(answer_text, encoding="utf-8")
             print(f"Wrote SDP answer to {self.args.answer_file}", file=sys.stderr)
@@ -174,6 +174,26 @@ def read_offer(path: str | None) -> str:
     if "v=0" not in text or "m=" not in text:
         raise RuntimeError("SDP offer does not look valid")
     return text
+
+
+def normalize_sdp(text: str) -> str:
+    """Normalize SDP for browser copy/paste parsing.
+
+    Some terminals and copy/paste paths can preserve odd whitespace or casing.
+    Browsers are stricter than GStreamer in a few places, so keep the generated
+    answer conservative: no empty copied lines, CRLF line endings, and lowercase
+    DTLS fingerprint algorithm/hash text.
+    """
+    normalized_lines: list[str] = []
+    for raw_line in text.replace("\ufeff", "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("a=fingerprint:"):
+            prefix, _, fingerprint = line.partition(" ")
+            line = f"{prefix.lower()} {fingerprint.lower()}"
+        normalized_lines.append(line)
+    return "\r\n".join(normalized_lines) + "\r\n"
 
 
 def install_signal_handlers(loop: GLib.MainLoop) -> None:
