@@ -1758,6 +1758,7 @@ mod tests {
         assert!(script_body.contains("RTCPeerConnection"));
         assert!(script_body.contains("addTransceiver"));
         assert!(script_body.contains("createOffer"));
+        assert!(script_body.contains("signalPublisher"));
         assert!(script_body.contains("getStats"));
 
         assert_eq!(styles_status, 200);

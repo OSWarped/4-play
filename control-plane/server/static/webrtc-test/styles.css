@@ -113,6 +113,23 @@ h2 {
   margin-top: 18px;
 }
 
+.field-row {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--muted);
+  margin-top: 14px;
+}
+
+input[type="url"] {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  padding: 10px 12px;
+  width: 100%;
+}
+
 button {
   border: 1px solid #466183;
   border-radius: 12px;

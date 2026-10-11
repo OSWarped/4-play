@@ -61,7 +61,12 @@
         <article class="panel">
           <h2>Remote answer</h2>
           <textarea id="remote-answer" spellcheck="false" placeholder="Paste the SDP answer from the test publisher."></textarea>
+          <label class="field-row">
+            <span>Publisher URL</span>
+            <input id="publisher-url" type="url" />
+          </label>
           <div class="actions">
+            <button id="signal-publisher" type="button" disabled>Signal publisher</button>
             <button id="apply-answer" type="button" disabled>Apply answer</button>
           </div>
         </article>

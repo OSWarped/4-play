@@ -8,14 +8,14 @@ The first spike uses:
 ```text
 Linux GStreamer test pattern
   -> webrtcbin
-  -> manual SDP answer
+  -> small HTTP /offer endpoint
   -> browser /webrtc-test page
   -> in-page <video>
 ```
 
-Manual SDP copy/paste is deliberate. It lets us prove codec compatibility,
-browser playback, and latency behavior before adding production signaling to the
-control plane.
+The spike HTTP endpoint is intentionally separate from the production control
+plane. It automates the fragile copy/paste signaling loop while we prove codec
+compatibility, browser playback, ICE behavior, and latency.
 
 ## Safety guardrails
 
@@ -53,29 +53,62 @@ From Windows, open:
 http://192.168.20.68:8080/webrtc-test
 ```
 
+## Start the Linux publisher
+
+In SSH on the Linux host, start the test-pattern publisher:
+
+```bash
+cd ~/src/4-play
+python3 tools/webrtc-gst-test-pattern.py \
+  --video-only \
+  --http-signal 0.0.0.0:18080
+```
+
+Leave this command running. It owns the live GStreamer publisher and its
+temporary `/offer` signaling endpoint.
+
+## Signal from the browser
+
 Then click:
 
 1. `Create local peer`
 2. `Create SDP offer`
-3. `Copy offer`
+3. confirm `Publisher URL` is:
+
+```text
+http://192.168.20.68:18080/offer
+```
+
+4. `Signal publisher`
 
 Leave `Include audio in this spike offer` unchecked for the first video-only
 connectivity test. Add audio only after video packets are flowing.
 
-## Send the offer to the Linux publisher
+The HTTP spike endpoint automatically rewrites browser `.local` mDNS ICE
+candidates to the request's source IP. Chrome/Edge may put a `.local` hostname
+in the offer instead of the Windows LAN IP. If the Linux publisher cannot
+resolve that mDNS name, it may receive STUN packets but never answer them.
 
-In SSH on the Linux host, paste the offer into a file:
+The publisher defaults to VP8 because Chrome/Edge typically offer VP8 first.
+That keeps the spike simple and avoids dynamic payload-type mismatch while we
+are still proving the transport. H.264 can be tested later with:
+
+```bash
+python3 tools/webrtc-gst-test-pattern.py \
+  --codec h264 \
+  --video-only \
+  --http-signal 0.0.0.0:18080
+```
+
+## Manual fallback
+
+If the automated endpoint fails, manual SDP copy/paste is still available:
 
 ```bash
 cat > /tmp/4play-webrtc-offer.sdp <<'EOF'
 PASTE_THE_BROWSER_OFFER_HERE
 EOF
-```
 
-Start the test-pattern publisher:
-
-```bash
-cd ~/src/4-play
 python3 tools/webrtc-gst-test-pattern.py \
   --video-only \
   --browser-host-ip 192.168.20.10 \
@@ -83,35 +116,7 @@ python3 tools/webrtc-gst-test-pattern.py \
   --answer-file /tmp/4play-webrtc-answer.sdp
 ```
 
-Leave this command running. It owns the live GStreamer publisher.
-
-`--browser-host-ip` is a manual-spike workaround for browser mDNS ICE
-candidates. Chrome/Edge may put a `.local` hostname in the copied offer instead
-of the Windows LAN IP. If the Linux publisher cannot resolve that mDNS name, it
-may receive STUN packets but never answer them. Replacing the candidate hostname
-with the known seat IP lets us prove the media path before building proper
-signaling/trickle ICE.
-
-The publisher defaults to VP8 because Chrome/Edge typically offer VP8 first.
-That keeps the manual SDP test simple and avoids dynamic payload-type mismatch
-while we are still proving the transport. H.264 can be tested later with:
-
-```bash
-python3 tools/webrtc-gst-test-pattern.py \
-  --codec h264 \
-  --offer-file /tmp/4play-webrtc-offer.sdp \
-  --answer-file /tmp/4play-webrtc-answer.sdp
-```
-
-## Apply the answer in the browser
-
-In another SSH terminal, print the answer:
-
-```bash
-cat /tmp/4play-webrtc-answer.sdp
-```
-
-Paste the full SDP answer into the browser page's `Remote answer` box and click:
+Then paste `/tmp/4play-webrtc-answer.sdp` into the browser and click:
 
 ```text
 Apply answer

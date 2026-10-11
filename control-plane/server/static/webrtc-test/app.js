@@ -12,6 +12,8 @@ const elements = {
   localOffer: document.querySelector("#local-offer"),
   copyOffer: document.querySelector("#copy-offer"),
   remoteAnswer: document.querySelector("#remote-answer"),
+  publisherUrl: document.querySelector("#publisher-url"),
+  signalPublisher: document.querySelector("#signal-publisher"),
   applyAnswer: document.querySelector("#apply-answer"),
   remoteVideo: document.querySelector("#remote-video"),
   stats: document.querySelector("#stats"),
@@ -66,11 +68,13 @@ elements.createPeer.addEventListener("click", () => {
 elements.createOffer.addEventListener("click", () => createOffer());
 elements.resetPeer.addEventListener("click", resetPeer);
 elements.copyOffer.addEventListener("click", () => copyOffer());
+elements.signalPublisher.addEventListener("click", () => signalPublisher());
 elements.applyAnswer.addEventListener("click", () => applyAnswer());
 elements.remoteAnswer.addEventListener("input", () => {
   elements.applyAnswer.disabled = !peer || !elements.remoteAnswer.value.trim();
 });
 
+elements.publisherUrl.value = `http://${location.hostname}:18080/offer`;
 renderCapabilities();
 updatePeerState();
 renderStats(new Map());
@@ -87,6 +91,7 @@ async function createOffer() {
     await waitForIceGathering(peer);
     elements.localOffer.value = peer.localDescription.sdp;
     elements.copyOffer.disabled = false;
+    elements.signalPublisher.disabled = false;
     elements.applyAnswer.disabled = !elements.remoteAnswer.value.trim();
     startStatsLoop();
     log("Created SDP offer. Send this offer to the test publisher.");
@@ -105,6 +110,38 @@ async function copyOffer() {
     log("Copied SDP offer to clipboard.");
   } catch (error) {
     log(`Clipboard copy failed; select and copy the offer manually. ${error.message}`);
+  }
+}
+
+async function signalPublisher() {
+  if (!peer || !elements.localOffer.value.trim()) {
+    log("Create an SDP offer before signaling the publisher.");
+    return;
+  }
+  const url = elements.publisherUrl.value.trim();
+  if (!url) {
+    log("Enter the publisher /offer URL before signaling.");
+    return;
+  }
+  try {
+    log(`Sending offer to ${url}`);
+    const response = await fetch(url, {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "content-type": "application/sdp; charset=utf-8",
+      },
+      body: elements.localOffer.value,
+    });
+    const answer = await response.text();
+    if (!response.ok) {
+      throw new Error(answer || `HTTP ${response.status}`);
+    }
+    elements.remoteAnswer.value = answer;
+    log("Received SDP answer from publisher.");
+    await applyAnswer();
+  } catch (error) {
+    log(`Publisher signaling failed: ${error.message}`);
   }
 }
 
@@ -191,6 +228,7 @@ function updatePeerState() {
   elements.peerState.textContent = peer?.connectionState ?? "not started";
   elements.remoteTracks.textContent = remoteTrackCount.toString();
   elements.createOffer.disabled = !peer;
+  elements.signalPublisher.disabled = !peer || !elements.localOffer.value.trim();
   elements.applyAnswer.disabled = !peer || !elements.remoteAnswer.value.trim();
 }
 
@@ -205,6 +243,7 @@ function resetPeer() {
   elements.localOffer.value = "";
   elements.remoteAnswer.value = "";
   elements.copyOffer.disabled = true;
+  elements.signalPublisher.disabled = true;
   elements.applyAnswer.disabled = true;
   elements.remoteVideo.srcObject = null;
   renderStats(new Map());
