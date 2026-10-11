@@ -8,8 +8,8 @@ use std::{
 
 use control_protocol::{
     CatalogGame, ConnectionGrant, CreateSessionRequest, GameAvailability, GameMetadata,
-    GameRuntimeProfile, PlayerSlot, PlayerSlotPresentation, PlayerSlotState, PreviewStatus,
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    GameRuntimeProfile, MediaTransport, PlayerSlot, PlayerSlotPresentation, PlayerSlotState,
+    PreviewStatus, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
     RuntimeHostHeartbeat, RuntimeHostStatus, RuntimeSessionAssignment, Session, SessionState,
     SessionSummary, SpectatorGrant,
 };
@@ -951,6 +951,7 @@ impl RuntimeHostStore {
                         destination_address,
                         runtime_host_id,
                         runtime_host_address,
+                        media_transport: MediaTransport::UdpMpegTs,
                         media_udp_port,
                         expires_unix_ms,
                     }))
@@ -1137,6 +1138,7 @@ impl RuntimeHostStore {
                         game_id,
                         rom_name,
                         destination_address,
+                        media_transport: MediaTransport::UdpMpegTs,
                         media_udp_port: u16::try_from(media).map_err(|_| {
                             StoreError::data("media UDP port is outside the supported range")
                         })?,
@@ -2046,6 +2048,7 @@ impl StoredSession {
                 )?,
                 runtime_host_id: self.runtime_host_id,
                 runtime_host_address: self.runtime_host_address,
+                media_transport: MediaTransport::UdpMpegTs,
                 media_udp_port: u16::try_from(self.media_udp_port).map_err(|_| {
                     StoreError::data("media UDP port is outside the supported range")
                 })?,

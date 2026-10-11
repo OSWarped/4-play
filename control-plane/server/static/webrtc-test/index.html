@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>4-Play WebRTC Media Test</title>
+    <link rel="stylesheet" href="/webrtc-test/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">4-Play experimental media</p>
+        <h1>WebRTC browser playback test</h1>
+        <p>
+          This page is the browser-native media proving ground. It is intentionally
+          separate from the working client flow until WebRTC meets the latency bar.
+        </p>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <h2>Browser capability</h2>
+          <dl id="capabilities" class="facts"></dl>
+        </article>
+
+        <article class="panel">
+          <h2>Connection state</h2>
+          <dl class="facts">
+            <dt>Signaling</dt>
+            <dd id="signaling-state">not started</dd>
+            <dt>ICE</dt>
+            <dd id="ice-state">not started</dd>
+            <dt>Peer</dt>
+            <dd id="peer-state">not started</dd>
+          </dl>
+          <div class="actions">
+            <button id="create-peer" type="button">Create local peer</button>
+            <button id="reset-peer" type="button">Reset</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Video surface</h2>
+        <video id="remote-video" playsinline autoplay controls></video>
+        <p class="note">
+          The first implementation target is attaching a remote WebRTC
+          <code>MediaStream</code> to this element with no growing buffer.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Latency guardrails</h2>
+        <ul>
+          <li>Frame drops are acceptable; buffer growth is not.</li>
+          <li>Audio/video sync must remain close to the current FFplay path.</li>
+          <li>Fullscreen must keep keyboard/gamepad input in the same UI surface.</li>
+          <li>UDP/FFplay remains the fallback until this page proves the path.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <h2>Event log</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+    <script src="/webrtc-test/app.js"></script>
+  </body>
+</html>

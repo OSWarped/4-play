@@ -312,8 +312,8 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), SeatClien
 mod tests {
     use super::*;
     use control_protocol::{
-        ConnectionGrant, GameRuntimeProfile, PlayerSlot, PlayerSlotPresentation, PlayerSlotState,
-        Session, SessionState,
+        ConnectionGrant, GameRuntimeProfile, MediaTransport, PlayerSlot, PlayerSlotPresentation,
+        PlayerSlotState, Session, SessionState,
     };
 
     #[test]
@@ -409,6 +409,7 @@ mod tests {
                 session_id: "session-1".to_owned(),
                 seat_id: "windows-seat-2".to_owned(),
                 destination_address: "192.0.2.10".to_owned(),
+                media_transport: MediaTransport::UdpMpegTs,
                 media_udp_port: 41_002,
                 runtime_host_id: "reference-linux".to_owned(),
                 runtime_host_address: "192.0.2.68".to_owned(),
@@ -464,6 +465,7 @@ mod tests {
             expires_unix_ms: 999,
             runtime_host_id: "reference-linux".to_owned(),
             runtime_host_address: "192.0.2.68".to_owned(),
+            media_transport: MediaTransport::UdpMpegTs,
             media_udp_port: 41_000,
             input_udp_port: 42_000,
         }

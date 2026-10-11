@@ -6,9 +6,9 @@ use std::{
 };
 
 use control_protocol::{
-    CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, PlayerSlot,
-    PlayerSlotState, ReservePlayerSlotRequest, Session, SessionState, SessionSummary,
-    SessionSummaryList, SpectatorGrant,
+    CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
+    MediaTransport, PlayerSlot, PlayerSlotState, ReservePlayerSlotRequest, Session, SessionState,
+    SessionSummary, SessionSummaryList, SpectatorGrant,
 };
 use input_protocol::{
     AuthenticatedControllerState, ControllerState, FLAG_STOP, SessionToken, button,
@@ -1002,6 +1002,7 @@ impl<A: ControlPlaneApi> NativeSeatController<A> {
                 game_id: game_id.to_owned(),
                 seat_id: self.config.seat_id.clone(),
                 destination_address: self.config.destination_address.to_string(),
+                media_transport: MediaTransport::UdpMpegTs,
             })
             .map_err(NativeClientError::Api)?;
         self.player_launch_from_session(&session, 1)
@@ -1066,6 +1067,7 @@ impl<A: ControlPlaneApi> NativeSeatController<A> {
                 CreateSpectatorGrantRequest {
                     seat_id: self.config.seat_id.clone(),
                     destination_address: self.config.destination_address.to_string(),
+                    media_transport: MediaTransport::UdpMpegTs,
                 },
             )
             .map_err(NativeClientError::Api)?;
@@ -2348,6 +2350,7 @@ mod tests {
             expires_unix_ms: 999,
             runtime_host_id: "reference-linux".to_owned(),
             runtime_host_address: "192.0.2.68".to_owned(),
+            media_transport: MediaTransport::UdpMpegTs,
             media_udp_port: 41_000,
             input_udp_port: 42_000,
         }
@@ -2362,6 +2365,7 @@ mod tests {
             media_udp_port: 41_002,
             runtime_host_id: "reference-linux".to_owned(),
             runtime_host_address: "192.0.2.68".to_owned(),
+            media_transport: MediaTransport::UdpMpegTs,
             expires_unix_ms: 999,
         }
     }

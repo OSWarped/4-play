@@ -17,10 +17,10 @@ use axum::{
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
-    ErrorResponse, GameMetadata, PreviewStatus, RegisterRuntimeHost, ReservePlayerSlotRequest,
-    RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat, RuntimeHostList,
-    RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList, SessionSummary,
-    SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+    ErrorResponse, GameMetadata, MediaTransport, PreviewStatus, RegisterRuntimeHost,
+    ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat,
+    RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList,
+    SessionSummary, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
     UpdateSessionState,
 };
 use serde_json::{Value, json};
@@ -293,6 +293,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/client/", get(client_index))
         .route("/client/app.js", get(client_script))
         .route("/client/styles.css", get(client_styles))
+        .route("/webrtc-test", get(webrtc_test_index))
+        .route("/webrtc-test/", get(webrtc_test_index))
+        .route("/webrtc-test/app.js", get(webrtc_test_script))
+        .route("/webrtc-test/styles.css", get(webrtc_test_styles))
         .route("/api/v1", get(api_info))
         .merge(protected)
         .with_state(state)
@@ -405,6 +409,27 @@ async fn client_styles() -> Response {
     static_response(
         "text/css; charset=utf-8",
         include_str!("../static/client/styles.css"),
+    )
+}
+
+async fn webrtc_test_index() -> Response {
+    static_response(
+        "text/html; charset=utf-8",
+        include_str!("../static/webrtc-test/index.html"),
+    )
+}
+
+async fn webrtc_test_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/webrtc-test/app.js"),
+    )
+}
+
+async fn webrtc_test_styles() -> Response {
+    static_response(
+        "text/css; charset=utf-8",
+        include_str!("../static/webrtc-test/styles.css"),
     )
 }
 
@@ -843,6 +868,7 @@ async fn create_spectator_grant(
     Json(request): Json<CreateSpectatorGrantRequest>,
 ) -> Result<(StatusCode, Json<SpectatorGrant>), ApiError> {
     validate_seat_id(&request.seat_id)?;
+    validate_supported_media_transport(request.media_transport)?;
     request.destination_address.parse::<IpAddr>().map_err(|_| {
         ApiError::bad_request(
             "invalid_destination_address",
@@ -1052,6 +1078,7 @@ fn validate_registration(registration: &RegisterRuntimeHost) -> Result<(), ApiEr
 fn validate_session_request(request: &CreateSessionRequest) -> Result<(), ApiError> {
     validate_identity("invalid_game_id", "game ID", &request.game_id)?;
     validate_seat_id(&request.seat_id)?;
+    validate_supported_media_transport(request.media_transport)?;
     request.destination_address.parse::<IpAddr>().map_err(|_| {
         ApiError::bad_request(
             "invalid_destination_address",
@@ -1059,6 +1086,16 @@ fn validate_session_request(request: &CreateSessionRequest) -> Result<(), ApiErr
         )
     })?;
     Ok(())
+}
+
+fn validate_supported_media_transport(media_transport: MediaTransport) -> Result<(), ApiError> {
+    match media_transport {
+        MediaTransport::UdpMpegTs => Ok(()),
+        MediaTransport::WebRtc => Err(ApiError::bad_request(
+            "unsupported_media_transport",
+            "WebRTC media transport is planned but is not available yet",
+        )),
+    }
 }
 
 fn validate_seat_id(seat_id: &str) -> Result<(), ApiError> {
@@ -1682,6 +1719,45 @@ mod tests {
         assert!(script_body.contains("Input token is intentionally not displayed"));
         assert!(script_body.contains("mediaReceiverCommands"));
         assert!(script_body.contains("POST"));
+
+        assert_eq!(styles_status, 200);
+        assert_eq!(
+            styles_content_type.as_deref(),
+            Some("text/css; charset=utf-8")
+        );
+        assert!(String::from_utf8(styles_body).unwrap().contains("--accent"));
+    }
+
+    #[tokio::test]
+    async fn webrtc_test_assets_are_served_without_api_auth() {
+        let service = app().await.unwrap();
+
+        let (index_status, index_content_type, index_body) =
+            request_bytes(service.clone(), Method::GET, "/webrtc-test").await;
+        let (script_status, script_content_type, script_body) =
+            request_bytes(service.clone(), Method::GET, "/webrtc-test/app.js").await;
+        let (styles_status, styles_content_type, styles_body) =
+            request_bytes(service, Method::GET, "/webrtc-test/styles.css").await;
+
+        assert_eq!(index_status, 200);
+        assert_eq!(
+            index_content_type.as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+        assert!(
+            String::from_utf8(index_body)
+                .unwrap()
+                .contains("WebRTC browser playback test")
+        );
+
+        assert_eq!(script_status, 200);
+        assert_eq!(
+            script_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        let script_body = String::from_utf8(script_body).unwrap();
+        assert!(script_body.contains("RTCPeerConnection"));
+        assert!(script_body.contains("addTransceiver"));
 
         assert_eq!(styles_status, 200);
         assert_eq!(
@@ -2471,6 +2547,7 @@ mod tests {
             "127.0.0.1"
         );
         assert_eq!(first["connection_grant"]["media_udp_port"], 41_000);
+        assert_eq!(first["connection_grant"]["media_transport"], "udp_mpeg_ts");
         assert_eq!(first["connection_grant"]["input_udp_port"], 42_000);
         assert!(first["connection_grant"]["token"].as_str().unwrap().len() >= 32);
         assert_eq!(first["player_slots"].as_array().unwrap().len(), 4);
@@ -2539,6 +2616,21 @@ mod tests {
         .await;
         assert_eq!(invalid_status, 400);
         assert_eq!(invalid["code"], "invalid_destination_address");
+
+        let (webrtc_status, webrtc) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(json!({
+                "game_id": "tmnt",
+                "seat_id": "seat-one",
+                "destination_address": "192.0.2.25",
+                "media_transport": "web_rtc"
+            })),
+        )
+        .await;
+        assert_eq!(webrtc_status, 400);
+        assert_eq!(webrtc["code"], "unsupported_media_transport");
 
         let (unknown_status, unknown) = request_json(
             service.clone(),
@@ -2647,7 +2739,22 @@ mod tests {
         assert_eq!(first["seat_id"], "seat-two");
         assert_eq!(first["runtime_host_id"], "reference-linux");
         assert_eq!(first["runtime_host_address"], "127.0.0.1");
+        assert_eq!(first["media_transport"], "udp_mpeg_ts");
         assert_eq!(first["media_udp_port"], 41_001);
+
+        let (webrtc_status, webrtc) = request_json(
+            service.clone(),
+            Method::POST,
+            &spectator_path,
+            Some(json!({
+                "seat_id": "seat-webrtc",
+                "destination_address": "192.0.2.28",
+                "media_transport": "web_rtc"
+            })),
+        )
+        .await;
+        assert_eq!(webrtc_status, 400);
+        assert_eq!(webrtc["code"], "unsupported_media_transport");
 
         let (second_status, second) = request_json(
             service.clone(),

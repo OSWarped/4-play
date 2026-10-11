@@ -1,7 +1,7 @@
 use control_protocol::{
     CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest, GameMetadata,
-    PlayerSlot, PlayerSlotState, PreviewStatus, ReservePlayerSlotRequest, RuntimeHostStatus,
-    Session, SessionState, SessionSummary, SessionSummaryList, SpectatorGrant,
+    MediaTransport, PlayerSlot, PlayerSlotState, PreviewStatus, ReservePlayerSlotRequest,
+    RuntimeHostStatus, Session, SessionState, SessionSummary, SessionSummaryList, SpectatorGrant,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -791,6 +791,7 @@ fn create_session(
             game_id: game_id.to_owned(),
             seat_id: config.seat_id.clone(),
             destination_address: config.destination_address.to_string(),
+            media_transport: MediaTransport::UdpMpegTs,
         })
         .send()?
         .error_for_status()?
@@ -887,6 +888,7 @@ fn create_spectator_grant(
         .json(&CreateSpectatorGrantRequest {
             seat_id: seat_id.to_owned(),
             destination_address: destination_address.to_string(),
+            media_transport: MediaTransport::UdpMpegTs,
         })
         .send()?
         .error_for_status()?

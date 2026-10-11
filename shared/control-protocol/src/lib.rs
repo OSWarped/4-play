@@ -39,6 +39,23 @@ pub struct RuntimeHostCapabilities {
     pub memory_bytes: u64,
     pub encoder_names: Vec<String>,
     pub emulator_adapters: Vec<String>,
+    #[serde(default = "default_media_transports")]
+    pub media_transports: Vec<MediaTransport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaTransport {
+    UdpMpegTs,
+    WebRtc,
+}
+
+pub fn default_media_transport() -> MediaTransport {
+    MediaTransport::UdpMpegTs
+}
+
+pub fn default_media_transports() -> Vec<MediaTransport> {
+    vec![default_media_transport()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +177,8 @@ pub struct CreateSessionRequest {
     pub game_id: String,
     pub seat_id: String,
     pub destination_address: String,
+    #[serde(default = "default_media_transport")]
+    pub media_transport: MediaTransport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +190,8 @@ pub struct ReservePlayerSlotRequest {
 pub struct CreateSpectatorGrantRequest {
     pub seat_id: String,
     pub destination_address: String,
+    #[serde(default = "default_media_transport")]
+    pub media_transport: MediaTransport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +200,8 @@ pub struct ConnectionGrant {
     pub expires_unix_ms: u64,
     pub runtime_host_id: String,
     pub runtime_host_address: String,
+    #[serde(default = "default_media_transport")]
+    pub media_transport: MediaTransport,
     pub media_udp_port: u16,
     pub input_udp_port: u16,
 }
@@ -229,6 +252,8 @@ pub struct SpectatorGrant {
     pub destination_address: String,
     pub runtime_host_id: String,
     pub runtime_host_address: String,
+    #[serde(default = "default_media_transport")]
+    pub media_transport: MediaTransport,
     pub media_udp_port: u16,
     pub expires_unix_ms: u64,
 }
@@ -296,6 +321,8 @@ pub struct RuntimeSessionAssignment {
     pub game_id: String,
     pub rom_name: String,
     pub destination_address: String,
+    #[serde(default = "default_media_transport")]
+    pub media_transport: MediaTransport,
     pub media_udp_port: u16,
     #[serde(default)]
     pub spectator_media_ports: Vec<u16>,
@@ -357,10 +384,11 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, GameMetadata, GamePlayerSlotMetadata, GameRuntimeProfile, PlayerSlot,
-        PlayerSlotPresentation, PlayerSlotState, PreviewStatus, RuntimeHost,
-        RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState, SessionSummary,
-        SpectatorGrant, StatusResponse, UpdateGameMetadataRequest, UpdateSessionState,
+        API_VERSION, ApiInfo, GameMetadata, GamePlayerSlotMetadata, GameRuntimeProfile,
+        MediaTransport, PlayerSlot, PlayerSlotPresentation, PlayerSlotState, PreviewStatus,
+        RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState,
+        SessionSummary, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+        UpdateSessionState,
     };
 
     #[test]
@@ -403,14 +431,33 @@ mod tests {
             destination_address: "192.0.2.25".to_owned(),
             runtime_host_id: "reference-linux".to_owned(),
             runtime_host_address: "192.0.2.10".to_owned(),
+            media_transport: MediaTransport::UdpMpegTs,
             media_udp_port: 41_001,
             expires_unix_ms: 123_456,
         };
 
         let value = serde_json::to_value(grant).unwrap();
         assert_eq!(value["session_id"], "session-one");
+        assert_eq!(value["media_transport"], "udp_mpeg_ts");
         assert_eq!(value["media_udp_port"], 41_001);
         assert_eq!(value["expires_unix_ms"], 123_456);
+    }
+
+    #[test]
+    fn media_transport_defaults_to_udp_mpegts_for_legacy_payloads() {
+        let grant: SpectatorGrant = serde_json::from_value(serde_json::json!({
+            "id": "grant-one",
+            "session_id": "session-one",
+            "seat_id": "seat-two",
+            "destination_address": "192.0.2.25",
+            "runtime_host_id": "reference-linux",
+            "runtime_host_address": "192.0.2.10",
+            "media_udp_port": 41001,
+            "expires_unix_ms": 123456
+        }))
+        .unwrap();
+
+        assert_eq!(grant.media_transport, MediaTransport::UdpMpegTs);
     }
 
     #[test]
@@ -531,6 +578,7 @@ mod tests {
                 memory_bytes: 16 * 1024 * 1024 * 1024,
                 encoder_names: vec!["libx264".to_owned()],
                 emulator_adapters: vec!["mame".to_owned()],
+                media_transports: vec![MediaTransport::UdpMpegTs, MediaTransport::WebRtc],
             },
             status: RuntimeHostStatus::Online,
             last_seen_unix_ms: 1_000,
@@ -542,5 +590,6 @@ mod tests {
         assert_eq!(value["status"], "online");
         assert_eq!(value["heartbeat_sequence"], 7);
         assert_eq!(value["capabilities"]["emulator_adapters"][0], "mame");
+        assert_eq!(value["capabilities"]["media_transports"][1], "web_rtc");
     }
 }

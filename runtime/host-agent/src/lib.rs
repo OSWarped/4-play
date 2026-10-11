@@ -3,7 +3,7 @@ use std::{
 };
 
 use control_protocol::{
-    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    MediaTransport, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
     RuntimeHostHeartbeat, RuntimeSessionAssignmentList, Session, SessionState, UpdateSessionState,
 };
 use reqwest::Client;
@@ -481,6 +481,7 @@ pub fn discover_capabilities() -> RuntimeHostCapabilities {
         memory_bytes: total_memory_bytes().unwrap_or(0),
         encoder_names: discover_h264_encoders(),
         emulator_adapters: discover_emulator_adapters(),
+        media_transports: vec![MediaTransport::UdpMpegTs],
     }
 }
 
@@ -585,8 +586,8 @@ mod tests {
     use std::time::Duration;
 
     use control_protocol::{
-        CatalogGameList, DiscoveredGame, GameRuntimeProfile, RuntimeHostCapabilities,
-        RuntimeHostCatalog, RuntimeHostList,
+        CatalogGameList, DiscoveredGame, GameRuntimeProfile, MediaTransport,
+        RuntimeHostCapabilities, RuntimeHostCatalog, RuntimeHostList,
     };
     use tokio::net::TcpListener;
 
@@ -636,6 +637,7 @@ mod tests {
                 memory_bytes: 1024,
                 encoder_names: vec!["libx264".to_owned()],
                 emulator_adapters: vec!["mame".to_owned()],
+                media_transports: vec![MediaTransport::UdpMpegTs],
             },
         )
         .with_catalog(RuntimeHostCatalog {
