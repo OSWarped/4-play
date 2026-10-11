@@ -89,6 +89,9 @@ Implemented:
 - `/webrtc-test` static diagnostics page with:
   - browser WebRTC/WebCodecs/MSE capability checks;
   - recv-only `RTCPeerConnection` lifecycle scaffold;
+  - manual SDP offer/answer fields for early publisher experiments;
+  - browser receiver stats for decoded frames, dropped frames, jitter, RTT, and
+    packet loss;
   - placeholder `<video>` surface for future remote streams;
   - explicit latency guardrail notes.
 
@@ -108,6 +111,7 @@ Deliverables:
 - `/webrtc-test` or equivalent development page;
 - JavaScript client that can:
   - create an `RTCPeerConnection`;
+  - create a recv-only SDP offer for manual or automated signaling;
   - exchange offer/answer through a test signaling endpoint;
   - attach the remote `MediaStream` to a `<video>`;
   - display connection state, jitter/packet stats, dropped frames when available;

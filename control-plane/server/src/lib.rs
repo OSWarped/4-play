@@ -1744,11 +1744,10 @@ mod tests {
             index_content_type.as_deref(),
             Some("text/html; charset=utf-8")
         );
-        assert!(
-            String::from_utf8(index_body)
-                .unwrap()
-                .contains("WebRTC browser playback test")
-        );
+        let index_body = String::from_utf8(index_body).unwrap();
+        assert!(index_body.contains("WebRTC browser playback test"));
+        assert!(index_body.contains("Create SDP offer"));
+        assert!(index_body.contains("Receiver stats"));
 
         assert_eq!(script_status, 200);
         assert_eq!(
@@ -1758,6 +1757,8 @@ mod tests {
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("RTCPeerConnection"));
         assert!(script_body.contains("addTransceiver"));
+        assert!(script_body.contains("createOffer"));
+        assert!(script_body.contains("getStats"));
 
         assert_eq!(styles_status, 200);
         assert_eq!(

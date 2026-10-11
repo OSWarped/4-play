@@ -32,10 +32,31 @@
             <dd id="ice-state">not started</dd>
             <dt>Peer</dt>
             <dd id="peer-state">not started</dd>
+            <dt>Remote tracks</dt>
+            <dd id="remote-tracks">0</dd>
           </dl>
           <div class="actions">
             <button id="create-peer" type="button">Create local peer</button>
+            <button id="create-offer" type="button" disabled>Create SDP offer</button>
             <button id="reset-peer" type="button">Reset</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <h2>Local offer</h2>
+          <textarea id="local-offer" spellcheck="false" placeholder="Create an SDP offer, then send it to the test publisher."></textarea>
+          <div class="actions">
+            <button id="copy-offer" type="button" disabled>Copy offer</button>
+          </div>
+        </article>
+
+        <article class="panel">
+          <h2>Remote answer</h2>
+          <textarea id="remote-answer" spellcheck="false" placeholder="Paste the SDP answer from the test publisher."></textarea>
+          <div class="actions">
+            <button id="apply-answer" type="button" disabled>Apply answer</button>
           </div>
         </article>
       </section>
@@ -57,6 +78,15 @@
           <li>Fullscreen must keep keyboard/gamepad input in the same UI surface.</li>
           <li>UDP/FFplay remains the fallback until this page proves the path.</li>
         </ul>
+      </section>
+
+      <section class="panel">
+        <h2>Receiver stats</h2>
+        <dl id="stats" class="facts"></dl>
+        <p class="note">
+          Watch these counters while testing. The warning sign is a growing
+          delay/buffer, not an occasional dropped frame.
+        </p>
       </section>
 
       <section class="panel">

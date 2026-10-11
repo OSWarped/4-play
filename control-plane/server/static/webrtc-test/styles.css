@@ -118,6 +118,23 @@ button:hover {
   background: #304463;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+textarea {
+  width: 100%;
+  min-height: 14rem;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: #d7e2ff;
+  font: 0.85rem/1.35 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  padding: 14px;
+}
+
 video {
   width: 100%;
   min-height: 360px;
