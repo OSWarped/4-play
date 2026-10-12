@@ -61,22 +61,29 @@ class RawSessionPublisher:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.loop = GLib.MainLoop()
+        self.offer_lock = threading.Lock()
         self.started = False
         self.media_started = False
+        self.pipeline_failed = False
         self.pending_answer_context: dict[str, object] | None = None
         self.ice_timeout_id: int | None = None
+        self.pipeline: Gst.Pipeline | None = None
+        self.webrtc: Gst.Element | None = None
 
+        self.build_pipeline()
+
+    def build_pipeline(self) -> None:
         self.pipeline = Gst.parse_launch(
             PIPELINE_TEMPLATE.format(
-                video_path=quote_path(args.video_path),
-                audio_path=quote_path(args.audio_path),
-                width=args.width,
-                height=args.height,
-                fps_num=args.fps_num,
-                fps_den=args.fps_den,
-                video_bitrate_bps=args.video_bitrate_kbps * 1000,
-                keyframe_distance=args.keyframe_distance,
-                audio_bitrate_bps=args.audio_bitrate_bps,
+                video_path=quote_path(self.args.video_path),
+                audio_path=quote_path(self.args.audio_path),
+                width=self.args.width,
+                height=self.args.height,
+                fps_num=self.args.fps_num,
+                fps_den=self.args.fps_den,
+                video_bitrate_bps=self.args.video_bitrate_kbps * 1000,
+                keyframe_distance=self.args.keyframe_distance,
+                audio_bitrate_bps=self.args.audio_bitrate_bps,
             )
         )
         self.webrtc = self.pipeline.get_by_name("webrtc")
@@ -92,6 +99,23 @@ class RawSessionPublisher:
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self.on_bus_message)
+
+    def reset_pipeline(self, reason: str) -> None:
+        print(
+            f"Resetting raw-session WebRTC pipeline session={self.args.session_id}: {reason}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if self.ice_timeout_id is not None:
+            GLib.source_remove(self.ice_timeout_id)
+            self.ice_timeout_id = None
+        if self.pipeline is not None:
+            self.pipeline.set_state(Gst.State.NULL)
+        self.started = False
+        self.media_started = False
+        self.pipeline_failed = False
+        self.pending_answer_context = None
+        self.build_pipeline()
 
     def run_http_signaling(self) -> None:
         host, port_text = self.args.http_signal.rsplit(":", 1)
@@ -112,11 +136,14 @@ class RawSessionPublisher:
             self.loop.run()
         finally:
             server.shutdown()
-            self.pipeline.set_state(Gst.State.NULL)
+            if self.pipeline is not None:
+                self.pipeline.set_state(Gst.State.NULL)
 
     def start_pipeline(self) -> None:
         if self.started:
             return
+        if self.pipeline is None or self.webrtc is None:
+            self.build_pipeline()
         for label, path in [("video", self.args.video_path), ("audio", self.args.audio_path)]:
             if not Path(path).exists():
                 raise RuntimeError(f"{label} FIFO does not exist: {path}")
@@ -140,6 +167,8 @@ class RawSessionPublisher:
     def start_media_flow(self) -> None:
         if self.media_started:
             return
+        if self.pipeline is None:
+            raise RuntimeError("GStreamer pipeline is not initialized")
         print(
             f"Starting raw-session WebRTC media flow session={self.args.session_id}",
             file=sys.stderr,
@@ -154,25 +183,32 @@ class RawSessionPublisher:
         browser_host_ip: str | None,
         timeout_seconds: float = 8.0,
     ) -> str:
-        if browser_host_ip:
-            offer_text = replace_mdns_candidates(offer_text, browser_host_ip)
-        event = threading.Event()
-        context: dict[str, object] = {"event": event}
-        GLib.idle_add(self.apply_offer_and_create_answer, offer_text, context)
-        if not event.wait(timeout_seconds):
-            state = self.pipeline.get_state(0)
-            raise RuntimeError(
-                "timed out waiting for GStreamer SDP answer; "
-                f"pipeline_state={state.state.value_nick} pending={state.pending.value_nick}"
-            )
-        if "error" in context:
-            raise RuntimeError(str(context["error"]))
-        answer = context.get("answer")
-        if not isinstance(answer, str):
-            raise RuntimeError("GStreamer did not produce an SDP answer")
-        if self.args.answer_file:
-            Path(self.args.answer_file).write_text(answer, encoding="utf-8")
-        return answer
+        with self.offer_lock:
+            if self.pipeline_failed or self.media_started:
+                self.reset_pipeline("new browser offer")
+            if browser_host_ip:
+                offer_text = replace_mdns_candidates(offer_text, browser_host_ip)
+            event = threading.Event()
+            context: dict[str, object] = {"event": event}
+            GLib.idle_add(self.apply_offer_and_create_answer, offer_text, context)
+            if not event.wait(timeout_seconds):
+                if self.pipeline is not None:
+                    state = self.pipeline.get_state(0)
+                    state_text = f"{state.state.value_nick} pending={state.pending.value_nick}"
+                else:
+                    state_text = "not-initialized"
+                raise RuntimeError(
+                    "timed out waiting for GStreamer SDP answer; "
+                    f"pipeline_state={state_text}"
+                )
+            if "error" in context:
+                raise RuntimeError(str(context["error"]))
+            answer = context.get("answer")
+            if not isinstance(answer, str):
+                raise RuntimeError("GStreamer did not produce an SDP answer")
+            if self.args.answer_file:
+                Path(self.args.answer_file).write_text(answer, encoding="utf-8")
+            return answer
 
     def apply_offer_and_create_answer(
         self,
@@ -188,6 +224,8 @@ class RawSessionPublisher:
                 GstWebRTC.WebRTCSDPType.OFFER,
                 sdp_message,
             )
+            if self.webrtc is None:
+                raise RuntimeError("GStreamer WebRTC element is not initialized")
             promise = Gst.Promise.new_with_change_func(self.on_remote_description_set, context)
             self.webrtc.emit("set-remote-description", offer, promise)
         except Exception as error:  # noqa: BLE001 - diagnostic publisher reports setup failures.
@@ -205,6 +243,12 @@ class RawSessionPublisher:
         _promise: Gst.Promise,
         context: dict[str, object] | None,
     ) -> None:
+        if self.webrtc is None:
+            self.fail_pending_answer(
+                context,
+                RuntimeError("GStreamer WebRTC element is not initialized"),
+            )
+            return
         promise = Gst.Promise.new_with_change_func(self.on_answer_created, context)
         self.webrtc.emit("create-answer", None, promise)
 
@@ -229,6 +273,12 @@ class RawSessionPublisher:
             )
             return
         set_local = Gst.Promise.new()
+        if self.webrtc is None:
+            self.fail_pending_answer(
+                context,
+                RuntimeError("GStreamer WebRTC element is not initialized"),
+            )
+            return
         self.webrtc.emit("set-local-description", answer, set_local)
         set_local.interrupt()
         self.start_media_flow()
@@ -247,6 +297,8 @@ class RawSessionPublisher:
 
     def log_webrtc_property(self, property_name: str) -> None:
         try:
+            if self.webrtc is None:
+                return
             value = self.webrtc.get_property(property_name)
         except TypeError:
             return
@@ -258,11 +310,15 @@ class RawSessionPublisher:
             print(f"ICE candidate mline={mline_index}: {candidate}", file=sys.stderr)
 
     def write_answer_if_ice_complete(self) -> None:
+        if self.webrtc is None:
+            return
         state = self.webrtc.get_property("ice-gathering-state")
         if state == GstWebRTC.WebRTCICEGatheringState.COMPLETE:
             self.write_current_answer()
 
     def write_current_answer(self) -> bool:
+        if self.webrtc is None:
+            return True
         description = self.webrtc.get_property("local-description")
         if description is None:
             return True
@@ -298,10 +354,24 @@ class RawSessionPublisher:
         if isinstance(event, threading.Event):
             event.set()
 
+    def mark_pipeline_failed(self, reason: str) -> None:
+        print(
+            f"Raw-session WebRTC pipeline stopped session={self.args.session_id}: {reason}",
+            file=sys.stderr,
+            flush=True,
+        )
+        self.pipeline_failed = True
+        self.media_started = False
+        if self.pending_answer_context is not None:
+            self.fail_pending_answer(self.pending_answer_context, RuntimeError(reason))
+            self.pending_answer_context = None
+        if self.pipeline is not None:
+            self.pipeline.set_state(Gst.State.NULL)
+
     def on_bus_message(self, _bus: Gst.Bus, message: Gst.Message) -> None:
         if message.type == Gst.MessageType.ERROR:
             error, debug = message.parse_error()
-            fail(f"GStreamer error: {error.message}\n{debug or ''}")
+            self.mark_pipeline_failed(f"GStreamer error from {message.src.get_name()}: {error.message}\n{debug or ''}")
         if message.type == Gst.MessageType.WARNING:
             warning, debug = message.parse_warning()
             print(
@@ -318,12 +388,7 @@ class RawSessionPublisher:
                 flush=True,
             )
         if message.type == Gst.MessageType.EOS:
-            print(
-                f"Pipeline ended after EOS from {message.src.get_name()}.",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.loop.quit()
+            self.mark_pipeline_failed(f"EOS from {message.src.get_name()}")
 
 
 def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandler]:
