@@ -25,9 +25,13 @@ Linux Python publisher
 Important behaviors:
 
 - The browser can render live WebRTC video in-page.
+- The browser can receive generated Opus audio in the same media element.
 - The browser may produce `.local` mDNS ICE candidates.
 - The spike publisher rewrites `.local` candidates to the HTTP request source IP.
 - The test currently opens a temporary TCP signaling port, usually `18080`.
+- Chrome/Edge normally offer Opus as dynamic payload type `111`; the publisher
+  must honor the negotiated payload type instead of assuming its own static
+  value.
 
 ## Next production-shaped slice
 
@@ -55,27 +59,57 @@ raw media until signaling and lifecycle are predictable.
 Experimental endpoint names should stay clearly temporary:
 
 ```http
-POST /api/v1/experimental/webrtc/test-pattern/offer
+POST /api/v1/sessions/{session_id}/webrtc/offer
 Authorization: Bearer <seat token>
-Content-Type: application/sdp
+Content-Type: application/json
 
-v=0
-...
+{
+  "seat_id": "windows-seat-1",
+  "role": "player",
+  "player_number": 1,
+  "sdp_offer": "v=0\r\n..."
+}
 ```
 
 Response:
 
 ```http
 200 OK
-Content-Type: application/sdp
+Content-Type: application/json
 
-v=0
-...
+{
+  "session_id": "session-one",
+  "media_transport": "web_rtc",
+  "sdp_answer": "v=0\r\n...",
+  "expires_unix_ms": 123456789
+}
 ```
+
+For spectators and producer feeds, use the same offer/answer shape but change
+the role and supply the matching grant identity when needed:
+
+```json
+{
+  "seat_id": "producer-console",
+  "role": "producer",
+  "spectator_grant_id": "grant-one",
+  "sdp_offer": "v=0\r\n..."
+}
+```
+
+The shared protocol types for this future API are:
+
+- `WebRtcSeatRole`
+- `WebRtcOfferRequest`
+- `WebRtcAnswerResponse`
 
 Failure responses:
 
 - `400 invalid_sdp_offer`
+- `400 invalid_webrtc_role`
+- `401 unauthorized`
+- `403 seat_not_allowed`
+- `404 session_not_found`
 - `409 publisher_busy`
 - `502 publisher_failed`
 - `504 publisher_timeout`

@@ -258,6 +258,33 @@ pub struct SpectatorGrant {
     pub expires_unix_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebRtcSeatRole {
+    Player,
+    Spectator,
+    Producer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebRtcOfferRequest {
+    pub seat_id: String,
+    pub role: WebRtcSeatRole,
+    pub sdp_offer: String,
+    #[serde(default)]
+    pub player_number: Option<u32>,
+    #[serde(default)]
+    pub spectator_grant_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebRtcAnswerResponse {
+    pub session_id: String,
+    pub media_transport: MediaTransport,
+    pub sdp_answer: String,
+    pub expires_unix_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -388,7 +415,7 @@ mod tests {
         MediaTransport, PlayerSlot, PlayerSlotPresentation, PlayerSlotState, PreviewStatus,
         RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState,
         SessionSummary, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
-        UpdateSessionState,
+        UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest, WebRtcSeatRole,
     };
 
     #[test]
@@ -441,6 +468,46 @@ mod tests {
         assert_eq!(value["media_transport"], "udp_mpeg_ts");
         assert_eq!(value["media_udp_port"], 41_001);
         assert_eq!(value["expires_unix_ms"], 123_456);
+    }
+
+    #[test]
+    fn webrtc_offer_and_answer_payloads_have_stable_field_names() {
+        let offer = WebRtcOfferRequest {
+            seat_id: "windows-seat-2".to_owned(),
+            role: WebRtcSeatRole::Spectator,
+            sdp_offer: "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n".to_owned(),
+            player_number: None,
+            spectator_grant_id: Some("grant-one".to_owned()),
+        };
+
+        let offer_value = serde_json::to_value(offer).unwrap();
+        assert_eq!(offer_value["seat_id"], "windows-seat-2");
+        assert_eq!(offer_value["role"], "spectator");
+        assert_eq!(offer_value["spectator_grant_id"], "grant-one");
+        assert!(
+            offer_value["sdp_offer"]
+                .as_str()
+                .unwrap()
+                .starts_with("v=0")
+        );
+
+        let answer = WebRtcAnswerResponse {
+            session_id: "session-one".to_owned(),
+            media_transport: MediaTransport::WebRtc,
+            sdp_answer: "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n".to_owned(),
+            expires_unix_ms: 123_456,
+        };
+
+        let answer_value = serde_json::to_value(answer).unwrap();
+        assert_eq!(answer_value["session_id"], "session-one");
+        assert_eq!(answer_value["media_transport"], "web_rtc");
+        assert_eq!(answer_value["expires_unix_ms"], 123_456);
+        assert!(
+            answer_value["sdp_answer"]
+                .as_str()
+                .unwrap()
+                .starts_with("v=0")
+        );
     }
 
     #[test]

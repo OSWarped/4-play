@@ -103,6 +103,8 @@ Exit criteria:
 
 ## Phase W1: Browser playback spike
 
+Status: audio/video proof of concept passed on the reference LAN.
+
 Goal: prove in-page video can meet the latency bar before touching the default
 player flow.
 
@@ -116,6 +118,27 @@ Deliverables:
   - attach the remote `MediaStream` to a `<video>`;
   - display connection state, jitter/packet stats, dropped frames when available;
 - one host-side publisher path using the fastest available practical stack.
+
+Implemented:
+
+- `/webrtc-test` can create a recv-only peer for video-only or video+audio.
+- Browser can signal the standalone publisher through HTTP `/offer`.
+- Browser attaches the remote stream directly to an in-page `<video>`.
+- Browser diagnostics log track attach/mute/unmute/end events.
+- Receiver stats include decoded frames, dropped frames, audio samples decoded,
+  packet loss, jitter, and RTT where available.
+- `tools/webrtc-gst-test-pattern.py` publishes a VP8 video test pattern and
+  optional Opus audio ticks through GStreamer `webrtcbin`.
+- The publisher rewrites browser `.local` mDNS candidates to the HTTP request
+  source IP for this spike.
+- The publisher defaults Opus payload type to `111`, matching Chrome/Edge's
+  usual WebRTC Opus offer.
+
+Validated:
+
+- On 2026-10-11, the browser rendered the generated VP8 video test pattern.
+- On 2026-10-11, the browser also received audible generated Opus audio ticks
+  with the same in-page media surface.
 
 Candidate publisher stacks, in preferred experiment order:
 
@@ -132,10 +155,8 @@ Latency gates:
 
 Current host readiness note:
 
-- On 2026-10-11, `192.168.20.68` did not have `gst-launch-1.0` or
-  `gst-inspect-1.0` installed.
-- Use `deploy/systemd/check-browser-media-prereqs.sh` on the Linux runtime host
-  before attempting the GStreamer publisher spike.
+- `deploy/systemd/check-browser-media-prereqs.sh` validates the GStreamer and
+  Python GI packages needed for the spike.
 - Do not enable `media_transport: "web_rtc"` in normal clients until the host
   advertises WebRTC support and the latency gates pass.
 
@@ -202,9 +223,10 @@ After player seats are stable:
 
 ## Current next development steps
 
-1. Finish W0 contracts and commit.
-2. Decide the first publisher stack for the Linux host.
-3. Build the W1 test publisher.
-4. Wire `/webrtc-test` to the test signaling/publisher path.
-5. Measure against the existing FFplay path before enabling any default client
-   behavior.
+1. Run the W1 audio/video path for 5-10 minutes and record stats/CPU.
+2. Add control-plane-owned WebRTC offer/answer signaling.
+3. Move the GStreamer publisher under runtime-host/session lifecycle ownership.
+4. Keep publishing a test pattern until lifecycle and cleanup are reliable.
+5. Feed real session-runtime MAME media into the WebRTC publisher.
+6. Add client UI feature flag for browser media while keeping UDP/FFplay
+   fallback.
