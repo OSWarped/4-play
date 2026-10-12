@@ -70,6 +70,7 @@ class RawSessionPublisher:
         self.reader_threads: list[threading.Thread] = []
         self.media_epoch_ns: int | None = None
         self.last_pts: dict[str, int] = {}
+        self.audio_next_pts: int | None = None
         self.started = False
         self.media_started = False
         self.pipeline_failed = False
@@ -197,16 +198,36 @@ class RawSessionPublisher:
         with self.media_lock:
             if self.media_epoch_ns is None or self.pipeline is None:
                 return  # Drain stale frames even when no browser is connected.
-            pts = max(time.monotonic_ns() - self.media_epoch_ns, self.last_pts.get(label, -1) + 1)
+            arrival_pts = time.monotonic_ns() - self.media_epoch_ns
+            duration = (
+                Gst.SECOND * self.args.fps_den // self.args.fps_num
+                if label == "video" else (len(data) // 4) * Gst.SECOND // 48000
+            )
+            discontinuity = False
+            if label == "audio":
+                # PCM samples are continuous even when FIFO reads arrive in
+                # bursts. Arrival-time PTS creates overlaps/gaps in Opus input.
+                pts = self.audio_next_pts
+                if pts is None or abs(arrival_pts - pts) > Gst.SECOND // 10:
+                    if pts is not None:
+                        print(
+                            f"Audio clock reanchored after {(arrival_pts - pts) / 1_000_000:+.1f} ms drift",
+                            file=sys.stderr, flush=True,
+                        )
+                    previous_pts = self.last_pts.get(label)
+                    pts = max(arrival_pts, previous_pts + duration if previous_pts is not None else 0)
+                    discontinuity = True
+                self.audio_next_pts = pts + duration
+            else:
+                pts = max(arrival_pts, self.last_pts.get(label, -1) + 1)
             self.last_pts[label] = pts
             buffer = Gst.Buffer.new_allocate(None, len(data), None)
             buffer.fill(0, bytes(data))
             buffer.pts = pts
             buffer.dts = Gst.CLOCK_TIME_NONE
-            buffer.duration = (
-                Gst.SECOND * self.args.fps_den // self.args.fps_num
-                if label == "video" else Gst.SECOND // 50
-            )
+            buffer.duration = duration
+            if discontinuity:
+                buffer.set_flags(Gst.BufferFlags.DISCONT)
             source = self.pipeline.get_by_name(f"{label}_source")
             result = source.emit("push-buffer", buffer)
             if result not in (Gst.FlowReturn.OK, Gst.FlowReturn.FLUSHING):
@@ -251,6 +272,7 @@ class RawSessionPublisher:
         self.pipeline.set_state(Gst.State.PLAYING)
         with self.media_lock:
             self.last_pts.clear()
+            self.audio_next_pts = None
             self.media_epoch_ns = time.monotonic_ns()
         self.media_started = True
 

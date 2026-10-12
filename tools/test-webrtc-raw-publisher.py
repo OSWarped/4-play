@@ -49,6 +49,7 @@ class InputTests(unittest.TestCase):
         publisher.media_lock = threading.Lock()
         publisher.media_epoch_ns = 100
         publisher.last_pts = {}
+        publisher.audio_next_pts = None
         publisher.args = argparse.Namespace(fps_num=60000, fps_den=1000)
         source = Mock()
         source.emit.return_value = "ok"
@@ -62,7 +63,7 @@ class InputTests(unittest.TestCase):
         namespace.update(Gst=fake_gst, time=time)
         with patch("time.monotonic_ns", side_effect=[200, 200, 199, 210]):
             for label in ["video", "video", "video", "audio"]:
-                publisher.push_media_block(label, bytearray(b"abcd"))
+                publisher.push_media_block(label, bytearray(3840))
         buffers = [call.args[1] for call in source.emit.call_args_list]
         self.assertEqual([buffer.pts for buffer in buffers], [100, 101, 102, 110])
         self.assertEqual(buffers[0].duration, 16_666_666)
@@ -70,6 +71,31 @@ class InputTests(unittest.TestCase):
         publisher.media_epoch_ns = None
         publisher.push_media_block("video", bytearray(b"abcd"))
         self.assertEqual(source.emit.call_count, 4)
+
+    def test_audio_samples_remain_contiguous_despite_read_jitter(self):
+        publisher = Publisher.__new__(Publisher)
+        publisher.media_lock = threading.Lock()
+        publisher.media_epoch_ns = 0
+        publisher.last_pts = {}
+        publisher.audio_next_pts = None
+        publisher.args = argparse.Namespace(fps_num=60, fps_den=1)
+        publisher.pipeline = Mock()
+        source = publisher.pipeline.get_by_name.return_value
+        source.emit.return_value = "ok"
+        gst = Mock()
+        gst.SECOND = 1_000_000_000
+        gst.CLOCK_TIME_NONE = -1
+        gst.FlowReturn.OK = "ok"
+        gst.Buffer.new_allocate.side_effect = lambda *args: Mock()
+        namespace.update(Gst=gst, time=time, sys=Mock())
+        arrivals = [20, 43, 55, 55, 104, 120, 320, 341]
+        with patch("time.monotonic_ns", side_effect=[value * 1_000_000 for value in arrivals]):
+            for _ in arrivals:
+                publisher.push_media_block("audio", bytearray(3840))
+        buffers = [call.args[1] for call in source.emit.call_args_list]
+        self.assertEqual([buffer.pts // 1_000_000 for buffer in buffers], [20, 40, 60, 80, 100, 120, 320, 340])
+        self.assertTrue(all(buffer.duration == 20_000_000 for buffer in buffers))
+        self.assertEqual([index for index, buffer in enumerate(buffers) if buffer.set_flags.called], [0, 6])
 
 
 class EncoderTests(unittest.TestCase):
@@ -93,6 +119,7 @@ class EncoderTests(unittest.TestCase):
             publisher = module.RawSessionPublisher.__new__(module.RawSessionPublisher)
             publisher.media_lock = threading.Lock()
             publisher.last_pts = {}
+            publisher.audio_next_pts = None
             publisher.args = argparse.Namespace(fps_num=60000, fps_den=1000)
             publisher.pipeline = Gst.parse_launch(template.format(
                 width=304, height=224, fps_num=60000, fps_den=1000,
@@ -109,9 +136,12 @@ class EncoderTests(unittest.TestCase):
             try:
                 for frame in range(180):
                     publisher.push_media_block("video", bytearray([frame % 256, 0, 0, 0]) * (304 * 224))
-                    publisher.push_media_block("audio", bytearray(3840))
-                    if frame % 7:
-                        time.sleep(1 / 60)
+                    # Deliver exactly 20 ms blocks on a 48 kHz sample timeline;
+                    # two adjacent pushes simulate a bursty FIFO read.
+                    if frame % 6 in (0, 2, 3, 4, 5):
+                        publisher.push_media_block("audio", bytearray(3840))
+                    # Burst a pair of frames, then recover nominal pacing.
+                    time.sleep((0 if frame % 7 == 0 else 2 if frame % 7 == 1 else 1) / 60)
                     error = bus.pop_filtered(Gst.MessageType.ERROR)
                     self.assertIsNone(error, error.parse_error() if error else "")
                 time.sleep(0.1)

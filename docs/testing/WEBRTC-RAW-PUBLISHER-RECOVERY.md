@@ -25,6 +25,14 @@ the actual VP8/Opus branches, including bursts and rebuilding the pipeline.
 Windows skips the real encoder test because those bindings are unavailable.
 This test does not establish browser playback or end-to-end latency.
 
+Audio follow-up: read-arrival timestamps on 20 ms PCM blocks can introduce
+gaps/overlaps when the operating system schedules FIFO reads unevenly. Audio now
+advances by the number of samples in each block after anchoring to the shared
+clock. Ordinary read jitter leaves the sample timeline continuous. Drift beyond
+100 ms reanchors the timeline and marks a discontinuity to bound recovery delay;
+the publisher logs these events. Repeated reanchors warrant investigating upstream
+sample loss or runtime pacing. Regression checks cover jitter, bursts, and stalls.
+
 ## Deploy and manually validate
 
 ```bash
