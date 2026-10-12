@@ -6,6 +6,7 @@ environment_directory="/etc/4play"
 environment_file="${environment_directory}/4play.env"
 control_plane_unit="/etc/systemd/system/4play-control-plane.service"
 host_agent_unit="/etc/systemd/system/4play-runtime-host-agent.service"
+webrtc_spike_unit="/etc/systemd/system/4play-webrtc-spike-publisher.service"
 
 if [[ "${EUID}" -ne 0 ]]; then
     printf 'Run this installer with sudo:\n'
@@ -26,14 +27,17 @@ fi
 
 install -m 0644 "$repository_root/deploy/systemd/4play-control-plane.service" "$control_plane_unit"
 install -m 0644 "$repository_root/deploy/systemd/4play-runtime-host-agent.service" "$host_agent_unit"
+install -m 0644 "$repository_root/deploy/systemd/4play-webrtc-spike-publisher.service" "$webrtc_spike_unit"
 
 systemctl daemon-reload
 
 printf '\nInstalled systemd unit files:\n'
 printf '  %s\n' "$control_plane_unit"
 printf '  %s\n' "$host_agent_unit"
+printf '  %s\n' "$webrtc_spike_unit"
 printf '\nNext commands after reviewing %s:\n' "$environment_file"
 printf '  sudo systemctl enable --now 4play-control-plane.service\n'
 printf '  sudo systemctl enable --now 4play-runtime-host-agent.service\n'
-printf '  systemctl status 4play-control-plane.service 4play-runtime-host-agent.service\n'
-
+printf '  # Optional WebRTC browser-media spike publisher:\n'
+printf '  sudo systemctl enable --now 4play-webrtc-spike-publisher.service\n'
+printf '  systemctl status 4play-control-plane.service 4play-runtime-host-agent.service 4play-webrtc-spike-publisher.service\n'

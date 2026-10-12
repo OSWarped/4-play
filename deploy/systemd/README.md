@@ -16,7 +16,8 @@ The installer:
 
 - creates `/etc/4play/4play.env` from `4play.env.example` if it does not
   already exist
-- installs the control-plane and runtime-host-agent unit files
+- installs the control-plane, runtime-host-agent, and optional experimental
+  WebRTC spike publisher unit files
 - reloads systemd
 - does not start services automatically
 
@@ -40,6 +41,16 @@ sudo systemctl enable --now 4play-control-plane.service
 sudo systemctl enable --now 4play-runtime-host-agent.service
 ```
 
+For browser-native media spike testing, also enable the experimental local
+publisher. It listens only on `127.0.0.1:18080`; the browser talks to it through
+the authenticated control-plane proxy configured by
+`FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL`.
+
+```bash
+sudo systemctl enable --now 4play-webrtc-spike-publisher.service
+sudo systemctl restart 4play-control-plane.service
+```
+
 For the reference headless MAME runtime, skip startup warnings and game-info
 screens so games can begin producing raw media without local UI
 acknowledgement:
@@ -53,7 +64,10 @@ sudo systemctl restart 4play-runtime-host-agent.service
 Check status:
 
 ```bash
-systemctl status 4play-control-plane.service 4play-runtime-host-agent.service
+systemctl status \
+  4play-control-plane.service \
+  4play-runtime-host-agent.service \
+  4play-webrtc-spike-publisher.service
 ```
 
 Run diagnostics:

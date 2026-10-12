@@ -91,6 +91,14 @@ cargo build --release -p control-plane-server
 sudo systemctl restart 4play-control-plane.service
 ```
 
+The reference systemd deployment also includes an optional local publisher unit:
+
+```bash
+sudo deploy/systemd/install-reference-server.sh
+sudo systemctl enable --now 4play-webrtc-spike-publisher.service
+sudo systemctl restart 4play-control-plane.service
+```
+
 With the proxy enabled, `/webrtc-test` defaults `Publisher URL` to:
 
 ```text

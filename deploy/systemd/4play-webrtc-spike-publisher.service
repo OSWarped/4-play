@@ -1,0 +1,17 @@
+[Unit]
+Description=4-Play experimental WebRTC spike publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blake
+Group=blake
+WorkingDirectory=/home/blake/src/4-play
+EnvironmentFile=/etc/4play/4play.env
+ExecStart=/usr/bin/python3 /home/blake/src/4-play/tools/webrtc-gst-test-pattern.py --http-signal 127.0.0.1:18080 --answer-file /tmp/4play-webrtc-answer.sdp
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
