@@ -120,7 +120,9 @@ h2 {
   margin-top: 14px;
 }
 
-input[type="url"] {
+input[type="url"],
+input[type="text"],
+input[type="password"] {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel-2);

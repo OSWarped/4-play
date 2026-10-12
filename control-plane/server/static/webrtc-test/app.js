@@ -15,6 +15,9 @@ const elements = {
   seatId: document.querySelector("#seat-id"),
   apiToken: document.querySelector("#api-token"),
   publisherUrl: document.querySelector("#publisher-url"),
+  signalingMode: document.querySelector("#signaling-mode"),
+  useControlPlane: document.querySelector("#use-control-plane"),
+  useDirectPublisher: document.querySelector("#use-direct-publisher"),
   signalPublisher: document.querySelector("#signal-publisher"),
   applyAnswer: document.querySelector("#apply-answer"),
   remoteVideo: document.querySelector("#remote-video"),
@@ -98,11 +101,21 @@ elements.applyAnswer.addEventListener("click", () => applyAnswer());
 elements.remoteAnswer.addEventListener("input", () => {
   elements.applyAnswer.disabled = !peer || !elements.remoteAnswer.value.trim();
 });
+elements.publisherUrl.addEventListener("input", updateSignalingMode);
+elements.useControlPlane.addEventListener("click", () => {
+  elements.publisherUrl.value = controlPlanePublisherUrl();
+  updateSignalingMode();
+});
+elements.useDirectPublisher.addEventListener("click", () => {
+  elements.publisherUrl.value = directPublisherUrl();
+  updateSignalingMode();
+});
 
-elements.publisherUrl.value = `${location.origin}/api/v1/experimental/webrtc/test-pattern/offer`;
+elements.publisherUrl.value = controlPlanePublisherUrl();
 renderCapabilities();
 updatePeerState();
 renderStats(new Map());
+updateSignalingMode();
 log("WebRTC diagnostics loaded.");
 
 async function createOffer() {
@@ -150,7 +163,7 @@ async function signalPublisher() {
   }
   try {
     log(`Sending offer to ${url}`);
-    const useControlPlane = url.includes("/api/v1/experimental/webrtc/");
+    const useControlPlane = isControlPlanePublisherUrl(url);
     const response = useControlPlane
       ? await signalControlPlanePublisher(url)
       : await signalRawPublisher(url);
@@ -206,6 +219,29 @@ function parseControlPlaneAnswer(text) {
   }
   log(`Control-plane returned ${payload.media_transport || "unknown"} answer for ${payload.session_id || "unknown"}.`);
   return payload.sdp_answer;
+}
+
+function controlPlanePublisherUrl() {
+  return `${location.origin}/api/v1/experimental/webrtc/test-pattern/offer`;
+}
+
+function directPublisherUrl() {
+  return `http://${location.hostname}:18080/offer`;
+}
+
+function isControlPlanePublisherUrl(url) {
+  return url.includes("/api/v1/experimental/webrtc/");
+}
+
+function updateSignalingMode() {
+  const url = elements.publisherUrl.value.trim();
+  if (isControlPlanePublisherUrl(url)) {
+    elements.signalingMode.textContent =
+      "Mode: authenticated control-plane proxy. Requires the seat API token and the local publisher service.";
+  } else {
+    elements.signalingMode.textContent =
+      "Mode: direct publisher. Sends raw SDP to the publisher URL and bypasses the control plane.";
+  }
 }
 
 async function applyAnswer() {
