@@ -140,6 +140,22 @@ behavior:
 That last value is expected until real session-runtime media is wired into a
 runtime-host-owned WebRTC publisher.
 
+You can verify the same non-browser plumbing from SSH before opening the
+browser:
+
+```bash
+cd ~/src/4-play
+FOURPLAY_SEAT_API_TOKEN=<seat-api-token> \
+python3 tools/check-webrtc-spike-status.py \
+  --control-plane-url http://127.0.0.1:8080 \
+  --publisher-health-url http://127.0.0.1:18080/health \
+  --require-test-pattern-proxy
+```
+
+This checker does not create a WebRTC peer connection and does not prove media
+decoding. It confirms that the control plane, protected readiness endpoint, and
+optional local test-pattern publisher are reachable before the browser test.
+
 Why `FOURPLAY_WEBRTC_BROWSER_HOST_IP` matters:
 
 - Chrome/Edge often hide the Windows LAN address behind `.local` mDNS ICE
