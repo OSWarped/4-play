@@ -37,17 +37,17 @@ from gi.repository import GLib, Gst, GstSdp, GstWebRTC  # noqa: E402
 
 PIPELINE_TEMPLATE = """
 webrtcbin name=webrtc bundle-policy=max-bundle latency=0
-filesrc location={video_path} do-timestamp=true
-  ! rawvideoparse format=bgrx width={width} height={height} framerate={fps_num}/{fps_den}
-  ! queue leaky=downstream max-size-buffers=2 max-size-time=0 max-size-bytes=0
+filesrc name=video_source location={video_path} do-timestamp=true
+  ! rawvideoparse name=video_parse format=bgrx width={width} height={height} framerate={fps_num}/{fps_den}
+  ! queue name=video_queue leaky=downstream max-size-buffers=2 max-size-time=0 max-size-bytes=0
   ! videoconvert
   ! vp8enc deadline=1 cpu-used=8 target-bitrate={video_bitrate_bps} keyframe-max-dist={keyframe_distance}
   ! rtpvp8pay pt=96
   ! application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000
   ! webrtc.
-filesrc location={audio_path} do-timestamp=true
-  ! rawaudioparse use-sink-caps=false format=pcm pcm-format=s16le sample-rate=48000 num-channels=2
-  ! queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0
+filesrc name=audio_source location={audio_path} do-timestamp=true
+  ! rawaudioparse name=audio_parse use-sink-caps=false format=pcm pcm-format=s16le sample-rate=48000 num-channels=2
+  ! queue name=audio_queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0
   ! audioconvert
   ! audioresample
   ! opusenc audio-type=restricted-lowdelay bitrate={audio_bitrate_bps}
@@ -84,6 +84,9 @@ class RawSessionPublisher:
             raise RuntimeError("pipeline did not create webrtcbin named 'webrtc'")
 
         self.webrtc.connect("notify::ice-gathering-state", self.on_ice_gathering_state)
+        self.webrtc.connect("notify::ice-connection-state", self.on_webrtc_state_changed)
+        self.webrtc.connect("notify::connection-state", self.on_webrtc_state_changed)
+        self.webrtc.connect("notify::signaling-state", self.on_webrtc_state_changed)
         self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
 
         bus = self.pipeline.get_bus()
@@ -234,7 +237,21 @@ class RawSessionPublisher:
         self.write_answer_if_ice_complete()
 
     def on_ice_gathering_state(self, _webrtc: Gst.Element, _param: object) -> None:
+        self.log_webrtc_property("ice-gathering-state")
         self.write_answer_if_ice_complete()
+
+    def on_webrtc_state_changed(self, _webrtc: Gst.Element, param: object) -> None:
+        property_name = getattr(param, "name", "")
+        if property_name:
+            self.log_webrtc_property(property_name)
+
+    def log_webrtc_property(self, property_name: str) -> None:
+        try:
+            value = self.webrtc.get_property(property_name)
+        except TypeError:
+            return
+        display = getattr(value, "value_nick", value)
+        print(f"WebRTC {property_name}: {display}", file=sys.stderr, flush=True)
 
     def on_ice_candidate(self, _webrtc: Gst.Element, mline_index: int, candidate: str) -> None:
         if self.args.verbose:
@@ -285,8 +302,27 @@ class RawSessionPublisher:
         if message.type == Gst.MessageType.ERROR:
             error, debug = message.parse_error()
             fail(f"GStreamer error: {error.message}\n{debug or ''}")
+        if message.type == Gst.MessageType.WARNING:
+            warning, debug = message.parse_warning()
+            print(
+                f"GStreamer warning from {message.src.get_name()}: {warning.message}\n{debug or ''}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if message.type == Gst.MessageType.STATE_CHANGED and message.src in (self.pipeline, self.webrtc):
+            old, new, pending = message.parse_state_changed()
+            print(
+                f"GStreamer state {message.src.get_name()}: "
+                f"{old.value_nick}->{new.value_nick} pending={pending.value_nick}",
+                file=sys.stderr,
+                flush=True,
+            )
         if message.type == Gst.MessageType.EOS:
-            print("Pipeline ended.", file=sys.stderr)
+            print(
+                f"Pipeline ended after EOS from {message.src.get_name()}.",
+                file=sys.stderr,
+                flush=True,
+            )
             self.loop.quit()
 
 
