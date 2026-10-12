@@ -62,6 +62,14 @@
           <h2>Remote answer</h2>
           <textarea id="remote-answer" spellcheck="false" placeholder="Paste the SDP answer from the test publisher."></textarea>
           <label class="field-row">
+            <span>Seat ID</span>
+            <input id="seat-id" type="text" value="webrtc-test-seat" />
+          </label>
+          <label class="field-row">
+            <span>API token</span>
+            <input id="api-token" type="password" autocomplete="off" placeholder="Required for control-plane signaling" />
+          </label>
+          <label class="field-row">
             <span>Publisher URL</span>
             <input id="publisher-url" type="url" />
           </label>

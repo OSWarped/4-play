@@ -8,6 +8,8 @@ const BIND_ENVIRONMENT_VARIABLE: &str = "FOURPLAY_CONTROL_PLANE_BIND";
 const DEFAULT_DATABASE_PATH: &str = "data/control-plane.sqlite3";
 const DEFAULT_OFFLINE_SECONDS: u64 = 15;
 const DEFAULT_PREVIEW_STALE_MS: u64 = 5_000;
+const WEBRTC_TEST_PATTERN_PUBLISHER_ENVIRONMENT_VARIABLE: &str =
+    "FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -43,8 +45,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if preview_stale_ms == 0 {
         return Err("FOURPLAY_PREVIEW_STALE_MS must be greater than zero".into());
     }
+    let webrtc_test_pattern_publisher_url =
+        env::var(WEBRTC_TEST_PATTERN_PUBLISHER_ENVIRONMENT_VARIABLE).ok();
     let listener = TcpListener::bind(bind_address).await?;
-    let app = control_plane_server::app_with_database_tokens_ports_assets_and_preview(
+    let app = control_plane_server::app_with_database_tokens_ports_assets_preview_and_webrtc(
         &database_path,
         Duration::from_secs(offline_seconds),
         seat_api_token,
@@ -52,11 +56,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         port_pools,
         asset_root.clone(),
         Duration::from_millis(preview_stale_ms),
+        webrtc_test_pattern_publisher_url.clone(),
     )
     .await?;
 
     println!(
-        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms}",
+        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms} webrtc_test_pattern_publisher={}",
         database_path.display(),
         port_pools.media_port_start,
         port_pools.media_port_count,
@@ -65,7 +70,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         asset_root
             .as_ref()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "disabled".to_owned())
+            .unwrap_or_else(|| "disabled".to_owned()),
+        webrtc_test_pattern_publisher_url
+            .as_deref()
+            .unwrap_or("disabled")
     );
 
     axum::serve(listener, app)

@@ -141,6 +141,7 @@ dependencies = [
  "axum",
  "control-protocol",
  "http-body-util",
+ "reqwest",
  "serde_json",
  "tempfile",
  "tokio",

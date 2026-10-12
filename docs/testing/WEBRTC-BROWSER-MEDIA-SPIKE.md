@@ -67,6 +67,50 @@ python3 tools/webrtc-gst-test-pattern.py \
 Leave this command running. It owns the live GStreamer publisher and its
 temporary `/offer` signaling endpoint.
 
+## Optional: signal through the control plane
+
+The preferred production-shaped spike path is:
+
+```text
+browser /webrtc-test
+  -> authenticated control-plane experimental endpoint
+  -> standalone local publisher on 127.0.0.1:18080
+```
+
+To enable that proxy, set this on the Linux control-plane service environment:
+
+```bash
+FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL=http://127.0.0.1:18080/offer
+```
+
+Then rebuild/restart the control plane:
+
+```bash
+cd ~/src/4-play
+cargo build --release -p control-plane-server
+sudo systemctl restart 4play-control-plane.service
+```
+
+With the proxy enabled, `/webrtc-test` defaults `Publisher URL` to:
+
+```text
+http://192.168.20.68:8080/api/v1/experimental/webrtc/test-pattern/offer
+```
+
+Enter the seat API token in the page before clicking `Signal publisher`.
+
+If the proxy is not configured, the page will receive:
+
+```text
+webrtc_test_publisher_unavailable
+```
+
+You can still use the older direct path by setting `Publisher URL` back to:
+
+```text
+http://192.168.20.68:18080/offer
+```
+
 If Windows cannot reach `http://192.168.20.68:18080/health`, open the temporary
 spike port from the Windows seat:
 

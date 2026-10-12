@@ -12,6 +12,8 @@ const elements = {
   localOffer: document.querySelector("#local-offer"),
   copyOffer: document.querySelector("#copy-offer"),
   remoteAnswer: document.querySelector("#remote-answer"),
+  seatId: document.querySelector("#seat-id"),
+  apiToken: document.querySelector("#api-token"),
   publisherUrl: document.querySelector("#publisher-url"),
   signalPublisher: document.querySelector("#signal-publisher"),
   applyAnswer: document.querySelector("#apply-answer"),
@@ -23,6 +25,19 @@ const elements = {
 let peer = null;
 let statsTimer = null;
 let remoteTrackCount = 0;
+
+const storedToken = window.localStorage.getItem("fourplay.webrtcTestApiToken");
+if (storedToken) {
+  elements.apiToken.value = storedToken;
+}
+elements.apiToken.addEventListener("change", () => {
+  const token = elements.apiToken.value.trim();
+  if (token) {
+    window.localStorage.setItem("fourplay.webrtcTestApiToken", token);
+  } else {
+    window.localStorage.removeItem("fourplay.webrtcTestApiToken");
+  }
+});
 
 elements.createPeer.addEventListener("click", () => {
   resetPeer();
@@ -84,7 +99,7 @@ elements.remoteAnswer.addEventListener("input", () => {
   elements.applyAnswer.disabled = !peer || !elements.remoteAnswer.value.trim();
 });
 
-elements.publisherUrl.value = `http://${location.hostname}:18080/offer`;
+elements.publisherUrl.value = `${location.origin}/api/v1/experimental/webrtc/test-pattern/offer`;
 renderCapabilities();
 updatePeerState();
 renderStats(new Map());
@@ -135,24 +150,62 @@ async function signalPublisher() {
   }
   try {
     log(`Sending offer to ${url}`);
-    const response = await fetch(url, {
-      method: "POST",
-      mode: "cors",
-      headers: {
-        "content-type": "application/sdp; charset=utf-8",
-      },
-      body: elements.localOffer.value,
-    });
-    const answer = await response.text();
+    const useControlPlane = url.includes("/api/v1/experimental/webrtc/");
+    const response = useControlPlane
+      ? await signalControlPlanePublisher(url)
+      : await signalRawPublisher(url);
+    const responseText = await response.text();
     if (!response.ok) {
-      throw new Error(answer || `HTTP ${response.status}`);
+      throw new Error(responseText || `HTTP ${response.status}`);
     }
+    const answer = useControlPlane ? parseControlPlaneAnswer(responseText) : responseText;
     elements.remoteAnswer.value = answer;
     log("Received SDP answer from publisher.");
     await applyAnswer();
   } catch (error) {
     log(`Publisher signaling failed: ${error.message}`);
   }
+}
+
+async function signalRawPublisher(url) {
+  return fetch(url, {
+    method: "POST",
+    mode: "cors",
+    headers: {
+      "content-type": "application/sdp; charset=utf-8",
+    },
+    body: elements.localOffer.value,
+  });
+}
+
+async function signalControlPlanePublisher(url) {
+  const token = elements.apiToken.value.trim();
+  const seatId = elements.seatId.value.trim() || "webrtc-test-seat";
+  if (!token) {
+    throw new Error("Control-plane signaling requires an API token.");
+  }
+  window.localStorage.setItem("fourplay.webrtcTestApiToken", token);
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      seat_id: seatId,
+      role: "spectator",
+      sdp_offer: elements.localOffer.value,
+    }),
+  });
+}
+
+function parseControlPlaneAnswer(text) {
+  const payload = JSON.parse(text);
+  if (!payload.sdp_answer) {
+    throw new Error("Control-plane response did not include sdp_answer.");
+  }
+  log(`Control-plane returned ${payload.media_transport || "unknown"} answer for ${payload.session_id || "unknown"}.`);
+  return payload.sdp_answer;
 }
 
 async function applyAnswer() {

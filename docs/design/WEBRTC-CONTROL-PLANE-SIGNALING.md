@@ -54,6 +54,49 @@ runtime host/session runtime
 For the next slice, the media can still be a test pattern. Do not attach MAME
 raw media until signaling and lifecycle are predictable.
 
+## Implemented experimental proxy
+
+The control plane now exposes an authenticated experimental test-pattern proxy:
+
+```http
+POST /api/v1/experimental/webrtc/test-pattern/offer
+Authorization: Bearer <seat token>
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "seat_id": "webrtc-test-seat",
+  "role": "spectator",
+  "sdp_offer": "v=0\r\n..."
+}
+```
+
+Response:
+
+```json
+{
+  "session_id": "experimental-test-pattern",
+  "media_transport": "web_rtc",
+  "sdp_answer": "v=0\r\n...",
+  "expires_unix_ms": 123456789
+}
+```
+
+This endpoint is intentionally disabled unless the control-plane process is
+configured with:
+
+```bash
+FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL=http://127.0.0.1:18080/offer
+```
+
+When disabled, the endpoint returns `503 webrtc_test_publisher_unavailable`.
+When enabled, it forwards only the SDP offer to the standalone
+`tools/webrtc-gst-test-pattern.py` publisher and returns the answer inside the
+typed JSON envelope.
+
 ## API sketch
 
 Experimental endpoint names should stay clearly temporary:

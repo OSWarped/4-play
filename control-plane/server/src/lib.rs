@@ -21,7 +21,7 @@ use control_protocol::{
     ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat,
     RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList,
     SessionSummary, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
-    UpdateSessionState,
+    UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest,
 };
 use serde_json::{Value, json};
 use store::RuntimeHostStore;
@@ -31,6 +31,8 @@ pub const DEFAULT_OFFLINE_AFTER: Duration = Duration::from_secs(15);
 pub const DEFAULT_GRANT_TTL: Duration = Duration::from_secs(300);
 pub const DEFAULT_PREVIEW_STALE_AFTER: Duration = Duration::from_secs(5);
 const MAX_ASSET_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+const MAX_WEBRTC_SDP_BYTES: usize = 256 * 1024;
+const WEBRTC_PUBLISHER_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -61,6 +63,7 @@ pub struct AppState {
     runtime_host_api_token: String,
     asset_root: Option<PathBuf>,
     preview_stale_after_ms: u64,
+    webrtc_test_pattern_publisher_url: Option<String>,
 }
 
 impl AppState {
@@ -74,6 +77,7 @@ impl AppState {
             runtime_host_api_token: "test-runtime-host-token".to_owned(),
             asset_root: None,
             preview_stale_after_ms: duration_ms(DEFAULT_PREVIEW_STALE_AFTER),
+            webrtc_test_pattern_publisher_url: None,
         })
     }
 
@@ -85,6 +89,7 @@ impl AppState {
         port_pools: PortPoolConfig,
         asset_root: Option<PathBuf>,
         preview_stale_after: Duration,
+        webrtc_test_pattern_publisher_url: Option<String>,
     ) -> Result<Self, StoreError> {
         Ok(Self {
             runtime_hosts: RuntimeHostStore::open(path).await?,
@@ -95,6 +100,7 @@ impl AppState {
             runtime_host_api_token,
             asset_root,
             preview_stale_after_ms: duration_ms(preview_stale_after),
+            webrtc_test_pattern_publisher_url,
         })
     }
 }
@@ -118,6 +124,7 @@ pub async fn app_with_database(
             PortPoolConfig::default(),
             None,
             DEFAULT_PREVIEW_STALE_AFTER,
+            None,
         )
         .await?,
     ))
@@ -186,6 +193,29 @@ pub async fn app_with_database_tokens_ports_assets_and_preview(
     asset_root: Option<PathBuf>,
     preview_stale_after: Duration,
 ) -> Result<Router, StoreError> {
+    app_with_database_tokens_ports_assets_preview_and_webrtc(
+        path,
+        offline_after,
+        seat_api_token,
+        runtime_host_api_token,
+        port_pools,
+        asset_root,
+        preview_stale_after,
+        None,
+    )
+    .await
+}
+
+pub async fn app_with_database_tokens_ports_assets_preview_and_webrtc(
+    path: impl AsRef<Path>,
+    offline_after: Duration,
+    seat_api_token: String,
+    runtime_host_api_token: String,
+    port_pools: PortPoolConfig,
+    asset_root: Option<PathBuf>,
+    preview_stale_after: Duration,
+    webrtc_test_pattern_publisher_url: Option<String>,
+) -> Result<Router, StoreError> {
     Ok(app_with_state(
         AppState::persistent(
             path,
@@ -195,6 +225,7 @@ pub async fn app_with_database_tokens_ports_assets_and_preview(
             port_pools,
             asset_root,
             preview_stale_after,
+            webrtc_test_pattern_publisher_url,
         )
         .await?,
     ))
@@ -221,6 +252,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route(
             "/api/v1/sessions/cleanup-stale",
             post(cleanup_stale_sessions),
+        )
+        .route(
+            "/api/v1/experimental/webrtc/test-pattern/offer",
+            post(signal_webrtc_test_pattern),
         )
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
@@ -862,6 +897,75 @@ async fn request_session_stop(
         .map_err(ApiError::store)
 }
 
+async fn signal_webrtc_test_pattern(
+    State(state): State<AppState>,
+    Json(request): Json<WebRtcOfferRequest>,
+) -> Result<Json<WebRtcAnswerResponse>, ApiError> {
+    validate_webrtc_offer_request(&request)?;
+    let publisher_url = state
+        .webrtc_test_pattern_publisher_url
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "webrtc_test_publisher_unavailable",
+                "experimental WebRTC test-pattern publisher URL is not configured",
+            )
+        })?;
+
+    let client = reqwest::Client::builder()
+        .timeout(WEBRTC_PUBLISHER_TIMEOUT)
+        .build()
+        .map_err(|error| {
+            eprintln!("Failed to build WebRTC publisher HTTP client: {error}");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "webrtc_publisher_client_error",
+                "failed to initialize WebRTC publisher client",
+            )
+        })?;
+    let response = client
+        .post(publisher_url)
+        .header("content-type", "application/sdp; charset=utf-8")
+        .body(request.sdp_offer)
+        .send()
+        .await
+        .map_err(|error| {
+            eprintln!("WebRTC test-pattern publisher request failed: {error}");
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "webrtc_publisher_failed",
+                "experimental WebRTC publisher request failed",
+            )
+        })?;
+
+    let status = response.status();
+    let answer = response.text().await.map_err(|error| {
+        eprintln!("Failed reading WebRTC publisher response: {error}");
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "webrtc_publisher_failed",
+            "failed to read experimental WebRTC publisher response",
+        )
+    })?;
+    if !status.is_success() {
+        eprintln!("WebRTC test-pattern publisher returned {status}: {answer}");
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "webrtc_publisher_failed",
+            "experimental WebRTC publisher returned an error",
+        ));
+    }
+    validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
+
+    Ok(Json(WebRtcAnswerResponse {
+        session_id: "experimental-test-pattern".to_owned(),
+        media_transport: MediaTransport::WebRtc,
+        sdp_answer: answer,
+        expires_unix_ms: unix_time_ms().saturating_add(state.grant_ttl_ms),
+    }))
+}
+
 async fn create_spectator_grant(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<String>,
@@ -1096,6 +1200,35 @@ fn validate_supported_media_transport(media_transport: MediaTransport) -> Result
             "WebRTC media transport is planned but is not available yet",
         )),
     }
+}
+
+fn validate_webrtc_offer_request(request: &WebRtcOfferRequest) -> Result<(), ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    if matches!(request.player_number, Some(0)) {
+        return Err(ApiError::bad_request(
+            "invalid_player_number",
+            "player number must be greater than zero",
+        ));
+    }
+    if let Some(grant_id) = request.spectator_grant_id.as_deref() {
+        validate_identity("invalid_spectator_grant_id", "spectator grant ID", grant_id)?;
+    }
+    validate_sdp("invalid_sdp_offer", "SDP offer", &request.sdp_offer)
+}
+
+fn validate_sdp(code: &str, label: &str, sdp: &str) -> Result<(), ApiError> {
+    let trimmed = sdp.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_WEBRTC_SDP_BYTES
+        || !trimmed.starts_with("v=0")
+        || !trimmed.contains("\nm=")
+    {
+        return Err(ApiError::bad_request(
+            code,
+            &format!("{label} must be a nonempty SDP document no larger than 256 KiB"),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_seat_id(seat_id: &str) -> Result<(), ApiError> {
@@ -1447,16 +1580,19 @@ mod tests {
     use std::{path::PathBuf, time::Duration};
 
     use super::{
-        PortPoolConfig, app, app_with_database, app_with_database_tokens_and_ports,
-        app_with_database_tokens_ports_and_assets,
-        app_with_database_tokens_ports_assets_and_preview,
+        AppState, DEFAULT_OFFLINE_AFTER, PortPoolConfig, app, app_with_database,
+        app_with_database_tokens_and_ports, app_with_database_tokens_ports_and_assets,
+        app_with_database_tokens_ports_assets_and_preview, app_with_state,
     };
     use axum::{
+        Router,
         body::Body,
         http::{Method, Request},
+        routing::post as axum_post,
     };
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
+    use tokio::net::TcpListener;
     use tower::ServiceExt;
 
     fn registration() -> Value {
@@ -1781,6 +1917,79 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let error: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(error["code"], "authentication_required");
+    }
+
+    #[tokio::test]
+    async fn experimental_webrtc_proxy_requires_configured_publisher() {
+        let (status, body) = request_json(
+            app().await.unwrap(),
+            Method::POST,
+            "/api/v1/experimental/webrtc/test-pattern/offer",
+            Some(json!({
+                "seat_id": "webrtc-test-seat",
+                "role": "spectator",
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 503);
+        assert_eq!(body["code"], "webrtc_test_publisher_unavailable");
+    }
+
+    #[tokio::test]
+    async fn experimental_webrtc_proxy_validates_sdp_offer() {
+        let (status, body) = request_json(
+            app().await.unwrap(),
+            Method::POST,
+            "/api/v1/experimental/webrtc/test-pattern/offer",
+            Some(json!({
+                "seat_id": "webrtc-test-seat",
+                "role": "spectator",
+                "sdp_offer": "not sdp"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "invalid_sdp_offer");
+    }
+
+    #[tokio::test]
+    async fn experimental_webrtc_proxy_forwards_offer_to_configured_publisher() {
+        let publisher = Router::new().route(
+            "/offer",
+            axum_post(|body: String| async move {
+                assert!(body.starts_with("v=0"));
+                "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let publisher_url = format!("http://{}/offer", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(listener, publisher).await.unwrap();
+        });
+
+        let mut state = AppState::in_memory(DEFAULT_OFFLINE_AFTER).await.unwrap();
+        state.webrtc_test_pattern_publisher_url = Some(publisher_url);
+        let service = app_with_state(state);
+
+        let (status, body) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/experimental/webrtc/test-pattern/offer",
+            Some(json!({
+                "seat_id": "webrtc-test-seat",
+                "role": "spectator",
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(body["session_id"], "experimental-test-pattern");
+        assert_eq!(body["media_transport"], "web_rtc");
+        assert!(body["sdp_answer"].as_str().unwrap().starts_with("v=0"));
     }
 
     #[tokio::test]
