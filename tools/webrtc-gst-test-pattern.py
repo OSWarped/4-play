@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 import signal
 import sys
 import threading
@@ -428,9 +429,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pattern", default="ball")
     parser.add_argument(
         "--browser-host-ip",
+        default=os.environ.get("FOURPLAY_WEBRTC_BROWSER_HOST_IP"),
         help=(
             "Spike-only workaround: replace browser .local ICE candidates in the "
-            "offer with this LAN IP, for example the Windows seat IP."
+            "offer with this LAN IP, for example the Windows seat IP. Defaults "
+            "to FOURPLAY_WEBRTC_BROWSER_HOST_IP when that environment variable "
+            "is set."
         ),
     )
     parser.add_argument(

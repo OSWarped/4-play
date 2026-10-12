@@ -81,6 +81,7 @@ To enable that proxy, set this on the Linux control-plane service environment:
 
 ```bash
 FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL=http://127.0.0.1:18080/offer
+FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10
 ```
 
 Then rebuild/restart the control plane:
@@ -106,6 +107,17 @@ http://192.168.20.68:8080/api/v1/experimental/webrtc/test-pattern/offer
 ```
 
 Enter the seat API token in the page before clicking `Signal publisher`.
+
+Why `FOURPLAY_WEBRTC_BROWSER_HOST_IP` matters:
+
+- Chrome/Edge often hide the Windows LAN address behind `.local` mDNS ICE
+  candidates.
+- In direct mode, the publisher can rewrite those candidates to the HTTP
+  request source IP.
+- In proxied mode, the publisher only sees the control plane at `127.0.0.1`.
+- Therefore proxied spike tests need the browser/seat LAN IP configured
+  explicitly, otherwise the publisher rewrites browser candidates to
+  `127.0.0.1` and media remains stuck at a spinner.
 
 If the proxy is not configured, the page will receive:
 

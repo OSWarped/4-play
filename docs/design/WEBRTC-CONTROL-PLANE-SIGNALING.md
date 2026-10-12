@@ -90,12 +90,20 @@ configured with:
 
 ```bash
 FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL=http://127.0.0.1:18080/offer
+FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10
 ```
 
 When disabled, the endpoint returns `503 webrtc_test_publisher_unavailable`.
 When enabled, it forwards only the SDP offer to the standalone
 `tools/webrtc-gst-test-pattern.py` publisher and returns the answer inside the
 typed JSON envelope.
+
+The browser host IP is required for the current proxied spike because Chrome
+and Edge commonly publish `.local` mDNS ICE candidates instead of the Windows
+LAN IP. The standalone publisher can rewrite those mDNS candidates, but through
+the control-plane proxy its request source is `127.0.0.1`; without an explicit
+`FOURPLAY_WEBRTC_BROWSER_HOST_IP`, it rewrites the browser candidates to
+localhost and media never flows.
 
 ## API sketch
 
