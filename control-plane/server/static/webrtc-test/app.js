@@ -295,6 +295,12 @@ function renderControlPlaneStatus(status) {
           "Session publisher",
           status.session_publisher_available ? "available" : "not available yet",
         ],
+        [
+          "WebRTC runtime hosts",
+          Array.isArray(status.web_rtc_runtime_hosts) && status.web_rtc_runtime_hosts.length
+            ? status.web_rtc_runtime_hosts.join(", ")
+            : "none",
+        ],
         status.unavailable ? ["Status detail", status.unavailable] : null,
       ].filter(Boolean)
     : [["Status", "not loaded"]];

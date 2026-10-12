@@ -135,6 +135,7 @@ behavior:
   `FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL` is set;
 - `Session offer endpoint`: `available`;
 - `Session publisher`: `not available yet`.
+- `WebRTC runtime hosts`: `none`.
 
 That last value is expected until real session-runtime media is wired into a
 runtime-host-owned WebRTC publisher.

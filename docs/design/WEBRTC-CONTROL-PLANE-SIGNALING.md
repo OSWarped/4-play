@@ -107,8 +107,9 @@ Authorization: Bearer <seat token>
 
 This returns whether the test-pattern proxy is configured, whether the
 session-scoped offer endpoint exists, and whether real per-session publishers
-are available. Today, real session publishers intentionally report unavailable
-until the runtime-host media publisher exists.
+are available. It also lists runtime hosts currently advertising `web_rtc` in
+their capabilities. Today, real session publishers intentionally report
+unavailable until the runtime-host media publisher exists.
 
 The browser host IP is required for the current proxied spike because Chrome
 and Edge commonly publish `.local` mDNS ICE candidates instead of the Windows

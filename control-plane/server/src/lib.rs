@@ -974,14 +974,32 @@ async fn signal_webrtc_test_pattern(
     }))
 }
 
-async fn get_webrtc_experimental_status(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({
+async fn get_webrtc_experimental_status(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
+    let hosts = state
+        .runtime_hosts
+        .list(unix_time_ms(), state.offline_after_ms)
+        .await
+        .map_err(ApiError::store)?;
+    let web_rtc_hosts = hosts
+        .iter()
+        .filter(|host| {
+            host.capabilities
+                .media_transports
+                .contains(&MediaTransport::WebRtc)
+        })
+        .map(|host| host.id.clone())
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({
         "test_pattern_proxy_configured": state.webrtc_test_pattern_publisher_url.is_some(),
         "test_pattern_offer_path": "/api/v1/experimental/webrtc/test-pattern/offer",
         "session_offer_endpoint_available": true,
         "session_offer_path_template": "/api/v1/sessions/{session_id}/webrtc/offer",
-        "session_publisher_available": false,
-    }))
+        "session_publisher_available": !web_rtc_hosts.is_empty(),
+        "web_rtc_runtime_hosts": web_rtc_hosts,
+    })))
 }
 
 async fn signal_session_webrtc_offer(
@@ -1969,6 +1987,34 @@ mod tests {
         );
         assert_eq!(body["session_offer_endpoint_available"], true);
         assert_eq!(body["session_publisher_available"], false);
+        assert_eq!(body["web_rtc_runtime_hosts"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn experimental_webrtc_status_lists_advertising_hosts() {
+        let service = app().await.unwrap();
+        let mut host = registration();
+        host["capabilities"]["media_transports"] = json!(["udp_mpeg_ts", "web_rtc"]);
+        let (register_status, _) = request_json(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/runtime-hosts/reference-linux",
+            Some(host),
+        )
+        .await;
+        assert_eq!(register_status, 201);
+
+        let (status, body) = request_json(
+            service,
+            Method::GET,
+            "/api/v1/experimental/webrtc/status",
+            None,
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(body["session_publisher_available"], true);
+        assert_eq!(body["web_rtc_runtime_hosts"], json!(["reference-linux"]));
     }
 
     #[tokio::test]
