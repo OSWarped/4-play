@@ -1888,6 +1888,8 @@ mod tests {
         let index_body = String::from_utf8(index_body).unwrap();
         assert!(index_body.contains("Seat Client"));
         assert!(index_body.contains("id=\"browser-media-status\""));
+        assert!(index_body.contains("id=\"browser-player\""));
+        assert!(index_body.contains("id=\"browser-media-video\""));
 
         assert_eq!(script_status, 200);
         assert_eq!(
@@ -1915,6 +1917,9 @@ mod tests {
         assert!(script_body.contains("renderBrowserMediaStatus"));
         assert!(script_body.contains("/api/v1/experimental/webrtc/status"));
         assert!(script_body.contains("Browser media ready"));
+        assert!(script_body.contains("startBrowserMedia"));
+        assert!(script_body.contains("waitForIceGathering"));
+        assert!(script_body.contains("Open in browser player"));
         assert!(script_body.contains("playerRuntimePanel"));
         assert!(script_body.contains("spectatorRuntimeCommands"));
         assert!(script_body.contains("Input token is intentionally not displayed"));

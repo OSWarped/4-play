@@ -5,6 +5,10 @@ const destinationWarning = document.querySelector("#destination-warning");
 const saveSettingsButton = document.querySelector("#save-settings");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
+const browserPlayer = document.querySelector("#browser-player");
+const browserMediaVideo = document.querySelector("#browser-media-video");
+const browserMediaState = document.querySelector("#browser-media-state");
+const stopBrowserMediaButton = document.querySelector("#stop-browser-media");
 
 const state = {
   token: localStorage.getItem("fourplay.clientToken") || "",
@@ -12,6 +16,8 @@ const state = {
   destinationIp: localStorage.getItem("fourplay.destinationIp") || "",
   lastRuntime: loadLastRuntime(),
   browserMediaStatus: null,
+  browserMediaPeer: null,
+  browserMediaStream: null,
   games: [],
   sessions: [],
 };
@@ -84,6 +90,7 @@ document.querySelector("#browse-games").addEventListener("click", () => {
 document.querySelector("#browse-sessions").addEventListener("click", () => {
   document.querySelector("#sessions").scrollIntoView({ behavior: "smooth", block: "start" });
 });
+stopBrowserMediaButton.addEventListener("click", stopBrowserMedia);
 
 function authHeaders() {
   if (!state.token) return {};
@@ -624,7 +631,10 @@ function playerRuntimePanel(session, playerNumber) {
   return `
     <div class="runtime-panel player-mode">
       <h4>Player runtime</h4>
-      ${browserMediaPanel(handoff.media.webrtc_signaling)}
+      ${browserMediaPanel(handoff.media.webrtc_signaling, {
+        role: "player",
+        playerNumber,
+      })}
       ${mediaReceiverCommands(handoff.media.udp_port)}
       <p><strong>Input endpoint:</strong> ${escapeHtml(handoff.input.destination)} for player ${escapeHtml(String(handoff.input.player_number))}</p>
       <p class="muted">Input token is intentionally not displayed or persisted. The packaged client/runtime handoff will consume it internally after start, join, or rejoin.</p>
@@ -639,7 +649,10 @@ function spectatorRuntimeCommands(grant) {
   return `
     <div class="runtime-panel spectator-mode">
       <h4>Spectator runtime</h4>
-      ${browserMediaPanel(grant.webrtc_signaling)}
+      ${browserMediaPanel(grant.webrtc_signaling, {
+        role: "spectator",
+        spectatorGrantId: grant.id,
+      })}
       ${mediaReceiverCommands(grant.media_udp_port)}
       <p class="muted">Spectator mode opens media only; it does not reserve a player slot or send input.</p>
     </div>
@@ -668,15 +681,24 @@ function mediaReceiverCommands(mediaPort) {
   `;
 }
 
-function browserMediaPanel(signaling) {
+function browserMediaPanel(signaling, context) {
   if (!signaling?.offer_path) {
     return "";
   }
   const absoluteOfferUrl = new URL(signaling.offer_path, window.location.origin).toString();
+  const playerNumber = context?.playerNumber ? ` data-browser-media-player="${escapeHtml(String(context.playerNumber))}"` : "";
+  const spectatorGrantId = context?.spectatorGrantId ? ` data-browser-media-grant="${escapeHtml(context.spectatorGrantId)}"` : "";
   return `
     <div class="browser-media-panel">
       <p><strong>Browser-native media:</strong> WebRTC signaling is available for this handoff.</p>
       <pre class="command">${escapeHtml(absoluteOfferUrl)}</pre>
+      <button
+        type="button"
+        data-browser-media-url="${escapeHtml(absoluteOfferUrl)}"
+        data-browser-media-role="${escapeHtml(context?.role || "spectator")}"
+        ${playerNumber}
+        ${spectatorGrantId}
+      >Open in browser player</button>
       <button type="button" data-copy-text="${escapeHtml(absoluteOfferUrl)}">Copy WebRTC offer URL</button>
       <p class="muted">This is token-safe signaling metadata. The private input token is not exposed to the page.</p>
     </div>
@@ -697,6 +719,125 @@ function wireCopyButtons(container) {
         button.textContent = originalText;
       }, 1400);
     });
+  });
+  wireBrowserMediaButtons(container);
+}
+
+function wireBrowserMediaButtons(container) {
+  container.querySelectorAll("[data-browser-media-url]").forEach((button) => {
+    button.addEventListener("click", () => startBrowserMedia(button));
+  });
+}
+
+async function startBrowserMedia(button) {
+  syncSettingsFromInputs();
+  if (!window.RTCPeerConnection) {
+    setBrowserMediaState("This browser does not expose RTCPeerConnection.");
+    return;
+  }
+  const offerUrl = button.dataset.browserMediaUrl;
+  if (!offerUrl) {
+    setBrowserMediaState("Missing WebRTC signaling URL.");
+    return;
+  }
+  stopBrowserMedia();
+  browserPlayer.hidden = false;
+  browserPlayer.scrollIntoView({ behavior: "smooth", block: "start" });
+  setBrowserMediaState("Creating browser media peer...");
+
+  const peer = new RTCPeerConnection({ iceServers: [] });
+  const stream = new MediaStream();
+  state.browserMediaPeer = peer;
+  state.browserMediaStream = stream;
+  browserMediaVideo.srcObject = stream;
+
+  peer.addTransceiver("video", { direction: "recvonly" });
+  peer.addTransceiver("audio", { direction: "recvonly" });
+  peer.addEventListener("track", (event) => {
+    stream.addTrack(event.track);
+    setBrowserMediaState(`Attached remote ${event.track.kind} track.`);
+    browserMediaVideo.play().catch((error) => {
+      setBrowserMediaState(`Browser media attached; press play if autoplay was blocked. ${error.message}`);
+    });
+  });
+  peer.addEventListener("connectionstatechange", () => {
+    setBrowserMediaState(`Browser media connection: ${peer.connectionState}`);
+  });
+  peer.addEventListener("iceconnectionstatechange", () => {
+    if (["failed", "disconnected"].includes(peer.iceConnectionState)) {
+      setBrowserMediaState(`Browser media ICE state: ${peer.iceConnectionState}`);
+    }
+  });
+
+  try {
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await waitForIceGathering(peer, 2000);
+    const body = {
+      seat_id: state.seatId,
+      role: button.dataset.browserMediaRole || "spectator",
+      sdp_offer: peer.localDescription?.sdp || offer.sdp,
+    };
+    if (button.dataset.browserMediaPlayer) {
+      body.player_number = Number(button.dataset.browserMediaPlayer);
+    }
+    if (button.dataset.browserMediaGrant) {
+      body.spectator_grant_id = button.dataset.browserMediaGrant;
+    }
+    setBrowserMediaState("Sending WebRTC offer to session publisher...");
+    const answer = await postJson(offerUrl, body);
+    await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp_answer });
+    setBrowserMediaState("Applied WebRTC answer; waiting for media packets...");
+  } catch (error) {
+    setBrowserMediaState(`Browser media failed: ${error.message || error}`);
+    peer.close();
+    if (state.browserMediaPeer === peer) {
+      state.browserMediaPeer = null;
+      state.browserMediaStream = null;
+    }
+  }
+}
+
+function stopBrowserMedia() {
+  if (state.browserMediaPeer) {
+    state.browserMediaPeer.close();
+    state.browserMediaPeer = null;
+  }
+  if (state.browserMediaStream) {
+    state.browserMediaStream.getTracks().forEach((track) => track.stop());
+    state.browserMediaStream = null;
+  }
+  if (browserMediaVideo) {
+    browserMediaVideo.pause();
+    browserMediaVideo.srcObject = null;
+  }
+  setBrowserMediaState("Browser-native media stopped.");
+}
+
+function setBrowserMediaState(message) {
+  if (!browserMediaState) return;
+  browserMediaState.textContent = message;
+}
+
+function waitForIceGathering(peer, timeoutMs) {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(done, timeoutMs);
+    peer.addEventListener("icegatheringstatechange", onStateChange);
+
+    function onStateChange() {
+      if (peer.iceGatheringState === "complete") {
+        done();
+      }
+    }
+
+    function done() {
+      window.clearTimeout(timeout);
+      peer.removeEventListener("icegatheringstatechange", onStateChange);
+      resolve();
+    }
   });
 }
 
