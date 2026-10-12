@@ -62,6 +62,7 @@ class RawSessionPublisher:
         self.args = args
         self.loop = GLib.MainLoop()
         self.started = False
+        self.media_started = False
         self.pending_answer_context: dict[str, object] | None = None
         self.ice_timeout_id: int | None = None
 
@@ -117,7 +118,7 @@ class RawSessionPublisher:
             if not Path(path).exists():
                 raise RuntimeError(f"{label} FIFO does not exist: {path}")
         print(
-            "Starting raw-session WebRTC pipeline "
+            "Prepared raw-session WebRTC pipeline "
             f"session={self.args.session_id} "
             f"video={self.args.video_path} audio={self.args.audio_path} "
             f"size={self.args.width}x{self.args.height} "
@@ -125,8 +126,18 @@ class RawSessionPublisher:
             file=sys.stderr,
             flush=True,
         )
-        self.pipeline.set_state(Gst.State.PLAYING)
         self.started = True
+
+    def start_media_flow(self) -> None:
+        if self.media_started:
+            return
+        print(
+            f"Starting raw-session WebRTC media flow session={self.args.session_id}",
+            file=sys.stderr,
+            flush=True,
+        )
+        self.pipeline.set_state(Gst.State.PLAYING)
+        self.media_started = True
 
     def answer_for_offer(
         self,
@@ -211,6 +222,7 @@ class RawSessionPublisher:
         set_local = Gst.Promise.new()
         self.webrtc.emit("set-local-description", answer, set_local)
         set_local.interrupt()
+        self.start_media_flow()
         self.pending_answer_context = context
         self.ice_timeout_id = GLib.timeout_add_seconds(2, self.write_current_answer)
         self.write_answer_if_ice_complete()
