@@ -5,7 +5,7 @@ Experimental WebRTC publisher for a single 4-Play MAME session's raw FIFOs.
 This is the first bridge from real MAME output to browser-native media:
 
     session-runtime video.raw/audio.pcm FIFOs
-      -> GStreamer raw parsers/encoders
+      -> complete frames / shared-clock timestamps / GStreamer appsrc encoders
       -> webrtcbin
       -> control-plane /api/v1/sessions/{id}/webrtc/offer proxy
       -> browser <video>
@@ -19,9 +19,11 @@ from __future__ import annotations
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
+import select
 import signal
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 from typing import NoReturn
@@ -37,16 +39,17 @@ from gi.repository import GLib, Gst, GstSdp, GstWebRTC  # noqa: E402
 
 PIPELINE_TEMPLATE = """
 webrtcbin name=webrtc bundle-policy=max-bundle latency=0
-filesrc name=video_source location={video_path} do-timestamp=true
-  ! rawvideoparse name=video_parse format=bgrx width={width} height={height} framerate={fps_num}/{fps_den}
+appsrc name=video_source is-live=true format=time block=false max-buffers=2 max-bytes=0 max-time=0 leaky-type=downstream
+  caps="video/x-raw,format=BGRx,width={width},height={height},framerate={fps_num}/{fps_den}"
   ! queue name=video_queue leaky=downstream max-size-buffers=2 max-size-time=0 max-size-bytes=0
   ! videoconvert
+  ! video/x-raw,format=I420
   ! vp8enc deadline=1 cpu-used=8 target-bitrate={video_bitrate_bps} keyframe-max-dist={keyframe_distance}
   ! rtpvp8pay pt=96
   ! application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000
   ! webrtc.
-filesrc name=audio_source location={audio_path} do-timestamp=true
-  ! rawaudioparse name=audio_parse use-sink-caps=false format=pcm pcm-format=s16le sample-rate=48000 num-channels=2
+appsrc name=audio_source is-live=true format=time block=false max-buffers=4 max-bytes=0 max-time=0 leaky-type=downstream
+  caps="audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved"
   ! queue name=audio_queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0
   ! audioconvert
   ! audioresample
@@ -62,6 +65,11 @@ class RawSessionPublisher:
         self.args = args
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
+        self.media_lock = threading.Lock()
+        self.reader_stop = threading.Event()
+        self.reader_threads: list[threading.Thread] = []
+        self.media_epoch_ns: int | None = None
+        self.last_pts: dict[str, int] = {}
         self.started = False
         self.media_started = False
         self.pipeline_failed = False
@@ -109,7 +117,10 @@ class RawSessionPublisher:
         if self.ice_timeout_id is not None:
             GLib.source_remove(self.ice_timeout_id)
             self.ice_timeout_id = None
+        with self.media_lock:
+            self.media_epoch_ns = None
         if self.pipeline is not None:
+            self.pipeline.get_bus().remove_signal_watch()
             self.pipeline.set_state(Gst.State.NULL)
         self.started = False
         self.media_started = False
@@ -118,6 +129,18 @@ class RawSessionPublisher:
         self.build_pipeline()
 
     def run_http_signaling(self) -> None:
+        # Keep FIFO readers open across peer replacement. Closing halfway through
+        # a frame would leave its remainder in the next reader's first frame.
+        for label, path, size in (
+            ("video", self.args.video_path, self.args.width * self.args.height * 4),
+            ("audio", self.args.audio_path, 960 * 2 * 2),
+        ):
+            thread = threading.Thread(
+                target=self.read_fifo, args=(label, path, size), daemon=True,
+                name=f"4play-webrtc-{label}-reader",
+            )
+            self.reader_threads.append(thread)
+            thread.start()
         host, port_text = self.args.http_signal.rsplit(":", 1)
         server = ThreadingHTTPServer((host, int(port_text)), request_handler(self))
         thread = threading.Thread(
@@ -135,9 +158,60 @@ class RawSessionPublisher:
         try:
             self.loop.run()
         finally:
+            self.reader_stop.set()
+            with self.media_lock:
+                self.media_epoch_ns = None
             server.shutdown()
+            for reader in self.reader_threads:
+                reader.join(timeout=1)
             if self.pipeline is not None:
                 self.pipeline.set_state(Gst.State.NULL)
+
+    def read_fifo(self, label: str, path: str, block_bytes: int) -> None:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                pending = bytearray()
+                while not self.reader_stop.is_set():
+                    if not select.select([fd], [], [], 0.05)[0]:
+                        continue
+                    try:
+                        chunk = os.read(fd, block_bytes - len(pending))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        # No writer yet (or writer reconnecting), not media EOS.
+                        self.reader_stop.wait(0.01)
+                        continue
+                    pending.extend(chunk)
+                    if len(pending) == block_bytes:
+                        self.push_media_block(label, pending)
+                        pending.clear()
+            finally:
+                os.close(fd)
+        except Exception as error:
+            print(f"Raw {label} FIFO reader failed: {error}", file=sys.stderr, flush=True)
+            GLib.idle_add(self.mark_pipeline_failed, f"{label} reader: {error}")
+
+    def push_media_block(self, label: str, data: bytearray) -> None:
+        with self.media_lock:
+            if self.media_epoch_ns is None or self.pipeline is None:
+                return  # Drain stale frames even when no browser is connected.
+            pts = max(time.monotonic_ns() - self.media_epoch_ns, self.last_pts.get(label, -1) + 1)
+            self.last_pts[label] = pts
+            buffer = Gst.Buffer.new_allocate(None, len(data), None)
+            buffer.fill(0, bytes(data))
+            buffer.pts = pts
+            buffer.dts = Gst.CLOCK_TIME_NONE
+            buffer.duration = (
+                Gst.SECOND * self.args.fps_den // self.args.fps_num
+                if label == "video" else Gst.SECOND // 50
+            )
+            source = self.pipeline.get_by_name(f"{label}_source")
+            result = source.emit("push-buffer", buffer)
+            if result not in (Gst.FlowReturn.OK, Gst.FlowReturn.FLUSHING):
+                self.media_epoch_ns = None
+                GLib.idle_add(self.mark_pipeline_failed, f"{label} push-buffer: {result.value_nick}")
 
     def start_pipeline(self) -> None:
         if self.started:
@@ -175,6 +249,9 @@ class RawSessionPublisher:
             flush=True,
         )
         self.pipeline.set_state(Gst.State.PLAYING)
+        with self.media_lock:
+            self.last_pts.clear()
+            self.media_epoch_ns = time.monotonic_ns()
         self.media_started = True
 
     def answer_for_offer(
@@ -362,6 +439,8 @@ class RawSessionPublisher:
         )
         self.pipeline_failed = True
         self.media_started = False
+        with self.media_lock:
+            self.media_epoch_ns = None
         if self.pending_answer_context is not None:
             self.fail_pending_answer(self.pending_answer_context, RuntimeError(reason))
             self.pending_answer_context = None
