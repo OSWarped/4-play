@@ -258,6 +258,10 @@ pub fn app_with_state(state: AppState) -> Router {
             post(signal_webrtc_test_pattern),
         )
         .route(
+            "/api/v1/experimental/webrtc/status",
+            get(get_webrtc_experimental_status),
+        )
+        .route(
             "/api/v1/sessions/{session_id}/webrtc/offer",
             post(signal_session_webrtc_offer),
         )
@@ -967,6 +971,16 @@ async fn signal_webrtc_test_pattern(
         media_transport: MediaTransport::WebRtc,
         sdp_answer: answer,
         expires_unix_ms: unix_time_ms().saturating_add(state.grant_ttl_ms),
+    }))
+}
+
+async fn get_webrtc_experimental_status(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({
+        "test_pattern_proxy_configured": state.webrtc_test_pattern_publisher_url.is_some(),
+        "test_pattern_offer_path": "/api/v1/experimental/webrtc/test-pattern/offer",
+        "session_offer_endpoint_available": true,
+        "session_offer_path_template": "/api/v1/sessions/{session_id}/webrtc/offer",
+        "session_publisher_available": false,
     }))
 }
 
@@ -1913,6 +1927,7 @@ mod tests {
         let index_body = String::from_utf8(index_body).unwrap();
         assert!(index_body.contains("WebRTC browser playback test"));
         assert!(index_body.contains("Create SDP offer"));
+        assert!(index_body.contains("Control-plane WebRTC readiness"));
         assert!(index_body.contains("Receiver stats"));
 
         assert_eq!(script_status, 200);
@@ -1925,6 +1940,7 @@ mod tests {
         assert!(script_body.contains("addTransceiver"));
         assert!(script_body.contains("createOffer"));
         assert!(script_body.contains("signalPublisher"));
+        assert!(script_body.contains("loadControlPlaneStatus"));
         assert!(script_body.contains("getStats"));
 
         assert_eq!(styles_status, 200);
@@ -1933,6 +1949,26 @@ mod tests {
             Some("text/css; charset=utf-8")
         );
         assert!(String::from_utf8(styles_body).unwrap().contains("--accent"));
+    }
+
+    #[tokio::test]
+    async fn experimental_webrtc_status_reports_fail_closed_readiness() {
+        let (status, body) = request_json(
+            app().await.unwrap(),
+            Method::GET,
+            "/api/v1/experimental/webrtc/status",
+            None,
+        )
+        .await;
+
+        assert_eq!(status, 200);
+        assert_eq!(body["test_pattern_proxy_configured"], false);
+        assert_eq!(
+            body["test_pattern_offer_path"],
+            "/api/v1/experimental/webrtc/test-pattern/offer"
+        );
+        assert_eq!(body["session_offer_endpoint_available"], true);
+        assert_eq!(body["session_publisher_available"], false);
     }
 
     #[tokio::test]

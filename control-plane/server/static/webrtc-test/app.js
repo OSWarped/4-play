@@ -20,6 +20,8 @@ const elements = {
   useDirectPublisher: document.querySelector("#use-direct-publisher"),
   signalPublisher: document.querySelector("#signal-publisher"),
   applyAnswer: document.querySelector("#apply-answer"),
+  refreshStatus: document.querySelector("#refresh-status"),
+  controlPlaneStatus: document.querySelector("#control-plane-status"),
   remoteVideo: document.querySelector("#remote-video"),
   stats: document.querySelector("#stats"),
   log: document.querySelector("#log"),
@@ -98,6 +100,7 @@ elements.resetPeer.addEventListener("click", resetPeer);
 elements.copyOffer.addEventListener("click", () => copyOffer());
 elements.signalPublisher.addEventListener("click", () => signalPublisher());
 elements.applyAnswer.addEventListener("click", () => applyAnswer());
+elements.refreshStatus.addEventListener("click", () => loadControlPlaneStatus());
 elements.remoteAnswer.addEventListener("input", () => {
   elements.applyAnswer.disabled = !peer || !elements.remoteAnswer.value.trim();
 });
@@ -113,9 +116,11 @@ elements.useDirectPublisher.addEventListener("click", () => {
 
 elements.publisherUrl.value = controlPlanePublisherUrl();
 renderCapabilities();
+renderControlPlaneStatus(null);
 updatePeerState();
 renderStats(new Map());
 updateSignalingMode();
+loadControlPlaneStatus();
 log("WebRTC diagnostics loaded.");
 
 async function createOffer() {
@@ -225,6 +230,10 @@ function controlPlanePublisherUrl() {
   return `${location.origin}/api/v1/experimental/webrtc/test-pattern/offer`;
 }
 
+function controlPlaneStatusUrl() {
+  return `${location.origin}/api/v1/experimental/webrtc/status`;
+}
+
 function directPublisherUrl() {
   return `http://${location.hostname}:18080/offer`;
 }
@@ -242,6 +251,59 @@ function updateSignalingMode() {
     elements.signalingMode.textContent =
       "Mode: direct publisher. Sends raw SDP to the publisher URL and bypasses the control plane.";
   }
+}
+
+async function loadControlPlaneStatus() {
+  const token = elements.apiToken.value.trim();
+  if (!token) {
+    renderControlPlaneStatus({
+      unavailable: "enter a seat API token to inspect control-plane WebRTC readiness",
+    });
+    return;
+  }
+  window.localStorage.setItem("fourplay.webrtcTestApiToken", token);
+  try {
+    const response = await fetch(controlPlaneStatusUrl(), {
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    const status = JSON.parse(text);
+    renderControlPlaneStatus(status);
+    log("Loaded control-plane WebRTC readiness status.");
+  } catch (error) {
+    renderControlPlaneStatus({ unavailable: error.message });
+    log(`Control-plane WebRTC readiness failed: ${error.message}`);
+  }
+}
+
+function renderControlPlaneStatus(status) {
+  const values = status
+    ? [
+        ["Test-pattern proxy", status.test_pattern_proxy_configured ? "configured" : "not configured"],
+        ["Test-pattern offer path", status.test_pattern_offer_path || "n/a"],
+        [
+          "Session offer endpoint",
+          status.session_offer_endpoint_available ? "available" : "unavailable",
+        ],
+        ["Session offer path", status.session_offer_path_template || "n/a"],
+        [
+          "Session publisher",
+          status.session_publisher_available ? "available" : "not available yet",
+        ],
+        status.unavailable ? ["Status detail", status.unavailable] : null,
+      ].filter(Boolean)
+    : [["Status", "not loaded"]];
+  elements.controlPlaneStatus.replaceChildren(
+    ...values.flatMap(([name, value]) => [
+      term(name),
+      definition(String(value), !String(value).includes("not configured") && !String(value).includes("not available") && !String(value).includes("unavailable")),
+    ]),
+  );
 }
 
 async function applyAnswer() {

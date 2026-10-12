@@ -123,6 +123,18 @@ http://192.168.20.68:8080/api/v1/experimental/webrtc/test-pattern/offer
 
 Enter the seat API token in the page before clicking `Signal publisher`.
 
+The page also includes a `Control-plane WebRTC readiness` panel. Click
+`Refresh status` after entering the seat token. Expected current reference
+behavior:
+
+- `Test-pattern proxy`: `configured` when
+  `FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL` is set;
+- `Session offer endpoint`: `available`;
+- `Session publisher`: `not available yet`.
+
+That last value is expected until real session-runtime media is wired into a
+runtime-host-owned WebRTC publisher.
+
 Why `FOURPLAY_WEBRTC_BROWSER_HOST_IP` matters:
 
 - Chrome/Edge often hide the Windows LAN address behind `.local` mDNS ICE

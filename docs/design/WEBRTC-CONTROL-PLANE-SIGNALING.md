@@ -98,6 +98,18 @@ When enabled, it forwards only the SDP offer to the standalone
 `tools/webrtc-gst-test-pattern.py` publisher and returns the answer inside the
 typed JSON envelope.
 
+The diagnostics page can inspect experimental readiness with:
+
+```http
+GET /api/v1/experimental/webrtc/status
+Authorization: Bearer <seat token>
+```
+
+This returns whether the test-pattern proxy is configured, whether the
+session-scoped offer endpoint exists, and whether real per-session publishers
+are available. Today, real session publishers intentionally report unavailable
+until the runtime-host media publisher exists.
+
 The browser host IP is required for the current proxied spike because Chrome
 and Edge commonly publish `.local` mDNS ICE candidates instead of the Windows
 LAN IP. The standalone publisher can rewrite those mDNS candidates, but through

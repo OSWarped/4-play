@@ -49,6 +49,19 @@
         </article>
       </section>
 
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Control-plane WebRTC readiness</h2>
+          <button id="refresh-status" type="button">Refresh status</button>
+        </div>
+        <dl id="control-plane-status" class="facts"></dl>
+        <p class="note">
+          This is an authenticated diagnostic view of what the control plane can
+          currently signal. Real session media remains disabled until the runtime
+          host owns per-session WebRTC publishers.
+        </p>
+      </section>
+
       <section class="grid">
         <article class="panel">
           <h2>Local offer</h2>
