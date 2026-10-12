@@ -316,6 +316,90 @@ This tool does not launch a publisher and does not touch a live game. It keeps
 the real-media WebRTC pipeline reviewable before we wire it into
 runtime-host-owned session publishers.
 
+## Real MAME raw-session publisher spike
+
+The first true-MAME browser path is intentionally opt-in and side-by-side with
+the existing UDP/FFplay path:
+
+```text
+MAME video.raw/audio.pcm FIFOs
+  -> session-runtime MediaBridge
+  -> existing FFmpeg UDP MPEG-TS path
+  -> optional secondary WebRTC raw FIFOs
+  -> tools/webrtc-gst-raw-session-publisher.py
+  -> browser RTCPeerConnection
+```
+
+Do not point the WebRTC publisher at MAME's original `video.raw` and
+`audio.pcm` FIFOs. FIFOs distribute bytes to one reader, not every reader. The
+session runtime must tee the media into separate WebRTC FIFOs so the browser
+experiment cannot steal frames from the proven FFmpeg path.
+
+For the first manual validation, launch one session with secondary FIFO paths:
+
+```bash
+SESSION_ID=manual-webrtc-tmnt
+SESSION_DIR="/tmp/4play/session-${SESSION_ID}"
+mkdir -p "$SESSION_DIR"
+mkfifo "$SESSION_DIR/webrtc-video.raw" "$SESSION_DIR/webrtc-audio.pcm"
+
+target/release/session-runtime \
+  --session-id "$SESSION_ID" \
+  --rom tmnt \
+  --width 320 \
+  --height 224 \
+  --fps 60 \
+  --players 4 \
+  --destination-ip 192.168.20.10 \
+  --udp-port 41000 \
+  --input-port 42000 \
+  --input-token manual-webrtc-token \
+  --mame-path "$HOME/src/mame-4play/mame" \
+  --mame-ini-path /opt/4play/config/mame \
+  --status-file "/tmp/4play/host-agent/${SESSION_ID}.status" \
+  --webrtc-video-path "$SESSION_DIR/webrtc-video.raw" \
+  --webrtc-audio-path "$SESSION_DIR/webrtc-audio.pcm" \
+  --autosave
+```
+
+In another Linux terminal, start the raw-session publisher:
+
+```bash
+python3 tools/webrtc-gst-raw-session-publisher.py \
+  --session-id "$SESSION_ID" \
+  --video-path "$SESSION_DIR/webrtc-video.raw" \
+  --audio-path "$SESSION_DIR/webrtc-audio.pcm" \
+  --width 320 \
+  --height 224 \
+  --fps-num 60 \
+  --http-signal 0.0.0.0:43000 \
+  --browser-host-ip 192.168.20.10 \
+  --answer-file /tmp/4play-webrtc-raw-session-answer.sdp
+```
+
+Then use the existing browser test page:
+
+```text
+http://192.168.20.68:8080/webrtc-test
+```
+
+Set `Publisher URL` to:
+
+```text
+http://192.168.20.68:43000/sessions/manual-webrtc-tmnt/offer
+```
+
+Expected result:
+
+- the game remains playable through the existing UDP/FFplay path;
+- the browser receives the same real MAME video and audio in its `<video>`
+  surface;
+- receiver stats increase without a growing buffer;
+- if the WebRTC publisher fails, the FFplay path and MAME session continue.
+
+This manual spike proves the raw media shape before host-agent-owned publisher
+lifecycle is enabled.
+
 ## Manual fallback
 
 If the automated endpoint fails, manual SDP copy/paste is still available:

@@ -49,6 +49,8 @@ struct RuntimeArgs {
     audio_block_ms: usize,
     audio_thread_queue_size: usize,
     startup_media_timeout_seconds: u64,
+    webrtc_video_path: Option<PathBuf>,
+    webrtc_audio_path: Option<PathBuf>,
     preview_image_path: Option<PathBuf>,
     preview_interval_ms: u64,
     mame_path: PathBuf,
@@ -97,6 +99,7 @@ fn print_usage(program: &str) {
     [--audio-block-ms <milliseconds>] \
     [--audio-thread-queue-size <packets>] \
     [--startup-media-timeout-seconds <seconds>] \
+    [--webrtc-video-path <path> --webrtc-audio-path <path>] \
     [--preview-image-path <path>] \
     [--preview-interval-ms <milliseconds>] \
     [--mame-path <path>] \
@@ -158,6 +161,8 @@ fn parse_args() -> RuntimeArgs {
     let mut audio_block_ms = 20;
     let mut audio_thread_queue_size = 64;
     let mut startup_media_timeout_seconds = 30;
+    let mut webrtc_video_path = None;
+    let mut webrtc_audio_path = None;
     let mut preview_image_path = None;
     let mut preview_interval_ms = 1_000;
     let mut mame_path = PathBuf::from("/home/blake/src/mame-4play/mame");
@@ -254,6 +259,18 @@ fn parse_args() -> RuntimeArgs {
                     "--startup-media-timeout-seconds",
                 );
             }
+            "--webrtc-video-path" => {
+                webrtc_video_path = Some(PathBuf::from(require_value(
+                    &mut args,
+                    "--webrtc-video-path",
+                )));
+            }
+            "--webrtc-audio-path" => {
+                webrtc_audio_path = Some(PathBuf::from(require_value(
+                    &mut args,
+                    "--webrtc-audio-path",
+                )));
+            }
             "--preview-image-path" => {
                 preview_image_path = Some(PathBuf::from(require_value(
                     &mut args,
@@ -307,6 +324,8 @@ fn parse_args() -> RuntimeArgs {
         audio_block_ms,
         audio_thread_queue_size,
         startup_media_timeout_seconds,
+        webrtc_video_path,
+        webrtc_audio_path,
         preview_image_path,
         preview_interval_ms,
         mame_path,
@@ -349,6 +368,11 @@ fn parse_args() -> RuntimeArgs {
 
     if !(1..=1024).contains(&parsed.audio_thread_queue_size) {
         eprintln!("--audio-thread-queue-size must be between 1 and 1024.");
+        process::exit(2);
+    }
+
+    if parsed.webrtc_video_path.is_some() != parsed.webrtc_audio_path.is_some() {
+        eprintln!("--webrtc-video-path and --webrtc-audio-path must be provided together.");
         process::exit(2);
     }
 
@@ -422,6 +446,8 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         width: session.config.width,
         height: session.config.height,
         audio_block_ms: args.audio_block_ms,
+        webrtc_video_path: args.webrtc_video_path,
+        webrtc_audio_path: args.webrtc_audio_path,
         preview_image_path: args.preview_image_path,
         preview_interval_ms: args.preview_interval_ms,
     });

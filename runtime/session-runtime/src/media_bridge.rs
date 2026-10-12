@@ -23,6 +23,8 @@ pub struct MediaBridgeConfig {
     pub width: u32,
     pub height: u32,
     pub audio_block_ms: usize,
+    pub webrtc_video_path: Option<PathBuf>,
+    pub webrtc_audio_path: Option<PathBuf>,
     pub preview_image_path: Option<PathBuf>,
     pub preview_interval_ms: u64,
 }
@@ -68,20 +70,49 @@ impl MediaBridge {
         self.running.store(true, Ordering::Release);
 
         let (video_sender, video_receiver) = bounded::<Vec<u8>>(VIDEO_QUEUE_CAPACITY);
+        let (webrtc_video_sender, webrtc_video_receiver) = self
+            .config
+            .webrtc_video_path
+            .as_ref()
+            .map(|_| bounded::<Vec<u8>>(VIDEO_QUEUE_CAPACITY))
+            .unzip();
         let latest_preview_frame = Arc::new(Mutex::new(None));
 
         let (audio_sender, audio_receiver) = bounded::<Vec<u8>>(AUDIO_QUEUE_CAPACITY);
+        let (webrtc_audio_sender, webrtc_audio_receiver) = self
+            .config
+            .webrtc_audio_path
+            .as_ref()
+            .map(|_| bounded::<Vec<u8>>(AUDIO_QUEUE_CAPACITY))
+            .unzip();
 
         self.start_video_reader(
             video_sender,
             video_receiver.clone(),
+            webrtc_video_sender,
+            webrtc_video_receiver.clone(),
             Arc::clone(&latest_preview_frame),
         );
 
-        self.start_audio_reader(audio_sender, audio_receiver.clone());
+        self.start_audio_reader(
+            audio_sender,
+            audio_receiver.clone(),
+            webrtc_audio_sender,
+            webrtc_audio_receiver.clone(),
+        );
 
         self.start_video_writer(video_receiver, video_output);
         self.start_audio_writer(audio_receiver, audio_output);
+        if let (Some(path), Some(receiver)) =
+            (self.config.webrtc_video_path.clone(), webrtc_video_receiver)
+        {
+            self.start_optional_raw_writer("WebRTC video", path, receiver);
+        }
+        if let (Some(path), Some(receiver)) =
+            (self.config.webrtc_audio_path.clone(), webrtc_audio_receiver)
+        {
+            self.start_optional_raw_writer("WebRTC audio", path, receiver);
+        }
         self.start_preview_writer(latest_preview_frame);
         self.start_metrics_monitor(bridge_started);
     }
@@ -95,6 +126,8 @@ impl MediaBridge {
         &mut self,
         sender: Sender<Vec<u8>>,
         drop_receiver: Receiver<Vec<u8>>,
+        webrtc_sender: Option<Sender<Vec<u8>>>,
+        webrtc_drop_receiver: Option<Receiver<Vec<u8>>>,
         latest_preview_frame: Arc<Mutex<Option<Vec<u8>>>>,
     ) {
         let video_path = self.config.video_path.clone();
@@ -131,12 +164,24 @@ impl MediaBridge {
                             *latest = Some(frame.clone());
                         }
 
+                        let webrtc_frame = webrtc_sender.as_ref().map(|_| frame.clone());
                         send_latest(
                             &sender,
                             &drop_receiver,
                             frame,
                             &metrics.video_frames_dropped,
                         );
+                        if let (Some(webrtc_sender), Some(webrtc_drop_receiver)) =
+                            (&webrtc_sender, &webrtc_drop_receiver)
+                            && let Some(webrtc_frame) = webrtc_frame
+                        {
+                            send_latest(
+                                webrtc_sender,
+                                webrtc_drop_receiver,
+                                webrtc_frame,
+                                &metrics.video_frames_dropped,
+                            );
+                        }
 
                         metrics
                             .video_queue_depth
@@ -151,7 +196,13 @@ impl MediaBridge {
         }));
     }
 
-    fn start_audio_reader(&mut self, sender: Sender<Vec<u8>>, drop_receiver: Receiver<Vec<u8>>) {
+    fn start_audio_reader(
+        &mut self,
+        sender: Sender<Vec<u8>>,
+        drop_receiver: Receiver<Vec<u8>>,
+        webrtc_sender: Option<Sender<Vec<u8>>>,
+        webrtc_drop_receiver: Option<Receiver<Vec<u8>>>,
+    ) {
         let audio_path = self.config.audio_path.clone();
 
         let audio_block_ms = self.config.audio_block_ms;
@@ -195,9 +246,19 @@ impl MediaBridge {
                         send_latest(
                             &sender,
                             &drop_receiver,
-                            block,
+                            block.clone(),
                             &metrics.audio_blocks_dropped,
                         );
+                        if let (Some(webrtc_sender), Some(webrtc_drop_receiver)) =
+                            (&webrtc_sender, &webrtc_drop_receiver)
+                        {
+                            send_latest(
+                                webrtc_sender,
+                                webrtc_drop_receiver,
+                                block,
+                                &metrics.audio_blocks_dropped,
+                            );
+                        }
 
                         metrics
                             .audio_queue_depth
@@ -242,6 +303,56 @@ impl MediaBridge {
             }
 
             output.flush()?;
+            Ok(())
+        }));
+    }
+
+    fn start_optional_raw_writer(
+        &mut self,
+        label: &'static str,
+        path: PathBuf,
+        receiver: Receiver<Vec<u8>>,
+    ) {
+        let running = Arc::clone(&self.running);
+        self.handles.push(thread::spawn(move || {
+            println!("{label} writer enabled: {}", path.display());
+            let mut output = None;
+            while running.load(Ordering::Acquire) {
+                let Ok(block) = receiver.recv_timeout(Duration::from_millis(20)) else {
+                    continue;
+                };
+                if output.is_none() {
+                    match OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&path)
+                    {
+                        Ok(file) => {
+                            println!("{label} writer connected: {}", path.display());
+                            output = Some(file);
+                        }
+                        Err(error)
+                            if matches!(
+                                error.raw_os_error(),
+                                Some(code) if code == libc::ENXIO || code == libc::ENOENT
+                            ) =>
+                        {
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+
+                if let Some(file) = output.as_mut()
+                    && let Err(error) = file.write_all(&block)
+                {
+                    if matches!(error.kind(), io::ErrorKind::BrokenPipe) {
+                        output = None;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
             Ok(())
         }));
     }

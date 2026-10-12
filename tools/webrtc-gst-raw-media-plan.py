@@ -61,7 +61,7 @@ def build_pipeline(args: argparse.Namespace) -> str:
             f"filesrc location={quote_path(args.video_path)} do-timestamp=true",
             (
                 "  ! rawvideoparse "
-                f"format=bgra width={args.width} height={args.height} "
+                f"format=bgrx width={args.width} height={args.height} "
                 f"framerate={args.fps_num}/{args.fps_den}"
             ),
             "  ! queue leaky=downstream max-size-buffers=2 max-size-time=0 max-size-bytes=0",

@@ -147,8 +147,15 @@ Implemented:
 - `tools/webrtc-gst-test-pattern.py` publishes a VP8 video test pattern and
   optional Opus audio ticks through GStreamer `webrtcbin`.
 - `tools/webrtc-gst-raw-media-plan.py` records the planned GStreamer pipeline
-  for future MAME raw FIFO input (`video.raw` BGRA frames and `audio.pcm`
+  for future MAME raw FIFO input (`video.raw` BGR0/BGRX frames and `audio.pcm`
   signed 16-bit stereo PCM) without changing the live session-runtime path.
+- `session-runtime` can optionally tee its existing raw MAME media bridge to
+  secondary WebRTC raw FIFOs with `--webrtc-video-path` and
+  `--webrtc-audio-path`. This preserves the current UDP/FFplay path and avoids
+  attaching multiple readers to MAME's original FIFOs.
+- `tools/webrtc-gst-raw-session-publisher.py` is the first true-MAME publisher
+  spike. It reads the secondary raw FIFOs, encodes VP8/Opus with GStreamer
+  `webrtcbin`, and accepts SDP offers on `/sessions/{session_id}/offer`.
 - The publisher rewrites browser `.local` mDNS candidates to the HTTP request
   source IP for this spike.
 - When signaling is proxied through the control plane, the publisher accepts
@@ -203,6 +210,11 @@ Control-plane changes:
 Runtime-host changes:
 
 - launch WebRTC publisher per session or per spectator grant;
+  - first manual tool exists as `tools/webrtc-gst-raw-session-publisher.py`;
+  - remaining production work is a host-level dispatcher or publisher
+    registration mechanism, because the control plane currently has one
+    session-publisher URL template and cannot infer a different port for every
+    per-session process;
 - bind publisher lifecycle to session lifecycle;
 - expose health/state to the agent;
 - cleanly stop publishers on session stop, runtime loss, and stale cleanup.
@@ -257,10 +269,9 @@ After player seats are stable:
 1. Run the W1 audio/video path for 5-10 minutes and record stats/CPU.
 2. Validate runtime-host-agent-owned test-pattern publisher startup, restart,
    and shutdown on the Linux host.
-3. Move from one global test-pattern publisher to per-session/per-spectator
-   WebRTC publisher lifecycle.
-4. Keep publishing a test pattern until lifecycle and cleanup are reliable.
-5. Validate the raw-media WebRTC pipeline plan against throwaway FIFOs.
-6. Feed real session-runtime MAME media into the WebRTC publisher.
-7. Add client UI feature flag for browser media while keeping UDP/FFplay
+3. Validate the raw-media WebRTC pipeline plan against throwaway FIFOs.
+4. Feed real session-runtime MAME media into the WebRTC publisher.
+5. Move from the manual raw-session publisher to runtime-host-owned
+   per-session/per-spectator WebRTC publisher lifecycle.
+6. Add client UI feature flag for browser media while keeping UDP/FFplay
    fallback.
