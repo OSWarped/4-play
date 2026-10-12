@@ -441,6 +441,21 @@ The remaining placeholders are deliberate. The proven `seat-input.exe` path
 remains the gameplay path until the graphical client owns media receiver launch
 and input forwarding.
 
+The browser-served client also includes the first browser-native media
+integration seam:
+
+- a home-screen WebRTC readiness indicator based on
+  `/api/v1/experimental/webrtc/status`;
+- a hidden in-page `<video>` receiver surface;
+- an `Open in browser player` action when a player or spectator handoff includes
+  token-safe `webrtc_signaling` metadata;
+- offer/answer signaling through the protected per-session WebRTC endpoint;
+- FFplay/UDP receiver commands remain visible as the fallback.
+
+This path is intentionally dormant for normal sessions until runtime hosts
+advertise real session WebRTC publishers. It lets us wire the UI now without
+changing the proven gameplay media path.
+
 The next client UI increment should wire those buttons to existing control-plane
 APIs and either launch or coordinate the existing media/input path.
 

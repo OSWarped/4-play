@@ -138,6 +138,10 @@ Implemented:
 - Browser diagnostics log track attach/mute/unmute/end events.
 - Receiver stats include decoded frames, dropped frames, audio samples decoded,
   packet loss, jitter, and RTT where available.
+- The browser-served seat client now shows WebRTC readiness from the control
+  plane and includes an in-page receiver scaffold that can post an SDP offer to
+  a token-safe per-session `webrtc_signaling.offer_path` when a future runtime
+  host supplies one.
 - `tools/webrtc-gst-test-pattern.py` publishes a VP8 video test pattern and
   optional Opus audio ticks through GStreamer `webrtcbin`.
 - `tools/webrtc-gst-raw-media-plan.py` records the planned GStreamer pipeline
@@ -217,6 +221,8 @@ Client changes:
 - request `web_rtc` only when the user/client is configured for browser media;
 - create `RTCPeerConnection` from the safe handoff;
 - render in-page `<video>`;
+  - initial scaffold is implemented in `/client` and stays dormant until grants
+    include `webrtc_signaling`;
 - keep overlay/menu controls in the same UI surface;
 - allow fullscreen on the page/video element;
 - keep FFplay fallback button/path.
