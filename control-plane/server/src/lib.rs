@@ -21,7 +21,7 @@ use control_protocol::{
     ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat,
     RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList,
     SessionSummary, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
-    UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest,
+    UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest, WebRtcSignalingGrant,
 };
 use serde_json::{Value, json};
 use store::RuntimeHostStore;
@@ -711,7 +711,10 @@ async fn create_session(
         )
         .await
         .map_err(ApiError::store)?;
-    Ok((StatusCode::CREATED, Json(session)))
+    Ok((
+        StatusCode::CREATED,
+        Json(attach_webrtc_signaling_to_session(&state, session)),
+    ))
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList>, ApiError> {
@@ -719,7 +722,14 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<SessionList
         .runtime_hosts
         .list_sessions()
         .await
-        .map(|sessions| Json(SessionList { sessions }))
+        .map(|sessions| {
+            Json(SessionList {
+                sessions: sessions
+                    .into_iter()
+                    .map(|session| attach_webrtc_signaling_to_session(&state, session))
+                    .collect(),
+            })
+        })
         .map_err(ApiError::store)
 }
 
@@ -858,7 +868,7 @@ async fn get_session(
         .runtime_hosts
         .get_session(session_id)
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -1018,6 +1028,36 @@ async fn signal_session_webrtc_offer(
     }))
 }
 
+fn attach_webrtc_signaling_to_session(state: &AppState, mut session: Session) -> Session {
+    if state.webrtc_session_publisher_url_template.is_some() && !session.state.is_terminal() {
+        session.connection_grant.webrtc_signaling = Some(session_webrtc_signaling_grant(
+            &session.id,
+            session.connection_grant.expires_unix_ms,
+        ));
+    }
+    session
+}
+
+fn attach_webrtc_signaling_to_spectator_grant(
+    state: &AppState,
+    mut grant: SpectatorGrant,
+) -> SpectatorGrant {
+    if state.webrtc_session_publisher_url_template.is_some() {
+        grant.webrtc_signaling = Some(session_webrtc_signaling_grant(
+            &grant.session_id,
+            grant.expires_unix_ms,
+        ));
+    }
+    grant
+}
+
+fn session_webrtc_signaling_grant(session_id: &str, expires_unix_ms: u64) -> WebRtcSignalingGrant {
+    WebRtcSignalingGrant {
+        offer_path: format!("/api/v1/sessions/{session_id}/webrtc/offer"),
+        expires_unix_ms,
+    }
+}
+
 fn session_webrtc_publisher_url(
     template: &str,
     session: &Session,
@@ -1137,7 +1177,10 @@ async fn create_spectator_grant(
         )
         .await
         .map_err(ApiError::store)?;
-    Ok((StatusCode::CREATED, Json(grant)))
+    Ok((
+        StatusCode::CREATED,
+        Json(attach_webrtc_signaling_to_spectator_grant(&state, grant)),
+    ))
 }
 
 async fn release_spectator_grant(
@@ -1150,7 +1193,7 @@ async fn release_spectator_grant(
         .runtime_hosts
         .release_spectator_grant(session_id, grant_id, request.seat_id, unix_time_ms())
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -1170,7 +1213,7 @@ async fn reserve_player_slot(
             state.grant_ttl_ms,
         )
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -1184,7 +1227,7 @@ async fn release_player_slot(
         .runtime_hosts
         .release_player_slot(session_id, player_number, request.seat_id, unix_time_ms())
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -1198,7 +1241,7 @@ async fn connect_player_slot(
         .runtime_hosts
         .connect_player_slot(session_id, player_number, request.seat_id, unix_time_ms())
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -1218,7 +1261,7 @@ async fn disconnect_player_slot(
             state.grant_ttl_ms,
         )
         .await
-        .map(Json)
+        .map(|session| Json(attach_webrtc_signaling_to_session(&state, session)))
         .map_err(ApiError::store)
 }
 
@@ -2331,6 +2374,13 @@ mod tests {
         )
         .await;
         assert_eq!(create_status, 201);
+        assert_eq!(
+            created["connection_grant"]["webrtc_signaling"]["offer_path"],
+            format!(
+                "/api/v1/sessions/{}/webrtc/offer",
+                created["id"].as_str().unwrap()
+            )
+        );
         let session_id = created["id"].as_str().unwrap();
         let path = format!("/api/v1/sessions/{session_id}/webrtc/offer");
 
