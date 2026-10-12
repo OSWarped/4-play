@@ -1,6 +1,6 @@
 use std::{net::IpAddr, path::PathBuf};
 
-use control_protocol::{ConnectionGrant, Session, SpectatorGrant};
+use control_protocol::{ConnectionGrant, Session, SpectatorGrant, WebRtcSignalingGrant};
 use input_protocol::SessionToken;
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +143,14 @@ pub struct PublicMediaHandoff {
     pub udp_port: u16,
     pub receiver_url: String,
     pub runtime_command_hint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_signaling: Option<PublicWebRtcSignalingHandoff>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWebRtcSignalingHandoff {
+    pub offer_path: String,
+    pub expires_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,7 +227,10 @@ pub fn public_player_handoff(
         session_id: session.id.clone(),
         game_id: session.game_id.clone(),
         display_name: None,
-        media: public_media_handoff(&private_plan.media),
+        media: public_media_handoff(
+            &private_plan.media,
+            session.connection_grant.webrtc_signaling.as_ref(),
+        ),
         input: Some(PublicInputHandoff {
             destination: private_plan.input.destination,
             player_number,
@@ -235,12 +246,15 @@ pub fn public_spectator_handoff(session: &Session, grant: &SpectatorGrant) -> Pu
         session_id: session.id.clone(),
         game_id: session.game_id.clone(),
         display_name: None,
-        media: public_media_handoff(&private_plan.media),
+        media: public_media_handoff(&private_plan.media, grant.webrtc_signaling.as_ref()),
         input: None,
     }
 }
 
-fn public_media_handoff(plan: &MediaReceiverPlan) -> PublicMediaHandoff {
+fn public_media_handoff(
+    plan: &MediaReceiverPlan,
+    webrtc_signaling: Option<&WebRtcSignalingGrant>,
+) -> PublicMediaHandoff {
     PublicMediaHandoff {
         udp_port: plan.udp_port,
         receiver_url: plan.receiver_url.clone(),
@@ -248,6 +262,10 @@ fn public_media_handoff(plan: &MediaReceiverPlan) -> PublicMediaHandoff {
             "seat-client-runtime media --port {} --ffplay-path <path-to-ffplay>",
             plan.udp_port
         ),
+        webrtc_signaling: webrtc_signaling.map(|signaling| PublicWebRtcSignalingHandoff {
+            offer_path: signaling.offer_path.clone(),
+            expires_unix_ms: signaling.expires_unix_ms,
+        }),
     }
 }
 
@@ -421,6 +439,29 @@ mod tests {
         assert_eq!(handoff.mode, RuntimeHandoffMode::Spectator);
         assert_eq!(handoff.media.udp_port, 41_002);
         assert_eq!(handoff.input, None);
+    }
+
+    #[test]
+    fn public_handoff_exposes_webrtc_signaling_without_input_token() {
+        let mut session = session();
+        session.connection_grant.webrtc_signaling = Some(WebRtcSignalingGrant {
+            offer_path: "/api/v1/sessions/session-1/webrtc/offer".to_owned(),
+            expires_unix_ms: 123_456,
+        });
+
+        let handoff = public_player_handoff(&session, 1).unwrap();
+
+        assert_eq!(
+            handoff.media.webrtc_signaling,
+            Some(PublicWebRtcSignalingHandoff {
+                offer_path: "/api/v1/sessions/session-1/webrtc/offer".to_owned(),
+                expires_unix_ms: 123_456,
+            })
+        );
+        let json = serde_json::to_string(&handoff).unwrap();
+        assert!(json.contains("webrtc_signaling"));
+        assert!(!json.contains("00112233-4455-6677-8899-aabbccddeeff"));
+        assert!(!json.contains("private"));
     }
 
     fn session() -> Session {
