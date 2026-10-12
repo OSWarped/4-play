@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -329,6 +330,7 @@ impl MediaBridge {
                     {
                         Ok(file) => {
                             println!("{label} writer connected: {}", path.display());
+                            set_blocking(&file)?;
                             output = Some(file);
                         }
                         Err(error)
@@ -497,6 +499,20 @@ fn read_exact_while_running(
         }
     }
     Ok(true)
+}
+
+#[cfg(unix)]
+fn set_blocking(file: &File) -> io::Result<()> {
+    let fd = file.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let result = unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn send_latest(
