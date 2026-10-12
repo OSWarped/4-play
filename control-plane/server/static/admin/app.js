@@ -10,6 +10,7 @@ const state = {
   hosts: [],
   sessions: [],
   activeSessions: [],
+  webrtcStatus: null,
   selectedSession: null,
   productionGrants: [],
   producerDestination: localStorage.getItem("fourplay.producerDestination") || "",
@@ -49,33 +50,48 @@ async function fetchJson(path, protectedApi = true) {
 async function refresh() {
   setText("#health-status", "Loading…");
   try {
-    const [health, hosts, games, sessions, activeSessions] = await Promise.all([
+    const [health, hosts, games, sessions, activeSessions, webrtcStatus] = await Promise.all([
       fetchJson("/health", false),
       fetchJson("/api/v1/runtime-hosts"),
       fetchJson("/api/v1/games"),
       fetchJson("/api/v1/sessions"),
       fetchJson("/api/v1/active-sessions"),
+      fetchJson("/api/v1/experimental/webrtc/status"),
     ]);
 
     state.hosts = hosts.hosts || [];
     state.games = games.games || [];
     state.sessions = sessions.sessions || [];
     state.activeSessions = activeSessions.sessions || [];
+    state.webrtcStatus = webrtcStatus;
 
     setText("#health-status", health.status || "unknown");
     setText("#host-count", String(state.hosts.length));
     setText("#game-count", String(state.games.length));
     setText("#active-session-count", String(state.activeSessions.length));
+    setText("#webrtc-status", webrtcSummary(webrtcStatus));
 
     renderHosts();
     renderActiveSessions();
     renderGames();
     renderDiagnostics();
-    renderSnapshot({ health, hosts, activeSessions, sessions });
+    renderSnapshot({ health, hosts, activeSessions, sessions, webrtcStatus });
   } catch (error) {
     setText("#health-status", "Error");
+    setText("#webrtc-status", "Unknown");
     renderSnapshot({ error: String(error) });
   }
+}
+
+function webrtcSummary(status) {
+  if (!status) return "Unknown";
+  if (status.session_publisher_available) {
+    return `${status.web_rtc_runtime_hosts?.length || 0} hosts`;
+  }
+  if (status.test_pattern_proxy_configured) {
+    return "Spike only";
+  }
+  return "Off";
 }
 
 function renderHosts() {
@@ -91,6 +107,7 @@ function renderHost(host) {
     <span class="pill ${statusClass}">${escapeHtml(host.status || "unknown")}</span>
     <span class="pill">${escapeHtml(host.capabilities?.operating_system || "unknown")}</span>
     <span class="pill">${escapeHtml(String(host.active_session_count ?? 0))} active</span>
+    ${host.capabilities?.media_transports?.includes("web_rtc") ? `<span class="pill good">web_rtc</span>` : ""}
     <p class="muted">${escapeHtml(host.capabilities?.data_plane_address || "")}</p>
   `;
   return element;

@@ -1807,11 +1807,9 @@ mod tests {
             index_content_type.as_deref(),
             Some("text/html; charset=utf-8")
         );
-        assert!(
-            String::from_utf8(index_body)
-                .unwrap()
-                .contains("Admin / Producer Console")
-        );
+        let index_body = String::from_utf8(index_body).unwrap();
+        assert!(index_body.contains("Admin / Producer Console"));
+        assert!(index_body.contains("id=\"webrtc-status\""));
 
         assert_eq!(script_status, 200);
         assert_eq!(
@@ -1837,6 +1835,9 @@ mod tests {
         assert!(script_body.contains("Release production spectator feed"));
         assert!(script_body.contains("Stop session"));
         assert!(script_body.contains("/admin/capture?"));
+        assert!(script_body.contains("/api/v1/experimental/webrtc/status"));
+        assert!(script_body.contains("webrtcSummary"));
+        assert!(script_body.contains("web_rtc"));
 
         assert_eq!(capture_status, 200);
         assert_eq!(
