@@ -275,6 +275,14 @@ button:hover,
   flex-wrap: wrap;
 }
 
+.browser-media-status {
+  display: flex;
+  align-items: center;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 @media (max-width: 900px) {
   .topbar,
   .hero,

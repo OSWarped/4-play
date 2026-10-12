@@ -11,6 +11,7 @@ const state = {
   seatId: localStorage.getItem("fourplay.seatId") || "windows-seat-1",
   destinationIp: localStorage.getItem("fourplay.destinationIp") || "",
   lastRuntime: loadLastRuntime(),
+  browserMediaStatus: null,
   games: [],
   sessions: [],
 };
@@ -21,6 +22,9 @@ const clientApi = {
   },
   async loadActiveSessions() {
     return fetchJson("/api/v1/active-sessions");
+  },
+  async loadBrowserMediaStatus() {
+    return fetchJson("/api/v1/experimental/webrtc/status");
   },
   async startGame(gameId, seatId, destinationAddress) {
     return postJson("/api/v1/sessions", {
@@ -115,12 +119,14 @@ async function refresh() {
   setText("#primary-title", "Loading 4-Play…");
   setText("#primary-detail", "Fetching games and active sessions.");
   try {
-    const [games, sessions] = await Promise.all([
+    const [games, sessions, browserMediaStatus] = await Promise.all([
       clientApi.loadCatalog(),
       clientApi.loadActiveSessions(),
+      clientApi.loadBrowserMediaStatus(),
     ]);
     state.games = games.games || [];
     state.sessions = sessions.sessions || [];
+    state.browserMediaStatus = browserMediaStatus;
     renderHome();
     renderGames();
     renderSessions();
@@ -154,7 +160,34 @@ function renderHome() {
     setText("#primary-title", "Choose a game");
     setText("#primary-detail", `${state.games.length} games are available.`);
   }
+  renderBrowserMediaStatus();
   renderLastRuntimeHint();
+}
+
+function renderBrowserMediaStatus() {
+  const container = document.querySelector("#browser-media-status");
+  if (!container) return;
+  const status = state.browserMediaStatus;
+  if (!status) {
+    container.innerHTML = "";
+    return;
+  }
+  const hostCount = status.web_rtc_runtime_hosts?.length || 0;
+  const ready = Boolean(status.session_publisher_available);
+  const spikeOnly = !ready && Boolean(status.test_pattern_proxy_configured);
+  const tone = ready ? "good" : spikeOnly ? "warn" : "";
+  const label = ready ? "Browser media ready" : spikeOnly ? "WebRTC spike only" : "FFplay fallback";
+  const detail = ready
+    ? `${hostCount} runtime host${hostCount === 1 ? "" : "s"} can publish browser-native media.`
+    : spikeOnly
+      ? "Test-pattern WebRTC is available; gameplay still uses the proven FFplay path."
+      : "Gameplay media uses the proven UDP/FFplay path until WebRTC publishers are enabled.";
+  container.innerHTML = `
+    <div class="browser-media-status">
+      <span class="pill ${tone}">${escapeHtml(label)}</span>
+      <span class="muted">${escapeHtml(detail)}</span>
+    </div>
+  `;
 }
 
 function findOwnDisconnectedSlot() {

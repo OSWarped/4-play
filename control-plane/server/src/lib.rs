@@ -1885,11 +1885,9 @@ mod tests {
             index_content_type.as_deref(),
             Some("text/html; charset=utf-8")
         );
-        assert!(
-            String::from_utf8(index_body)
-                .unwrap()
-                .contains("Seat Client")
-        );
+        let index_body = String::from_utf8(index_body).unwrap();
+        assert!(index_body.contains("Seat Client"));
+        assert!(index_body.contains("id=\"browser-media-status\""));
 
         assert_eq!(script_status, 200);
         assert_eq!(
@@ -1913,6 +1911,10 @@ mod tests {
         assert!(script_body.contains("This matches the 4-Play server IP"));
         assert!(script_body.contains("destinationMismatchBadge"));
         assert!(script_body.contains("sessionStateTone"));
+        assert!(script_body.contains("loadBrowserMediaStatus"));
+        assert!(script_body.contains("renderBrowserMediaStatus"));
+        assert!(script_body.contains("/api/v1/experimental/webrtc/status"));
+        assert!(script_body.contains("Browser media ready"));
         assert!(script_body.contains("playerRuntimePanel"));
         assert!(script_body.contains("spectatorRuntimeCommands"));
         assert!(script_body.contains("Input token is intentionally not displayed"));
