@@ -1,8 +1,11 @@
 use std::{env, error::Error};
 
 use runtime_host_agent::{
-    AgentConfig, RuntimeHostAgent, catalog::discover_catalog, configured_mame_path,
-    discover_capabilities, runtime::RuntimeAdapterConfig, webrtc::WebRtcTestPublisherConfig,
+    AgentConfig, RuntimeHostAgent,
+    catalog::discover_catalog,
+    configured_mame_path, discover_capabilities,
+    runtime::RuntimeAdapterConfig,
+    webrtc::{WebRtcSessionPublisherConfig, WebRtcTestPublisherConfig},
 };
 
 #[tokio::main]
@@ -23,6 +26,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         mame_ini_path.as_deref().unwrap_or("/opt/4play/config/mame"),
     );
     let webrtc_test_publisher = WebRtcTestPublisherConfig::from_environment();
+    let webrtc_session_publishers = WebRtcSessionPublisherConfig::from_environment();
     let agent = RuntimeHostAgent::new(config, capabilities)
         .with_catalog(catalog)
         .with_runtime_adapter(runtime_adapter)
@@ -51,6 +55,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .browser_host_ip
                 .as_deref()
                 .unwrap_or("auto")
+        );
+    }
+    if webrtc_session_publishers.enabled {
+        println!(
+            "WebRTC session publisher advertising requested: bind_address={} ports={}..{} prerequisites_present={}",
+            webrtc_session_publishers.bind_address,
+            webrtc_session_publishers.port_start,
+            webrtc_session_publishers
+                .port_start
+                .saturating_add(webrtc_session_publishers.port_count.saturating_sub(1)),
+            webrtc_session_publishers.prerequisites_present()
         );
     }
 

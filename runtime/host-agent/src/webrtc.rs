@@ -8,6 +8,9 @@ use control_protocol::MediaTransport;
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:18080";
 const DEFAULT_ANSWER_FILE: &str = "/tmp/4play-webrtc-answer.sdp";
+const DEFAULT_SESSION_BIND_ADDRESS: &str = "127.0.0.1";
+const DEFAULT_SESSION_PORT_START: u16 = 43_000;
+const DEFAULT_SESSION_PORT_COUNT: u16 = 100;
 
 #[derive(Debug, Clone)]
 pub struct WebRtcTestPublisherConfig {
@@ -42,6 +45,43 @@ impl WebRtcTestPublisherConfig {
 
     pub fn publisher_url(&self) -> String {
         format!("http://{}/offer", self.bind_address)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebRtcSessionPublisherConfig {
+    pub enabled: bool,
+    pub bind_address: String,
+    pub port_start: u16,
+    pub port_count: u16,
+}
+
+impl WebRtcSessionPublisherConfig {
+    pub fn from_environment() -> Self {
+        Self {
+            enabled: env_flag("FOURPLAY_WEBRTC_SESSION_PUBLISHERS"),
+            bind_address: env::var("FOURPLAY_WEBRTC_SESSION_BIND_ADDRESS")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_SESSION_BIND_ADDRESS.to_owned()),
+            port_start: env_u16(
+                "FOURPLAY_WEBRTC_SESSION_PORT_START",
+                DEFAULT_SESSION_PORT_START,
+            ),
+            port_count: env_u16(
+                "FOURPLAY_WEBRTC_SESSION_PORT_COUNT",
+                DEFAULT_SESSION_PORT_COUNT,
+            )
+            .max(1),
+        }
+    }
+
+    pub fn prerequisites_present(&self) -> bool {
+        gstreamer_webrtc_prerequisites_present()
+    }
+
+    pub fn can_advertise(&self) -> bool {
+        self.enabled && self.prerequisites_present()
     }
 }
 
@@ -122,8 +162,19 @@ impl Drop for WebRtcTestPublisherSupervisor {
 }
 
 pub fn discover_media_transports() -> Vec<MediaTransport> {
+    let session_publishers = WebRtcSessionPublisherConfig::from_environment();
+    media_transports_for(
+        session_publishers.enabled,
+        session_publishers.prerequisites_present(),
+    )
+}
+
+fn media_transports_for(
+    session_publishers_enabled: bool,
+    prerequisites_present: bool,
+) -> Vec<MediaTransport> {
     let mut transports = vec![MediaTransport::UdpMpegTs];
-    if env_flag("FOURPLAY_WEBRTC_EXPERIMENTAL") && gstreamer_webrtc_prerequisites_present() {
+    if session_publishers_enabled && prerequisites_present {
         transports.push(MediaTransport::WebRtc);
     }
     transports
@@ -157,6 +208,13 @@ fn env_flag(name: &str) -> bool {
     env_flag_value(env::var(name).ok().as_deref())
 }
 
+fn env_u16(name: &str, default: u16) -> u16 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(default)
+}
+
 fn env_flag_value(value: Option<&str>) -> bool {
     value
         .map(|value| matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
@@ -170,7 +228,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{env_flag_value, find_script_from_ancestor};
+    use control_protocol::MediaTransport;
+
+    use super::{env_flag_value, find_script_from_ancestor, media_transports_for};
 
     #[test]
     fn env_flag_accepts_common_truthy_values() {
@@ -192,6 +252,22 @@ mod tests {
         for value in [None, Some("0"), Some("false"), Some("off"), Some("")] {
             assert!(!env_flag_value(value));
         }
+    }
+
+    #[test]
+    fn web_rtc_transport_is_advertised_only_for_session_publishers() {
+        assert_eq!(
+            media_transports_for(false, true),
+            vec![MediaTransport::UdpMpegTs]
+        );
+        assert_eq!(
+            media_transports_for(true, false),
+            vec![MediaTransport::UdpMpegTs]
+        );
+        assert_eq!(
+            media_transports_for(true, true),
+            vec![MediaTransport::UdpMpegTs, MediaTransport::WebRtc]
+        );
     }
 
     #[test]

@@ -61,10 +61,13 @@ the standalone publisher service first so both processes do not compete for
 ```bash
 sudo systemctl disable --now 4play-webrtc-spike-publisher.service
 sudo sed -i 's|^FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=.*|FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1|' /etc/4play/4play.env
-sudo sed -i 's|^FOURPLAY_WEBRTC_EXPERIMENTAL=.*|FOURPLAY_WEBRTC_EXPERIMENTAL=1|' /etc/4play/4play.env
 sudo systemctl restart 4play-runtime-host-agent.service
 sudo systemctl restart 4play-control-plane.service
 ```
+
+Do not set `FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1` yet. That flag is reserved
+for the future real per-session WebRTC publisher and controls whether runtime
+hosts advertise `web_rtc` as a normal session media transport.
 
 For the reference headless MAME runtime, skip startup warnings and game-info
 screens so games can begin producing raw media without local UI

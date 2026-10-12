@@ -106,7 +106,6 @@ is closer to the roadmap direction than the separate side service:
 ```bash
 sudo systemctl disable --now 4play-webrtc-spike-publisher.service
 sudo sed -i 's|^FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=.*|FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1|' /etc/4play/4play.env
-sudo sed -i 's|^FOURPLAY_WEBRTC_EXPERIMENTAL=.*|FOURPLAY_WEBRTC_EXPERIMENTAL=1|' /etc/4play/4play.env
 sudo systemctl restart 4play-runtime-host-agent.service
 sudo systemctl restart 4play-control-plane.service
 ```
@@ -114,6 +113,11 @@ sudo systemctl restart 4play-control-plane.service
 Use one mode at a time. The standalone publisher service and host-agent
 supervision both default to `127.0.0.1:18080`; running both will create a bind
 conflict.
+
+Leave `FOURPLAY_WEBRTC_SESSION_PUBLISHERS=0` for this spike. The generated
+test-pattern publisher can be supervised without advertising `web_rtc` for
+normal game sessions. That advertisement is reserved for the future
+session-runtime media publisher.
 
 With the proxy enabled, `/webrtc-test` defaults `Publisher URL` to:
 
