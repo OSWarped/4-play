@@ -22,6 +22,7 @@ import os
 import signal
 import sys
 import threading
+import traceback
 from pathlib import Path
 from typing import NoReturn
 
@@ -115,6 +116,15 @@ class RawSessionPublisher:
         for label, path in [("video", self.args.video_path), ("audio", self.args.audio_path)]:
             if not Path(path).exists():
                 raise RuntimeError(f"{label} FIFO does not exist: {path}")
+        print(
+            "Starting raw-session WebRTC pipeline "
+            f"session={self.args.session_id} "
+            f"video={self.args.video_path} audio={self.args.audio_path} "
+            f"size={self.args.width}x{self.args.height} "
+            f"fps={self.args.fps_num}/{self.args.fps_den}",
+            file=sys.stderr,
+            flush=True,
+        )
         self.pipeline.set_state(Gst.State.PLAYING)
         self.started = True
 
@@ -130,7 +140,11 @@ class RawSessionPublisher:
         context: dict[str, object] = {"event": event}
         GLib.idle_add(self.apply_offer_and_create_answer, offer_text, context)
         if not event.wait(timeout_seconds):
-            raise RuntimeError("timed out waiting for GStreamer SDP answer")
+            state = self.pipeline.get_state(0)
+            raise RuntimeError(
+                "timed out waiting for GStreamer SDP answer; "
+                f"pipeline_state={state.state.value_nick} pending={state.pending.value_nick}"
+            )
         if "error" in context:
             raise RuntimeError(str(context["error"]))
         answer = context.get("answer")
@@ -157,6 +171,12 @@ class RawSessionPublisher:
             promise = Gst.Promise.new_with_change_func(self.on_remote_description_set, context)
             self.webrtc.emit("set-remote-description", offer, promise)
         except Exception as error:  # noqa: BLE001 - diagnostic publisher reports setup failures.
+            print(
+                f"Failed while applying browser SDP offer: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc(file=sys.stderr)
             self.fail_pending_answer(context, error)
         return False
 
@@ -170,9 +190,23 @@ class RawSessionPublisher:
 
     def on_answer_created(self, promise: Gst.Promise, context: dict[str, object] | None) -> None:
         reply = promise.get_reply()
+        if reply is None:
+            self.fail_pending_answer(
+                context,
+                RuntimeError("webrtcbin create-answer returned no promise reply"),
+            )
+            return
         answer = reply.get_value("answer")
         if answer is None:
-            self.fail_pending_answer(context, RuntimeError("webrtcbin did not return an SDP answer"))
+            print(
+                f"webrtcbin create-answer reply did not contain an answer: {reply.to_string()}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self.fail_pending_answer(
+                context,
+                RuntimeError("webrtcbin did not return an SDP answer"),
+            )
             return
         set_local = Gst.Promise.new()
         self.webrtc.emit("set-local-description", answer, set_local)
@@ -272,9 +306,21 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
             try:
                 length = int(self.headers.get("content-length", "0"))
                 offer = self.rfile.read(length).decode("utf-8")
+                print(
+                    f"Received SDP offer path={self.path} bytes={len(offer)} "
+                    f"client={self.client_address[0]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 browser_host_ip = publisher.args.browser_host_ip or self.client_address[0]
                 answer = publisher.answer_for_offer(offer, browser_host_ip)
             except Exception as error:  # noqa: BLE001 - diagnostic publisher returns text.
+                print(
+                    f"Failed to answer SDP offer path={self.path}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                traceback.print_exc(file=sys.stderr)
                 self.send_response(500)
                 self.send_cors_headers()
                 self.send_header("content-type", "text/plain; charset=utf-8")
