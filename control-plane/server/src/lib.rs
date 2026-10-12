@@ -257,6 +257,10 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/experimental/webrtc/test-pattern/offer",
             post(signal_webrtc_test_pattern),
         )
+        .route(
+            "/api/v1/sessions/{session_id}/webrtc/offer",
+            post(signal_session_webrtc_offer),
+        )
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
             "/api/v1/sessions/{session_id}/notes",
@@ -964,6 +968,32 @@ async fn signal_webrtc_test_pattern(
         sdp_answer: answer,
         expires_unix_ms: unix_time_ms().saturating_add(state.grant_ttl_ms),
     }))
+}
+
+async fn signal_session_webrtc_offer(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(request): Json<WebRtcOfferRequest>,
+) -> Result<Json<WebRtcAnswerResponse>, ApiError> {
+    validate_webrtc_offer_request(&request)?;
+    let session = state
+        .runtime_hosts
+        .get_session(session_id.clone())
+        .await
+        .map_err(ApiError::store)?;
+    if session.state.is_terminal() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "session_not_active",
+            "WebRTC signaling requires an active or starting session",
+        ));
+    }
+
+    Err(ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "webrtc_session_publisher_unavailable",
+        "session WebRTC publishers are planned but are not available yet",
+    ))
 }
 
 async fn create_spectator_grant(
@@ -1990,6 +2020,78 @@ mod tests {
         assert_eq!(body["session_id"], "experimental-test-pattern");
         assert_eq!(body["media_transport"], "web_rtc");
         assert!(body["sdp_answer"].as_str().unwrap().starts_with("v=0"));
+    }
+
+    #[tokio::test]
+    async fn session_webrtc_offer_validates_sdp_before_lookup() {
+        let (status, body) = request_json(
+            app().await.unwrap(),
+            Method::POST,
+            "/api/v1/sessions/missing-session/webrtc/offer",
+            Some(json!({
+                "seat_id": "seat-one",
+                "role": "player",
+                "player_number": 1,
+                "sdp_offer": "not sdp"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "invalid_sdp_offer");
+    }
+
+    #[tokio::test]
+    async fn session_webrtc_offer_requires_existing_session() {
+        let (status, body) = request_json(
+            app().await.unwrap(),
+            Method::POST,
+            "/api/v1/sessions/missing-session/webrtc/offer",
+            Some(json!({
+                "seat_id": "seat-one",
+                "role": "player",
+                "player_number": 1,
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 404);
+        assert_eq!(body["code"], "session_not_found");
+    }
+
+    #[tokio::test]
+    async fn session_webrtc_offer_fails_closed_until_session_publisher_exists() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (create_status, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(create_status, 201);
+        let path = format!(
+            "/api/v1/sessions/{}/webrtc/offer",
+            created["id"].as_str().unwrap()
+        );
+
+        let (status, body) = request_json(
+            service,
+            Method::POST,
+            &path,
+            Some(json!({
+                "seat_id": "seat-one",
+                "role": "player",
+                "player_number": 1,
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+
+        assert_eq!(status, 503);
+        assert_eq!(body["code"], "webrtc_session_publisher_unavailable");
     }
 
     #[tokio::test]

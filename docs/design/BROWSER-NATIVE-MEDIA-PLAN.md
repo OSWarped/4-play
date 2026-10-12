@@ -128,6 +128,10 @@ Implemented:
 - Runtime-host-agent can optionally supervise the test-pattern publisher
   lifecycle with `FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1`, which is the
   first step away from a standalone side service.
+- The control plane exposes the production-shaped
+  `POST /api/v1/sessions/{session_id}/webrtc/offer` contract and fails closed
+  with `503 webrtc_session_publisher_unavailable` until real session publishers
+  are available.
 - Browser attaches the remote stream directly to an in-page `<video>`.
 - Browser diagnostics log track attach/mute/unmute/end events.
 - Receiver stats include decoded frames, dropped frames, audio samples decoded,
@@ -180,6 +184,8 @@ Control-plane changes:
 - hosts advertise `web_rtc` only when the publisher stack is available;
 - session creation may request `media_transport: "web_rtc"`;
 - control plane allocates or returns a WebRTC signaling handoff;
+  - first contract is implemented and guarded:
+    `POST /api/v1/sessions/{session_id}/webrtc/offer`;
 - grants expose only safe browser-facing signaling metadata.
 
 Runtime-host changes:

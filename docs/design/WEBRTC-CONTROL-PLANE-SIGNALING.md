@@ -105,9 +105,10 @@ the control-plane proxy its request source is `127.0.0.1`; without an explicit
 `FOURPLAY_WEBRTC_BROWSER_HOST_IP`, it rewrites the browser candidates to
 localhost and media never flows.
 
-## API sketch
+## Implemented session endpoint contract
 
-Experimental endpoint names should stay clearly temporary:
+The control plane now exposes the production-shaped session endpoint, but it is
+deliberately fail-closed until runtime-host-owned per-session publishers exist:
 
 ```http
 POST /api/v1/sessions/{session_id}/webrtc/offer
@@ -121,6 +122,16 @@ Content-Type: application/json
   "sdp_offer": "v=0\r\n..."
 }
 ```
+
+Current behavior:
+
+- validates the seat identity and SDP offer;
+- verifies the session exists;
+- rejects terminal sessions with `409 session_not_active`;
+- returns `503 webrtc_session_publisher_unavailable` for valid nonterminal
+  sessions until the runtime host can create a real WebRTC publisher.
+
+The expected future success response remains:
 
 Response:
 
@@ -157,11 +168,10 @@ The shared protocol types for this future API are:
 Failure responses:
 
 - `400 invalid_sdp_offer`
-- `400 invalid_webrtc_role`
 - `401 unauthorized`
-- `403 seat_not_allowed`
 - `404 session_not_found`
-- `409 publisher_busy`
+- `409 session_not_active`
+- `503 webrtc_session_publisher_unavailable`
 - `502 publisher_failed`
 - `504 publisher_timeout`
 

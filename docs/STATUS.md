@@ -210,11 +210,16 @@ Last updated: 2026-10-09
   `FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10` on the reference setup so
   browser `.local` ICE candidates are rewritten to the Windows seat IP instead
   of the control-plane proxy's `127.0.0.1`
+- the production-shaped session signaling endpoint
+  `POST /api/v1/sessions/{session_id}/webrtc/offer` is implemented as a
+  guarded contract; it validates the session and offer but returns
+  `503 webrtc_session_publisher_unavailable` until runtime-host-owned
+  publishers exist
 
 ## Not started
 
 - lower-bitrate preview streams distinct from full-quality spectator media
-- runtime-host-owned WebRTC publisher lifecycle for real sessions
+- runtime-host-owned WebRTC publisher lifecycle for real session media
 - feeding real session-runtime MAME media into the browser-native WebRTC path
 
 ## Next milestone
