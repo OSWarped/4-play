@@ -139,14 +139,18 @@ fn gstreamer_webrtc_prerequisites_present() -> bool {
 }
 
 fn default_script_path() -> PathBuf {
-    env::current_exe()
+    let from_current_exe = env::current_exe()
         .ok()
-        .and_then(|path| {
-            path.parent()
-                .map(|parent| parent.join("../tools/webrtc-gst-test-pattern.py"))
-        })
-        .filter(|path| path.is_file())
+        .and_then(|path| find_script_from_ancestor(&path));
+    from_current_exe
         .unwrap_or_else(|| PathBuf::from("/home/blake/src/4-play/tools/webrtc-gst-test-pattern.py"))
+}
+
+fn find_script_from_ancestor(start: &std::path::Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|ancestor| {
+        let candidate = ancestor.join("tools/webrtc-gst-test-pattern.py");
+        candidate.is_file().then_some(candidate)
+    })
 }
 
 fn env_flag(name: &str) -> bool {
@@ -161,7 +165,12 @@ fn env_flag_value(value: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::env_flag_value;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{env_flag_value, find_script_from_ancestor};
 
     #[test]
     fn env_flag_accepts_common_truthy_values() {
@@ -183,5 +192,28 @@ mod tests {
         for value in [None, Some("0"), Some("false"), Some("off"), Some("")] {
             assert!(!env_flag_value(value));
         }
+    }
+
+    #[test]
+    fn finds_script_from_repo_ancestor() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("4play-webrtc-test-{unique}"));
+        let nested = root.join("target/release");
+        let tools = root.join("tools");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(
+            tools.join("webrtc-gst-test-pattern.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
+
+        let found = find_script_from_ancestor(&nested.join("runtime-host-agent")).unwrap();
+        assert_eq!(found, tools.join("webrtc-gst-test-pattern.py"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
