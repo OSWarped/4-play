@@ -65,13 +65,34 @@ sudo systemctl restart 4play-runtime-host-agent.service
 sudo systemctl restart 4play-control-plane.service
 ```
 
-Do not set `FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1` yet. That flag is reserved
-for the future real per-session WebRTC publisher and controls whether runtime
-hosts advertise `web_rtc` as a normal session media transport.
-The runtime-host agent only advertises that transport when the flag is enabled
-and the full GStreamer raw-media WebRTC stack is present. Use
-`deploy/systemd/check-browser-media-prereqs.sh` to verify the same element set
-before enabling it.
+Real per-session WebRTC publishers are now available as an experimental,
+opt-in path. Leave this off for normal FFplay/UDP operation. When testing
+browser-native real-session media, verify prerequisites first:
+
+```bash
+cd ~/src/4-play
+bash deploy/systemd/check-browser-media-prereqs.sh
+```
+
+Then enable the runtime-host-owned raw-session publishers and the matching
+control-plane proxy template:
+
+```bash
+sudo sed -i 's|^FOURPLAY_WEBRTC_SESSION_PUBLISHERS=.*|FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1|' /etc/4play/4play.env
+sudo sed -i 's|^FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE=.*|FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE=http://127.0.0.1:{webrtc_signal_port}/sessions/{session_id}/offer|' /etc/4play/4play.env
+sudo systemctl restart 4play-control-plane.service 4play-runtime-host-agent.service
+```
+
+Default session publisher ports are deterministic:
+
+```text
+webrtc_signal_port = 43000 + (input_udp_port - 42000)
+```
+
+So a session using input port `42001` gets WebRTC signaling port `43001`.
+The runtime-host agent only advertises `web_rtc` when the flag is enabled, the
+publisher script is present, and the GStreamer raw-media WebRTC stack is
+present.
 
 For the reference headless MAME runtime, skip startup warnings and game-info
 screens so games can begin producing raw media without local UI
