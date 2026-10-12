@@ -278,6 +278,21 @@ python3 tools/webrtc-gst-raw-media-plan.py \
   --print-pipeline
 ```
 
+For offline raw-shape validation without MAME, generate a short regular-file
+sample:
+
+```bash
+mkdir -p /tmp/4play/raw-pattern
+python3 tools/generate-raw-av-pattern.py \
+  --video-path /tmp/4play/raw-pattern/video.raw \
+  --audio-path /tmp/4play/raw-pattern/audio.pcm \
+  --width 320 \
+  --height 224 \
+  --fps 60 \
+  --duration-seconds 3
+ls -lh /tmp/4play/raw-pattern/video.raw /tmp/4play/raw-pattern/audio.pcm
+```
+
 This tool does not launch a publisher and does not touch a live game. It keeps
 the real-media WebRTC pipeline reviewable before we wire it into
 runtime-host-owned session publishers.
