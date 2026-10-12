@@ -261,6 +261,27 @@ grep -n 'm=audio\|a=sendonly\|a=inactive\|rtpmap:111' /tmp/4play-webrtc-answer.s
 For a successful audio negotiation, the audio section should include
 `a=rtpmap:111 OPUS/48000/2` and `a=sendonly`.
 
+## Plan the future raw MAME media pipeline
+
+Before integrating real `session-runtime` media, inspect the planned
+GStreamer pipeline separately:
+
+```bash
+cd ~/src/4-play
+python3 tools/webrtc-gst-raw-media-plan.py --check-prereqs
+python3 tools/webrtc-gst-raw-media-plan.py \
+  --video-path /tmp/4play/session-example/video.raw \
+  --audio-path /tmp/4play/session-example/audio.pcm \
+  --width 320 \
+  --height 224 \
+  --fps-num 60 \
+  --print-pipeline
+```
+
+This tool does not launch a publisher and does not touch a live game. It keeps
+the real-media WebRTC pipeline reviewable before we wire it into
+runtime-host-owned session publishers.
+
 ## Manual fallback
 
 If the automated endpoint fails, manual SDP copy/paste is still available:

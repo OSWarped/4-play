@@ -140,6 +140,9 @@ Implemented:
   packet loss, jitter, and RTT where available.
 - `tools/webrtc-gst-test-pattern.py` publishes a VP8 video test pattern and
   optional Opus audio ticks through GStreamer `webrtcbin`.
+- `tools/webrtc-gst-raw-media-plan.py` records the planned GStreamer pipeline
+  for future MAME raw FIFO input (`video.raw` BGRA frames and `audio.pcm`
+  signed 16-bit stereo PCM) without changing the live session-runtime path.
 - The publisher rewrites browser `.local` mDNS candidates to the HTTP request
   source IP for this spike.
 - When signaling is proxied through the control plane, the publisher accepts
@@ -249,6 +252,7 @@ After player seats are stable:
 3. Move from one global test-pattern publisher to per-session/per-spectator
    WebRTC publisher lifecycle.
 4. Keep publishing a test pattern until lifecycle and cleanup are reliable.
-5. Feed real session-runtime MAME media into the WebRTC publisher.
-6. Add client UI feature flag for browser media while keeping UDP/FFplay
+5. Validate the raw-media WebRTC pipeline plan against throwaway FIFOs.
+6. Feed real session-runtime MAME media into the WebRTC publisher.
+7. Add client UI feature flag for browser media while keeping UDP/FFplay
    fallback.
