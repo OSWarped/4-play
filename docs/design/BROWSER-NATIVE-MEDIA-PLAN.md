@@ -1,5 +1,16 @@
 # Browser-native media implementation plan
 
+## Progress on 2026-10-12
+
+The reference user confirmed real MAME video playback and clean music after the
+whole-frame `appsrc` bridge and sample-count audio timing changes. Browser gameplay
+input is now implemented via an unordered WebRTC data channel, server-authorized
+player slots, and the existing authenticated UDP receiver. Automated tests cover
+the real SCTP-to-UDP transport; manual gameplay/latency confirmation is pending.
+See [browser input validation](../testing/WEBRTC-BROWSER-INPUT.md) for deployment,
+controls, and tests. The experimental publisher still supports one browser peer
+per MAME session; concurrent browser players/spectators are subsequent work.
+
 ## Goal
 
 Move the normal player/spectator video path from an external FFplay window into

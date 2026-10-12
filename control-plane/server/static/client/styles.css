@@ -292,6 +292,18 @@ button:hover,
   display: none;
 }
 
+.browser-player:fullscreen {
+  background: #000;
+  height: 100%;
+  overflow: auto;
+}
+
+.browser-player:fullscreen video {
+  min-height: 0;
+  height: 80vh;
+  object-fit: contain;
+}
+
 .browser-player video {
   width: 100%;
   min-height: min(60vh, 32rem);

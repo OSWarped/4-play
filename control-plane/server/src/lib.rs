@@ -17,11 +17,12 @@ use axum::{
 };
 use control_protocol::{
     ApiInfo, CatalogGame, CatalogGameList, CreateSessionRequest, CreateSpectatorGrantRequest,
-    ErrorResponse, GameMetadata, MediaTransport, PreviewStatus, RegisterRuntimeHost,
-    ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog, RuntimeHostHeartbeat,
-    RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session, SessionList,
-    SessionSummary, SessionSummaryList, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
-    UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest, WebRtcSignalingGrant,
+    ErrorResponse, GameMetadata, MediaTransport, PlayerSlotState, PreviewStatus,
+    RegisterRuntimeHost, ReservePlayerSlotRequest, RuntimeHost, RuntimeHostCatalog,
+    RuntimeHostHeartbeat, RuntimeHostList, RuntimeSessionAssignmentList, ServiceStatus, Session,
+    SessionList, SessionSummary, SessionSummaryList, SpectatorGrant, StatusResponse,
+    UpdateGameMetadataRequest, UpdateSessionState, WebRtcAnswerResponse, WebRtcInputLeaseRequest,
+    WebRtcOfferRequest, WebRtcSeatRole, WebRtcSignalingGrant,
 };
 use serde_json::{Value, json};
 use store::RuntimeHostStore;
@@ -34,6 +35,7 @@ const MAX_ASSET_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const MAX_WEBRTC_SDP_BYTES: usize = 256 * 1024;
 const WEBRTC_PUBLISHER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_WEBRTC_SESSION_PORT_START: u16 = 43_000;
+const WEBRTC_INPUT_LEASE_MS: u64 = 60_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -274,6 +276,10 @@ pub fn app_with_state(state: AppState) -> Router {
             "/api/v1/sessions/{session_id}/webrtc/offer",
             post(signal_session_webrtc_offer),
         )
+        .route(
+            "/api/v1/sessions/{session_id}/player-slots/{player_number}/webrtc-input/lease",
+            post(renew_webrtc_input_lease),
+        )
         .route("/api/v1/sessions/{session_id}", get(get_session))
         .route(
             "/api/v1/sessions/{session_id}/notes",
@@ -344,6 +350,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/client", get(client_index))
         .route("/client/", get(client_index))
         .route("/client/app.js", get(client_script))
+        .route("/client/input.js", get(client_input_script))
         .route("/client/styles.css", get(client_styles))
         .route("/webrtc-test", get(webrtc_test_index))
         .route("/webrtc-test/", get(webrtc_test_index))
@@ -461,6 +468,13 @@ async fn client_styles() -> Response {
     static_response(
         "text/css; charset=utf-8",
         include_str!("../static/client/styles.css"),
+    )
+}
+
+async fn client_input_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client/input.js"),
     )
 }
 
@@ -941,7 +955,7 @@ async fn signal_webrtc_test_pattern(
         })?;
 
     let answer =
-        post_sdp_offer_to_publisher(publisher_url, request.sdp_offer, "test-pattern").await?;
+        post_sdp_offer_to_publisher(publisher_url, request.sdp_offer, "test-pattern", None).await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
 
     Ok(Json(WebRtcAnswerResponse {
@@ -949,6 +963,7 @@ async fn signal_webrtc_test_pattern(
         media_transport: MediaTransport::WebRtc,
         sdp_answer: answer,
         expires_unix_ms: unix_time_ms().saturating_add(state.grant_ttl_ms),
+        input_peer_id: None,
     }))
 }
 
@@ -1017,7 +1032,25 @@ async fn signal_session_webrtc_offer(
                 "session WebRTC publishers are planned but are not available yet",
             )
         })?;
-    let answer = post_sdp_offer_to_publisher(&publisher_url, request.sdp_offer, "session").await?;
+    let input = if request.role == WebRtcSeatRole::Player {
+        let player = request.player_number.ok_or_else(|| {
+            ApiError::bad_request(
+                "missing_player_number",
+                "player input requires a player number",
+            )
+        })?;
+        Some(authorize_browser_input(
+            &session,
+            &request.seat_id,
+            player,
+            uuid::Uuid::new_v4().to_string(),
+        )?)
+    } else {
+        None
+    };
+    let answer =
+        post_sdp_offer_to_publisher(&publisher_url, request.sdp_offer, "session", input.as_ref())
+            .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
 
     Ok(Json(WebRtcAnswerResponse {
@@ -1025,7 +1058,116 @@ async fn signal_session_webrtc_offer(
         media_transport: MediaTransport::WebRtc,
         sdp_answer: answer,
         expires_unix_ms: unix_time_ms().saturating_add(state.grant_ttl_ms),
+        input_peer_id: input.map(|input| input.peer_id),
     }))
+}
+
+struct PublisherInput {
+    token: String,
+    port: u16,
+    player: u32,
+    peer_id: String,
+    expires: u64,
+}
+
+fn authorize_browser_input(
+    session: &Session,
+    seat_id: &str,
+    player: u32,
+    peer_id: String,
+) -> Result<PublisherInput, ApiError> {
+    let owns_slot = session.player_slots.iter().any(|slot| {
+        slot.player_number == player
+            && slot.state == PlayerSlotState::Occupied
+            && slot.seat_id.as_deref() == Some(seat_id)
+    });
+    if session.state.is_terminal() || !owns_slot {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "webrtc_input_not_authorized",
+            "browser input requires an occupied player slot owned by this seat",
+        ));
+    }
+    Ok(PublisherInput {
+        token: session.connection_grant.token.clone(),
+        port: session.connection_grant.input_udp_port,
+        player,
+        peer_id,
+        expires: unix_time_ms().saturating_add(WEBRTC_INPUT_LEASE_MS),
+    })
+}
+
+impl PublisherInput {
+    fn headers(&self) -> Result<HeaderMap, ApiError> {
+        let mut headers = HeaderMap::new();
+        for (name, value) in [
+            ("x-4play-input-token", self.token.clone()),
+            ("x-4play-input-port", self.port.to_string()),
+            ("x-4play-input-player", self.player.to_string()),
+            ("x-4play-input-peer", self.peer_id.clone()),
+            ("x-4play-input-expires", self.expires.to_string()),
+        ] {
+            headers.insert(
+                name,
+                value.parse().map_err(|_| {
+                    ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "invalid_input_authorization",
+                        "invalid publisher authorization",
+                    )
+                })?,
+            );
+        }
+        Ok(headers)
+    }
+}
+
+async fn renew_webrtc_input_lease(
+    State(state): State<AppState>,
+    AxumPath((session_id, player)): AxumPath<(String, u32)>,
+    Json(request): Json<WebRtcInputLeaseRequest>,
+) -> Result<Json<Value>, ApiError> {
+    validate_seat_id(&request.seat_id)?;
+    validate_identity("invalid_peer_id", "input peer ID", &request.peer_id)?;
+    let session = state
+        .runtime_hosts
+        .get_session(session_id)
+        .await
+        .map_err(ApiError::store)?;
+    let input = authorize_browser_input(&session, &request.seat_id, player, request.peer_id)?;
+    let template = state
+        .webrtc_session_publisher_url_template
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "webrtc_session_publisher_unavailable",
+                "publisher unavailable",
+            )
+        })?;
+    let offer_url = session_webrtc_publisher_url(template, &session, state.port_pools);
+    let lease_url = format!("{}/input-lease", offer_url.trim_end_matches("/offer"));
+    let response = reqwest::Client::new()
+        .post(lease_url)
+        .headers(input.headers()?)
+        .timeout(WEBRTC_PUBLISHER_TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "webrtc_input_lease_failed",
+                "input publisher unavailable",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "webrtc_input_lease_failed",
+            "browser input peer is no longer active",
+        ));
+    }
+    Ok(Json(json!({"expires_unix_ms": input.expires})))
 }
 
 fn attach_webrtc_signaling_to_session(state: &AppState, mut session: Session) -> Session {
@@ -1102,6 +1244,7 @@ async fn post_sdp_offer_to_publisher(
     publisher_url: &str,
     sdp_offer: String,
     publisher_label: &str,
+    input: Option<&PublisherInput>,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(WEBRTC_PUBLISHER_TIMEOUT)
@@ -1114,20 +1257,21 @@ async fn post_sdp_offer_to_publisher(
                 "failed to initialize WebRTC publisher client",
             )
         })?;
-    let response = client
+    let mut publisher_request = client
         .post(publisher_url)
         .header("content-type", "application/sdp; charset=utf-8")
-        .body(sdp_offer)
-        .send()
-        .await
-        .map_err(|error| {
-            eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "webrtc_publisher_failed",
-                "WebRTC publisher request failed",
-            )
-        })?;
+        .body(sdp_offer);
+    if let Some(input) = input {
+        publisher_request = publisher_request.headers(input.headers()?);
+    }
+    let response = publisher_request.send().await.map_err(|error| {
+        eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "webrtc_publisher_failed",
+            "WebRTC publisher request failed",
+        )
+    })?;
 
     let status = response.status();
     let answer = response.text().await.map_err(|error| {
@@ -1780,7 +1924,7 @@ mod tests {
         Router,
         body::Body,
         extract::Path as TestPath,
-        http::{Method, Request},
+        http::{HeaderMap, Method, Request, StatusCode},
         routing::post as axum_post,
     };
     use control_protocol::{
@@ -2351,9 +2495,13 @@ mod tests {
         let publisher = Router::new().route(
             "/sessions/{session_id}/offer",
             axum_post(
-                |TestPath(session_id): TestPath<String>, body: String| async move {
+                |TestPath(session_id): TestPath<String>, headers: HeaderMap, body: String| async move {
                     assert!(!session_id.is_empty());
                     assert!(body.starts_with("v=0"));
+                    assert_eq!(headers["x-4play-input-player"], "1");
+                    assert_eq!(headers["x-4play-input-port"], "42000");
+                    assert!(uuid::Uuid::parse_str(headers["x-4play-input-token"].to_str().unwrap()).is_ok());
+                    assert!(uuid::Uuid::parse_str(headers["x-4play-input-peer"].to_str().unwrap()).is_ok());
                     "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
                 },
             ),
@@ -2406,6 +2554,134 @@ mod tests {
         assert_eq!(body["session_id"], session_id);
         assert_eq!(body["media_transport"], "web_rtc");
         assert!(body["sdp_answer"].as_str().unwrap().starts_with("v=0"));
+        assert!(body["input_peer_id"].is_string());
+        assert!(
+            !body
+                .to_string()
+                .contains(created["connection_grant"]["token"].as_str().unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn browser_input_rejects_wrong_seat_or_slot_and_spectators_get_no_input() {
+        let publisher = Router::new().route(
+            "/sessions/{id}/offer",
+            axum_post(|headers: HeaderMap| async move {
+                assert!(!headers.contains_key("x-4play-input-token"));
+                "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut state = AppState::in_memory(DEFAULT_OFFLINE_AFTER).await.unwrap();
+        state.webrtc_session_publisher_url_template = Some(format!(
+            "http://{}/sessions/{{session_id}}/offer",
+            listener.local_addr().unwrap()
+        ));
+        tokio::spawn(async move {
+            axum::serve(listener, publisher).await.unwrap();
+        });
+        let service = app_with_state(state);
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+        let path = format!("/api/v1/sessions/{id}/webrtc/offer");
+        for (seat, player) in [("seat-two", 1), ("seat-one", 2)] {
+            let (status, _) = request_json(
+                service.clone(),
+                Method::POST,
+                &path,
+                Some(json!({
+                    "seat_id": seat, "role": "player", "player_number": player,
+                    "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+        let (status, answer) = request_json(
+            service.clone(),
+            Method::POST,
+            &path,
+            Some(json!({
+                "seat_id": "seat-two", "role": "spectator", "player_number": 1,
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(answer["input_peer_id"].is_null());
+        let (status, _) = request_json(
+            service,
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/webrtc-input/lease"),
+            Some(json!({"seat_id":"seat-two", "peer_id":uuid::Uuid::new_v4().to_string()})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn browser_input_lease_forwards_authorization_and_reports_stale_peer() {
+        let peer = uuid::Uuid::new_v4().to_string();
+        let expected_peer = peer.clone();
+        let publisher = Router::new().route(
+            "/sessions/{id}/input-lease",
+            axum_post(move |headers: HeaderMap| {
+                let expected_peer = expected_peer.clone();
+                async move {
+                    assert_eq!(headers["x-4play-input-player"], "1");
+                    if headers["x-4play-input-peer"] == expected_peer {
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::CONFLICT
+                    }
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut state = AppState::in_memory(DEFAULT_OFFLINE_AFTER).await.unwrap();
+        state.webrtc_session_publisher_url_template = Some(format!(
+            "http://{}/sessions/{{session_id}}/offer",
+            listener.local_addr().unwrap()
+        ));
+        tokio::spawn(async move {
+            axum::serve(listener, publisher).await.unwrap();
+        });
+        let service = app_with_state(state);
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let path = format!(
+            "/api/v1/sessions/{}/player-slots/1/webrtc-input/lease",
+            created["id"].as_str().unwrap()
+        );
+        let (status, _) = request_json(
+            service.clone(),
+            Method::POST,
+            &path,
+            Some(json!({"seat_id":"seat-one", "peer_id":peer})),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let (status, _) = request_json(
+            service,
+            Method::POST,
+            &path,
+            Some(json!({"seat_id":"seat-one", "peer_id":uuid::Uuid::new_v4().to_string()})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
     }
 
     #[test]

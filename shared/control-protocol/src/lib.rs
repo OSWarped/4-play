@@ -293,6 +293,14 @@ pub struct WebRtcAnswerResponse {
     pub media_transport: MediaTransport,
     pub sdp_answer: String,
     pub expires_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_peer_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebRtcInputLeaseRequest {
+    pub seat_id: String,
+    pub peer_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -545,6 +553,7 @@ mod tests {
             media_transport: MediaTransport::WebRtc,
             sdp_answer: "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n".to_owned(),
             expires_unix_ms: 123_456,
+            input_peer_id: None,
         };
 
         let answer_value = serde_json::to_value(answer).unwrap();

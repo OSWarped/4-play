@@ -18,6 +18,8 @@ const state = {
   browserMediaStatus: null,
   browserMediaPeer: null,
   browserMediaStream: null,
+  browserInput: null,
+  browserInputLeaseTimer: null,
   games: [],
   sessions: [],
 };
@@ -91,6 +93,14 @@ document.querySelector("#browse-sessions").addEventListener("click", () => {
   document.querySelector("#sessions").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 stopBrowserMediaButton.addEventListener("click", stopBrowserMedia);
+document.querySelector("#fullscreen-browser-media").addEventListener("click", async () => {
+  try {
+    await browserPlayer.requestFullscreen();
+    browserMediaVideo.focus();
+  } catch (error) { setBrowserMediaState(`Fullscreen unavailable: ${error.message}`); }
+});
+browserMediaVideo.addEventListener("click", () => browserMediaVideo.focus());
+window.addEventListener("pagehide", stopBrowserMedia);
 
 function authHeaders() {
   if (!state.token) return {};
@@ -762,6 +772,27 @@ async function startBrowserMedia(button) {
 
   peer.addTransceiver("video", { direction: "recvonly" });
   peer.addTransceiver("audio", { direction: "recvonly" });
+  const inputStatus = document.querySelector("#browser-input-state");
+  inputStatus.textContent = "Spectator mode: view only.";
+  if (button.dataset.browserMediaRole === "player") {
+    const channel = peer.createDataChannel("4play-input", { ordered: false, maxRetransmits: 0 });
+    const input = new FourPlayBrowserInput(channel, browserPlayer);
+    state.browserInput = input;
+    inputStatus.textContent = "Connecting game controls...";
+    channel.addEventListener("open", () => {
+      if (state.browserMediaPeer !== peer) return;
+      input.start();
+      browserMediaVideo.focus();
+      inputStatus.textContent = "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start. Gamepads also supported when available.";
+    });
+    channel.addEventListener("close", () => {
+      input.stop();
+      if (state.browserMediaPeer === peer) {
+        stopBrowserInput();
+        inputStatus.textContent = "Game controls disconnected. Reopen the browser player to reconnect.";
+      }
+    });
+  }
   peer.addEventListener("track", (event) => {
     stream.addTrack(event.track);
     setBrowserMediaState(`Attached remote ${event.track.kind} track.`);
@@ -795,12 +826,27 @@ async function startBrowserMedia(button) {
     }
     setBrowserMediaState("Sending WebRTC offer to session publisher...");
     const answer = await postJson(offerUrl, body);
+    if (state.browserMediaPeer !== peer) return;
     await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp_answer });
+    if (answer.input_peer_id && body.player_number) {
+      const leaseUrl = `${offerUrl.replace(/\/webrtc\/offer$/, "")}/player-slots/${body.player_number}/webrtc-input/lease`;
+      state.browserInputLeaseTimer = window.setInterval(async () => {
+        if (state.browserMediaPeer !== peer) return;
+        try {
+          await postJson(leaseUrl, { seat_id: body.seat_id, peer_id: answer.input_peer_id });
+        } catch {
+          if (state.browserMediaPeer !== peer) return;
+          stopBrowserInput();
+          inputStatus.textContent = "Game control authorization ended. Reconnect to your player slot.";
+        }
+      }, 20000);
+    }
     setBrowserMediaState("Applied WebRTC answer; waiting for media packets...");
   } catch (error) {
     setBrowserMediaState(`Browser media failed: ${error.message || error}`);
     peer.close();
     if (state.browserMediaPeer === peer) {
+      stopBrowserInput();
       state.browserMediaPeer = null;
       state.browserMediaStream = null;
     }
@@ -808,6 +854,7 @@ async function startBrowserMedia(button) {
 }
 
 function stopBrowserMedia() {
+  stopBrowserInput();
   if (state.browserMediaPeer) {
     state.browserMediaPeer.close();
     state.browserMediaPeer = null;
@@ -821,6 +868,13 @@ function stopBrowserMedia() {
     browserMediaVideo.srcObject = null;
   }
   setBrowserMediaState("Browser-native media stopped.");
+}
+
+function stopBrowserInput() {
+  if (state.browserInputLeaseTimer !== null) window.clearInterval(state.browserInputLeaseTimer);
+  state.browserInputLeaseTimer = null;
+  state.browserInput?.stop();
+  state.browserInput = null;
 }
 
 function setBrowserMediaState(message) {

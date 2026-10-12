@@ -14,9 +14,7 @@ const DEFAULT_SESSION_PORT_COUNT: u16 = 100;
 const DEFAULT_INPUT_PORT_START: u16 = 42_000;
 const SESSION_PUBLISHER_GST_ELEMENTS: &[&str] = &[
     "webrtcbin",
-    "filesrc",
-    "rawvideoparse",
-    "rawaudioparse",
+    "appsrc",
     "videoconvert",
     "audioconvert",
     "audioresample",
@@ -339,9 +337,7 @@ mod tests {
     fn session_publisher_prerequisites_cover_raw_media_pipeline() {
         for required in [
             "webrtcbin",
-            "filesrc",
-            "rawvideoparse",
-            "rawaudioparse",
+            "appsrc",
             "vp8enc",
             "rtpvp8pay",
             "opusenc",

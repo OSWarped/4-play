@@ -70,8 +70,10 @@
             <h2>Browser-native media</h2>
           </div>
           <button id="stop-browser-media" type="button">Stop browser media</button>
+          <button id="fullscreen-browser-media" type="button">Fullscreen</button>
         </div>
-        <video id="browser-media-video" autoplay playsinline controls></video>
+        <video id="browser-media-video" tabindex="0" autoplay playsinline controls></video>
+        <p id="browser-input-state" class="muted">Spectators have view-only access.</p>
         <p id="browser-media-state" class="muted">
           Browser-native WebRTC media will appear here when a session publisher is available.
         </p>
@@ -95,6 +97,7 @@
       <p class="muted">Nothing to show.</p>
     </template>
 
+    <script src="/client/input.js" defer></script>
     <script src="/client/app.js" defer></script>
   </body>
 </html>

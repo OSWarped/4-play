@@ -27,6 +27,7 @@ import time
 import traceback
 from pathlib import Path
 from typing import NoReturn
+from webrtc_browser_input import BrowserInputRelay, InputAuthorization
 
 import gi
 
@@ -65,6 +66,8 @@ class RawSessionPublisher:
         self.args = args
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
+        self.input_relay = BrowserInputRelay()
+        self.input_channel = None
         self.media_lock = threading.Lock()
         self.reader_stop = threading.Event()
         self.reader_threads: list[threading.Thread] = []
@@ -104,6 +107,7 @@ class RawSessionPublisher:
         self.webrtc.connect("notify::connection-state", self.on_webrtc_state_changed)
         self.webrtc.connect("notify::signaling-state", self.on_webrtc_state_changed)
         self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
+        self.webrtc.connect("on-data-channel", self.on_data_channel)
 
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
@@ -120,6 +124,8 @@ class RawSessionPublisher:
             self.ice_timeout_id = None
         with self.media_lock:
             self.media_epoch_ns = None
+        self.input_channel = None
+        self.input_relay.authorize(None)
         if self.pipeline is not None:
             self.pipeline.get_bus().remove_signal_watch()
             self.pipeline.set_state(Gst.State.NULL)
@@ -160,6 +166,7 @@ class RawSessionPublisher:
             self.loop.run()
         finally:
             self.reader_stop.set()
+            self.input_relay.close()
             with self.media_lock:
                 self.media_epoch_ns = None
             server.shutdown()
@@ -281,10 +288,12 @@ class RawSessionPublisher:
         offer_text: str,
         browser_host_ip: str | None,
         timeout_seconds: float = 8.0,
+        input_authorization: InputAuthorization | None = None,
     ) -> str:
         with self.offer_lock:
             if self.pipeline_failed or self.media_started:
                 self.reset_pipeline("new browser offer")
+            self.input_relay.authorize(input_authorization)
             if browser_host_ip:
                 offer_text = replace_mdns_candidates(offer_text, browser_host_ip)
             event = threading.Event()
@@ -308,6 +317,30 @@ class RawSessionPublisher:
             if self.args.answer_file:
                 Path(self.args.answer_file).write_text(answer, encoding="utf-8")
             return answer
+
+    def on_data_channel(self, _webrtc, channel):
+        authorization = self.input_relay.authorization
+        if channel.get_property("label") != "4play-input" or authorization is None:
+            channel.emit("close")
+            return
+        if self.input_channel is not None:
+            channel.emit("close")
+            return
+        self.input_channel = channel
+        peer_id = authorization.peer_id
+
+        def receive(_channel, message):
+            if self.input_channel is channel:
+                self.input_relay.receive(message, peer_id)
+
+        def closed(_channel):
+            if self.input_channel is channel:
+                self.input_relay.neutralize(peer_id)
+                self.input_channel = None
+
+        channel.connect("on-message-string", receive)
+        channel.connect("on-close", closed)
+        print(f"Browser input channel authorized for player {authorization.player}", file=sys.stderr, flush=True)
 
     def apply_offer_and_create_answer(
         self,
@@ -460,6 +493,8 @@ class RawSessionPublisher:
             flush=True,
         )
         self.pipeline_failed = True
+        self.input_channel = None
+        self.input_relay.authorize(None)
         self.media_started = False
         with self.media_lock:
             self.media_epoch_ns = None
@@ -516,6 +551,15 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
             self.end_headers()
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
+            if self.path == f"/sessions/{publisher.args.session_id}/input-lease":
+                try:
+                    authorization = InputAuthorization.from_headers(self.headers)
+                    renewed = publisher.input_relay.renew(authorization)
+                except (ValueError, KeyError):
+                    renewed = False
+                self.send_response(204 if renewed else 409)
+                self.end_headers()
+                return
             valid_paths = {
                 "/offer",
                 f"/sessions/{publisher.args.session_id}/offer",
@@ -533,7 +577,8 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
                     flush=True,
                 )
                 browser_host_ip = publisher.args.browser_host_ip or self.client_address[0]
-                answer = publisher.answer_for_offer(offer, browser_host_ip)
+                authorization = InputAuthorization.from_headers(self.headers)
+                answer = publisher.answer_for_offer(offer, browser_host_ip, input_authorization=authorization)
             except Exception as error:  # noqa: BLE001 - diagnostic publisher returns text.
                 print(
                     f"Failed to answer SDP offer path={self.path}: {error}",
