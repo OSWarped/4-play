@@ -11,6 +11,19 @@ const DEFAULT_ANSWER_FILE: &str = "/tmp/4play-webrtc-answer.sdp";
 const DEFAULT_SESSION_BIND_ADDRESS: &str = "127.0.0.1";
 const DEFAULT_SESSION_PORT_START: u16 = 43_000;
 const DEFAULT_SESSION_PORT_COUNT: u16 = 100;
+const SESSION_PUBLISHER_GST_ELEMENTS: &[&str] = &[
+    "webrtcbin",
+    "filesrc",
+    "rawvideoparse",
+    "rawaudioparse",
+    "videoconvert",
+    "audioconvert",
+    "audioresample",
+    "vp8enc",
+    "rtpvp8pay",
+    "opusenc",
+    "rtpopuspay",
+];
 
 #[derive(Debug, Clone)]
 pub struct WebRtcTestPublisherConfig {
@@ -181,7 +194,7 @@ fn media_transports_for(
 }
 
 fn gstreamer_webrtc_prerequisites_present() -> bool {
-    ["webrtcbin", "vp8enc", "rtpopuspay"].iter().all(|element| {
+    SESSION_PUBLISHER_GST_ELEMENTS.iter().all(|element| {
         Command::new("gst-inspect-1.0")
             .arg(element)
             .output()
@@ -230,7 +243,10 @@ mod tests {
 
     use control_protocol::MediaTransport;
 
-    use super::{env_flag_value, find_script_from_ancestor, media_transports_for};
+    use super::{
+        SESSION_PUBLISHER_GST_ELEMENTS, env_flag_value, find_script_from_ancestor,
+        media_transports_for,
+    };
 
     #[test]
     fn env_flag_accepts_common_truthy_values() {
@@ -268,6 +284,25 @@ mod tests {
             media_transports_for(true, true),
             vec![MediaTransport::UdpMpegTs, MediaTransport::WebRtc]
         );
+    }
+
+    #[test]
+    fn session_publisher_prerequisites_cover_raw_media_pipeline() {
+        for required in [
+            "webrtcbin",
+            "filesrc",
+            "rawvideoparse",
+            "rawaudioparse",
+            "vp8enc",
+            "rtpvp8pay",
+            "opusenc",
+            "rtpopuspay",
+        ] {
+            assert!(
+                SESSION_PUBLISHER_GST_ELEMENTS.contains(&required),
+                "missing required GStreamer element {required}"
+            );
+        }
     }
 
     #[test]
