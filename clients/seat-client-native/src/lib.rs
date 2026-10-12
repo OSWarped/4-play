@@ -2353,6 +2353,7 @@ mod tests {
             media_transport: MediaTransport::UdpMpegTs,
             media_udp_port: 41_000,
             input_udp_port: 42_000,
+            webrtc_signaling: None,
         }
     }
 
@@ -2366,6 +2367,7 @@ mod tests {
             runtime_host_id: "reference-linux".to_owned(),
             runtime_host_address: "192.0.2.68".to_owned(),
             media_transport: MediaTransport::UdpMpegTs,
+            webrtc_signaling: None,
             expires_unix_ms: 999,
         }
     }

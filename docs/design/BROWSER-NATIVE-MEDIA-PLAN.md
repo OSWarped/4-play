@@ -132,6 +132,8 @@ Implemented:
   `POST /api/v1/sessions/{session_id}/webrtc/offer` contract and fails closed
   with `503 webrtc_session_publisher_unavailable` until real session publishers
   are available.
+- `ConnectionGrant` and `SpectatorGrant` include optional token-safe
+  `webrtc_signaling` metadata for future browser-native media handoff.
 - Browser attaches the remote stream directly to an in-page `<video>`.
 - Browser diagnostics log track attach/mute/unmute/end events.
 - Receiver stats include decoded frames, dropped frames, audio samples decoded,
@@ -187,6 +189,7 @@ Control-plane changes:
   - first contract is implemented and guarded:
     `POST /api/v1/sessions/{session_id}/webrtc/offer`;
 - grants expose only safe browser-facing signaling metadata.
+  - protocol field is in place as optional `webrtc_signaling`;
 
 Runtime-host changes:
 

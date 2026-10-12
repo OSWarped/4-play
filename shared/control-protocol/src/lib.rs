@@ -195,6 +195,12 @@ pub struct CreateSpectatorGrantRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebRtcSignalingGrant {
+    pub offer_path: String,
+    pub expires_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionGrant {
     pub token: String,
     pub expires_unix_ms: u64,
@@ -204,6 +210,8 @@ pub struct ConnectionGrant {
     pub media_transport: MediaTransport,
     pub media_udp_port: u16,
     pub input_udp_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_signaling: Option<WebRtcSignalingGrant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +263,8 @@ pub struct SpectatorGrant {
     #[serde(default = "default_media_transport")]
     pub media_transport: MediaTransport,
     pub media_udp_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webrtc_signaling: Option<WebRtcSignalingGrant>,
     pub expires_unix_ms: u64,
 }
 
@@ -411,11 +421,12 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::{
-        API_VERSION, ApiInfo, GameMetadata, GamePlayerSlotMetadata, GameRuntimeProfile,
-        MediaTransport, PlayerSlot, PlayerSlotPresentation, PlayerSlotState, PreviewStatus,
-        RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus, SessionState,
-        SessionSummary, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
+        API_VERSION, ApiInfo, ConnectionGrant, GameMetadata, GamePlayerSlotMetadata,
+        GameRuntimeProfile, MediaTransport, PlayerSlot, PlayerSlotPresentation, PlayerSlotState,
+        PreviewStatus, RuntimeHost, RuntimeHostCapabilities, RuntimeHostStatus, ServiceStatus,
+        SessionState, SessionSummary, SpectatorGrant, StatusResponse, UpdateGameMetadataRequest,
         UpdateSessionState, WebRtcAnswerResponse, WebRtcOfferRequest, WebRtcSeatRole,
+        WebRtcSignalingGrant,
     };
 
     #[test]
@@ -460,6 +471,7 @@ mod tests {
             runtime_host_address: "192.0.2.10".to_owned(),
             media_transport: MediaTransport::UdpMpegTs,
             media_udp_port: 41_001,
+            webrtc_signaling: None,
             expires_unix_ms: 123_456,
         };
 
@@ -468,6 +480,43 @@ mod tests {
         assert_eq!(value["media_transport"], "udp_mpeg_ts");
         assert_eq!(value["media_udp_port"], 41_001);
         assert_eq!(value["expires_unix_ms"], 123_456);
+        assert!(value.get("webrtc_signaling").is_none());
+    }
+
+    #[test]
+    fn webrtc_signaling_metadata_is_token_safe_and_optional() {
+        let grant = ConnectionGrant {
+            token: "private-input-token".to_owned(),
+            expires_unix_ms: 123_456,
+            runtime_host_id: "reference-linux".to_owned(),
+            runtime_host_address: "192.0.2.10".to_owned(),
+            media_transport: MediaTransport::WebRtc,
+            media_udp_port: 41_000,
+            input_udp_port: 42_000,
+            webrtc_signaling: Some(WebRtcSignalingGrant {
+                offer_path: "/api/v1/sessions/session-one/webrtc/offer".to_owned(),
+                expires_unix_ms: 123_456,
+            }),
+        };
+
+        let value = serde_json::to_value(&grant).unwrap();
+        assert_eq!(
+            value["webrtc_signaling"]["offer_path"],
+            "/api/v1/sessions/session-one/webrtc/offer"
+        );
+        assert_eq!(value["webrtc_signaling"]["expires_unix_ms"], 123_456);
+
+        let legacy: ConnectionGrant = serde_json::from_value(serde_json::json!({
+            "token": "private-input-token",
+            "expires_unix_ms": 123456,
+            "runtime_host_id": "reference-linux",
+            "runtime_host_address": "192.0.2.10",
+            "media_udp_port": 41000,
+            "input_udp_port": 42000
+        }))
+        .unwrap();
+        assert_eq!(legacy.media_transport, MediaTransport::UdpMpegTs);
+        assert_eq!(legacy.webrtc_signaling, None);
     }
 
     #[test]

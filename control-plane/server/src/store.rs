@@ -953,6 +953,7 @@ impl RuntimeHostStore {
                         runtime_host_address,
                         media_transport: MediaTransport::UdpMpegTs,
                         media_udp_port,
+                        webrtc_signaling: None,
                         expires_unix_ms,
                     }))
                 },
@@ -2055,6 +2056,7 @@ impl StoredSession {
                 input_udp_port: u16::try_from(self.input_udp_port).map_err(|_| {
                     StoreError::data("input UDP port is outside the supported range")
                 })?,
+                webrtc_signaling: None,
             },
             player_slots,
             active_spectator_count: u32::try_from(self.active_spectator_count).map_err(|_| {

@@ -164,6 +164,21 @@ The shared protocol types for this future API are:
 - `WebRtcSeatRole`
 - `WebRtcOfferRequest`
 - `WebRtcAnswerResponse`
+- `WebRtcSignalingGrant`
+
+`ConnectionGrant` and `SpectatorGrant` now have an optional
+`webrtc_signaling` field. It is omitted for the current UDP/FFplay path. When
+WebRTC is enabled for a session or spectator grant, this field should contain
+only browser-safe signaling metadata, such as:
+
+```json
+{
+  "offer_path": "/api/v1/sessions/session-one/webrtc/offer",
+  "expires_unix_ms": 123456789
+}
+```
+
+It must never include the private input token.
 
 Failure responses:
 
