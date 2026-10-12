@@ -125,6 +125,9 @@ Implemented:
 - Browser can signal the standalone publisher through HTTP `/offer`.
 - Browser can signal the standalone publisher through the authenticated
   control-plane experimental WebRTC proxy.
+- Runtime-host-agent can optionally supervise the test-pattern publisher
+  lifecycle with `FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1`, which is the
+  first step away from a standalone side service.
 - Browser attaches the remote stream directly to an in-page `<video>`.
 - Browser diagnostics log track attach/mute/unmute/end events.
 - Receiver stats include decoded frames, dropped frames, audio samples decoded,
@@ -232,8 +235,11 @@ After player seats are stable:
 ## Current next development steps
 
 1. Run the W1 audio/video path for 5-10 minutes and record stats/CPU.
-2. Move the GStreamer publisher under runtime-host/session lifecycle ownership.
-3. Keep publishing a test pattern until lifecycle and cleanup are reliable.
-4. Feed real session-runtime MAME media into the WebRTC publisher.
-5. Add client UI feature flag for browser media while keeping UDP/FFplay
+2. Validate runtime-host-agent-owned test-pattern publisher startup, restart,
+   and shutdown on the Linux host.
+3. Move from one global test-pattern publisher to per-session/per-spectator
+   WebRTC publisher lifecycle.
+4. Keep publishing a test pattern until lifecycle and cleanup are reliable.
+5. Feed real session-runtime MAME media into the WebRTC publisher.
+6. Add client UI feature flag for browser media while keeping UDP/FFplay
    fallback.

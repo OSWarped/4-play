@@ -2,7 +2,7 @@ use std::{env, error::Error};
 
 use runtime_host_agent::{
     AgentConfig, RuntimeHostAgent, catalog::discover_catalog, configured_mame_path,
-    discover_capabilities, runtime::RuntimeAdapterConfig,
+    discover_capabilities, runtime::RuntimeAdapterConfig, webrtc::WebRtcTestPublisherConfig,
 };
 
 #[tokio::main]
@@ -22,9 +22,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &mame_path,
         mame_ini_path.as_deref().unwrap_or("/opt/4play/config/mame"),
     );
+    let webrtc_test_publisher = WebRtcTestPublisherConfig::from_environment();
     let agent = RuntimeHostAgent::new(config, capabilities)
         .with_catalog(catalog)
-        .with_runtime_adapter(runtime_adapter);
+        .with_runtime_adapter(runtime_adapter)
+        .with_webrtc_test_publisher(webrtc_test_publisher.clone());
 
     println!(
         "4-Play runtime host agent starting: id={} control_plane={}",
@@ -32,14 +34,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
         agent.config().control_plane_url
     );
     println!(
-        "Capabilities: os={} arch={} cpus={} memory_bytes={} encoders={:?} adapters={:?}",
+        "Capabilities: os={} arch={} cpus={} memory_bytes={} encoders={:?} adapters={:?} media_transports={:?}",
         agent.registration().capabilities.operating_system,
         agent.registration().capabilities.architecture,
         agent.registration().capabilities.logical_cpu_count,
         agent.registration().capabilities.memory_bytes,
         agent.registration().capabilities.encoder_names,
         agent.registration().capabilities.emulator_adapters,
+        agent.registration().capabilities.media_transports,
     );
+    if webrtc_test_publisher.enabled {
+        println!(
+            "WebRTC test-pattern publisher supervision enabled: url={} browser_host_ip={}",
+            webrtc_test_publisher.publisher_url(),
+            webrtc_test_publisher
+                .browser_host_ip
+                .as_deref()
+                .unwrap_or("auto")
+        );
+    }
 
     agent.run_until(shutdown_signal()).await;
     println!("Runtime host agent stopped");

@@ -3,7 +3,7 @@ use std::{
 };
 
 use control_protocol::{
-    MediaTransport, RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
+    RegisterRuntimeHost, RuntimeHost, RuntimeHostCapabilities, RuntimeHostCatalog,
     RuntimeHostHeartbeat, RuntimeSessionAssignmentList, Session, SessionState, UpdateSessionState,
 };
 use reqwest::Client;
@@ -11,8 +11,10 @@ use tokio::time::{MissedTickBehavior, interval};
 
 pub mod catalog;
 pub mod runtime;
+pub mod webrtc;
 
 use runtime::{RuntimeAdapterConfig, RuntimeObservation, RuntimeSupervisor};
+use webrtc::{WebRtcTestPublisherConfig, WebRtcTestPublisherSupervisor};
 
 pub const DEFAULT_CONTROL_PLANE_URL: &str = "http://127.0.0.1:8080";
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -94,6 +96,7 @@ pub struct RuntimeHostAgent {
     registration: RegisterRuntimeHost,
     catalog: Option<RuntimeHostCatalog>,
     runtime_adapter: Option<RuntimeAdapterConfig>,
+    webrtc_test_publisher: Option<WebRtcTestPublisherConfig>,
 }
 
 impl RuntimeHostAgent {
@@ -109,6 +112,7 @@ impl RuntimeHostAgent {
             registration,
             catalog: None,
             runtime_adapter: None,
+            webrtc_test_publisher: None,
         }
     }
 
@@ -119,6 +123,11 @@ impl RuntimeHostAgent {
 
     pub fn with_runtime_adapter(mut self, config: RuntimeAdapterConfig) -> Self {
         self.runtime_adapter = Some(config);
+        self
+    }
+
+    pub fn with_webrtc_test_publisher(mut self, config: WebRtcTestPublisherConfig) -> Self {
+        self.webrtc_test_publisher = config.enabled.then_some(config);
         self
     }
 
@@ -226,6 +235,15 @@ impl RuntimeHostAgent {
         reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut next_sequence = None;
         let mut supervisor = self.runtime_adapter.clone().map(RuntimeSupervisor::new);
+        let mut webrtc_test_publisher = self
+            .webrtc_test_publisher
+            .clone()
+            .map(WebRtcTestPublisherSupervisor::new);
+        if let Some(publisher) = webrtc_test_publisher.as_mut()
+            && let Err(error) = publisher.ensure_started()
+        {
+            eprintln!("WebRTC test-pattern publisher failed to start: {error}");
+        }
 
         loop {
             tokio::select! {
@@ -233,9 +251,17 @@ impl RuntimeHostAgent {
                     if let Some(supervisor) = supervisor.as_mut() {
                         supervisor.stop_all();
                     }
+                    if let Some(publisher) = webrtc_test_publisher.as_mut() {
+                        publisher.stop();
+                    }
                     break;
                 },
                 _ = timer.tick() => {
+                    if let Some(publisher) = webrtc_test_publisher.as_mut()
+                        && let Err(error) = publisher.ensure_started()
+                    {
+                        eprintln!("WebRTC test-pattern publisher failed: {error}");
+                    }
                     if let Some(sequence) = next_sequence {
                         let active_session_count = supervisor
                             .as_ref()
@@ -481,7 +507,7 @@ pub fn discover_capabilities() -> RuntimeHostCapabilities {
         memory_bytes: total_memory_bytes().unwrap_or(0),
         encoder_names: discover_h264_encoders(),
         emulator_adapters: discover_emulator_adapters(),
-        media_transports: vec![MediaTransport::UdpMpegTs],
+        media_transports: webrtc::discover_media_transports(),
     }
 }
 

@@ -41,13 +41,28 @@ sudo systemctl enable --now 4play-control-plane.service
 sudo systemctl enable --now 4play-runtime-host-agent.service
 ```
 
-For browser-native media spike testing, also enable the experimental local
-publisher. It listens only on `127.0.0.1:18080`; the browser talks to it through
-the authenticated control-plane proxy configured by
-`FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL`.
+For browser-native media spike testing, there are two temporary publisher
+ownership modes.
+
+The older standalone mode uses a separate systemd service. It listens only on
+`127.0.0.1:18080`; the browser talks to it through the authenticated
+control-plane proxy configured by `FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL`.
 
 ```bash
 sudo systemctl enable --now 4play-webrtc-spike-publisher.service
+sudo systemctl restart 4play-control-plane.service
+```
+
+The newer roadmap-aligned mode lets the runtime-host agent own the publisher
+lifecycle. Use this mode when testing host-agent supervision, and stop/disable
+the standalone publisher service first so both processes do not compete for
+`127.0.0.1:18080`:
+
+```bash
+sudo systemctl disable --now 4play-webrtc-spike-publisher.service
+sudo sed -i 's|^FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=.*|FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1|' /etc/4play/4play.env
+sudo sed -i 's|^FOURPLAY_WEBRTC_EXPERIMENTAL=.*|FOURPLAY_WEBRTC_EXPERIMENTAL=1|' /etc/4play/4play.env
+sudo systemctl restart 4play-runtime-host-agent.service
 sudo systemctl restart 4play-control-plane.service
 ```
 
