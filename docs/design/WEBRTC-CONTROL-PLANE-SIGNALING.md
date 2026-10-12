@@ -120,8 +120,9 @@ localhost and media never flows.
 
 ## Implemented session endpoint contract
 
-The control plane now exposes the production-shaped session endpoint, but it is
-deliberately fail-closed until runtime-host-owned per-session publishers exist:
+The control plane now exposes the production-shaped session endpoint. It is
+deliberately fail-closed by default until runtime-host-owned per-session
+publishers exist and an explicit publisher proxy target is configured:
 
 ```http
 POST /api/v1/sessions/{session_id}/webrtc/offer
@@ -142,9 +143,12 @@ Current behavior:
 - verifies the session exists;
 - rejects terminal sessions with `409 session_not_active`;
 - returns `503 webrtc_session_publisher_unavailable` for valid nonterminal
-  sessions until the runtime host can create a real WebRTC publisher.
+  sessions while no publisher proxy target is configured;
+- when `FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE` is configured, replaces
+  `{session_id}` with the session ID and forwards the SDP offer as
+  `application/sdp` to that URL.
 
-The expected future success response remains:
+The success response shape is:
 
 Response:
 

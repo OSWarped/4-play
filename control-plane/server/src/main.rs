@@ -10,6 +10,8 @@ const DEFAULT_OFFLINE_SECONDS: u64 = 15;
 const DEFAULT_PREVIEW_STALE_MS: u64 = 5_000;
 const WEBRTC_TEST_PATTERN_PUBLISHER_ENVIRONMENT_VARIABLE: &str =
     "FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL";
+const WEBRTC_SESSION_PUBLISHER_ENVIRONMENT_VARIABLE: &str =
+    "FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -47,6 +49,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     let webrtc_test_pattern_publisher_url =
         env::var(WEBRTC_TEST_PATTERN_PUBLISHER_ENVIRONMENT_VARIABLE).ok();
+    let webrtc_session_publisher_url_template =
+        env::var(WEBRTC_SESSION_PUBLISHER_ENVIRONMENT_VARIABLE).ok();
     let listener = TcpListener::bind(bind_address).await?;
     let app = control_plane_server::app_with_database_tokens_ports_assets_preview_and_webrtc(
         &database_path,
@@ -57,11 +61,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         asset_root.clone(),
         Duration::from_millis(preview_stale_ms),
         webrtc_test_pattern_publisher_url.clone(),
+        webrtc_session_publisher_url_template.clone(),
     )
     .await?;
 
     println!(
-        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms} webrtc_test_pattern_publisher={}",
+        "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms} webrtc_test_pattern_publisher={} webrtc_session_publisher_template={}",
         database_path.display(),
         port_pools.media_port_start,
         port_pools.media_port_count,
@@ -72,6 +77,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "disabled".to_owned()),
         webrtc_test_pattern_publisher_url
+            .as_deref()
+            .unwrap_or("disabled"),
+        webrtc_session_publisher_url_template
             .as_deref()
             .unwrap_or("disabled")
     );

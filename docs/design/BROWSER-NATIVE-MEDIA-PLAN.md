@@ -129,9 +129,11 @@ Implemented:
   lifecycle with `FOURPLAY_WEBRTC_TEST_PATTERN_SUPERVISED=1`, which is the
   first step away from a standalone side service.
 - The control plane exposes the production-shaped
-  `POST /api/v1/sessions/{session_id}/webrtc/offer` contract and fails closed
-  with `503 webrtc_session_publisher_unavailable` until real session publishers
-  are available.
+  `POST /api/v1/sessions/{session_id}/webrtc/offer` contract.
+- Session WebRTC signaling still fails closed by default, but the control plane
+  can now proxy offers to an explicitly configured
+  `FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE` once a runtime-host-owned
+  publisher service exists.
 - `ConnectionGrant` and `SpectatorGrant` include optional token-safe
   `webrtc_signaling` metadata for future browser-native media handoff.
 - Browser attaches the remote stream directly to an in-page `<video>`.
