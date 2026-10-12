@@ -35,6 +35,12 @@ check_command gst-inspect-1.0
 check_command python3
 echo
 check_gst_element webrtcbin
+check_gst_element filesrc
+check_gst_element rawvideoparse
+check_gst_element rawaudioparse
+check_gst_element videoconvert
+check_gst_element audioconvert
+check_gst_element audioresample
 check_gst_element x264enc
 check_gst_element avenc_aac
 check_gst_element opusenc

@@ -68,6 +68,10 @@ sudo systemctl restart 4play-control-plane.service
 Do not set `FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1` yet. That flag is reserved
 for the future real per-session WebRTC publisher and controls whether runtime
 hosts advertise `web_rtc` as a normal session media transport.
+The runtime-host agent only advertises that transport when the flag is enabled
+and the full GStreamer raw-media WebRTC stack is present. Use
+`deploy/systemd/check-browser-media-prereqs.sh` to verify the same element set
+before enabling it.
 
 For the reference headless MAME runtime, skip startup warnings and game-info
 screens so games can begin producing raw media without local UI
