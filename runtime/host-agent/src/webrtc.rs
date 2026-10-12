@@ -11,6 +11,7 @@ const DEFAULT_ANSWER_FILE: &str = "/tmp/4play-webrtc-answer.sdp";
 const DEFAULT_SESSION_BIND_ADDRESS: &str = "127.0.0.1";
 const DEFAULT_SESSION_PORT_START: u16 = 43_000;
 const DEFAULT_SESSION_PORT_COUNT: u16 = 100;
+const DEFAULT_INPUT_PORT_START: u16 = 42_000;
 const SESSION_PUBLISHER_GST_ELEMENTS: &[&str] = &[
     "webrtcbin",
     "filesrc",
@@ -64,15 +65,26 @@ impl WebRtcTestPublisherConfig {
 #[derive(Debug, Clone)]
 pub struct WebRtcSessionPublisherConfig {
     pub enabled: bool,
+    pub python_path: PathBuf,
+    pub script_path: PathBuf,
     pub bind_address: String,
     pub port_start: u16,
     pub port_count: u16,
+    pub input_port_start: u16,
+    pub answer_directory: PathBuf,
+    pub browser_host_ip: Option<String>,
 }
 
 impl WebRtcSessionPublisherConfig {
     pub fn from_environment() -> Self {
         Self {
             enabled: env_flag("FOURPLAY_WEBRTC_SESSION_PUBLISHERS"),
+            python_path: env::var_os("FOURPLAY_PYTHON_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/usr/bin/python3")),
+            script_path: env::var_os("FOURPLAY_WEBRTC_SESSION_PUBLISHER_SCRIPT")
+                .map(PathBuf::from)
+                .unwrap_or_else(default_raw_session_script_path),
             bind_address: env::var("FOURPLAY_WEBRTC_SESSION_BIND_ADDRESS")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
@@ -86,6 +98,13 @@ impl WebRtcSessionPublisherConfig {
                 DEFAULT_SESSION_PORT_COUNT,
             )
             .max(1),
+            input_port_start: env_u16("FOURPLAY_INPUT_PORT_START", DEFAULT_INPUT_PORT_START),
+            answer_directory: env::var_os("FOURPLAY_WEBRTC_SESSION_ANSWER_DIRECTORY")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp/4play/webrtc-answers")),
+            browser_host_ip: env::var("FOURPLAY_WEBRTC_BROWSER_HOST_IP")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
         }
     }
 
@@ -94,7 +113,27 @@ impl WebRtcSessionPublisherConfig {
     }
 
     pub fn can_advertise(&self) -> bool {
-        self.enabled && self.prerequisites_present()
+        self.enabled && self.prerequisites_present() && self.script_path.is_file()
+    }
+
+    pub fn signal_port_for_input(&self, input_port: u16) -> Option<u16> {
+        let offset = input_port.checked_sub(self.input_port_start)?;
+        if offset >= self.port_count {
+            return None;
+        }
+        self.port_start.checked_add(offset)
+    }
+
+    pub fn bind_address_for_input(&self, input_port: u16) -> Option<String> {
+        self.signal_port_for_input(input_port)
+            .map(|port| format!("{}:{port}", self.bind_address))
+    }
+
+    pub fn control_plane_template(&self) -> String {
+        format!(
+            "http://{}:{{webrtc_signal_port}}/sessions/{{session_id}}/offer",
+            self.bind_address
+        )
     }
 }
 
@@ -178,7 +217,7 @@ pub fn discover_media_transports() -> Vec<MediaTransport> {
     let session_publishers = WebRtcSessionPublisherConfig::from_environment();
     media_transports_for(
         session_publishers.enabled,
-        session_publishers.prerequisites_present(),
+        session_publishers.can_advertise(),
     )
 }
 
@@ -205,14 +244,23 @@ fn gstreamer_webrtc_prerequisites_present() -> bool {
 fn default_script_path() -> PathBuf {
     let from_current_exe = env::current_exe()
         .ok()
-        .and_then(|path| find_script_from_ancestor(&path));
+        .and_then(|path| find_script_from_ancestor(&path, "webrtc-gst-test-pattern.py"));
     from_current_exe
         .unwrap_or_else(|| PathBuf::from("/home/blake/src/4-play/tools/webrtc-gst-test-pattern.py"))
 }
 
-fn find_script_from_ancestor(start: &std::path::Path) -> Option<PathBuf> {
+fn default_raw_session_script_path() -> PathBuf {
+    let from_current_exe = env::current_exe()
+        .ok()
+        .and_then(|path| find_script_from_ancestor(&path, "webrtc-gst-raw-session-publisher.py"));
+    from_current_exe.unwrap_or_else(|| {
+        PathBuf::from("/home/blake/src/4-play/tools/webrtc-gst-raw-session-publisher.py")
+    })
+}
+
+fn find_script_from_ancestor(start: &std::path::Path, script_name: &str) -> Option<PathBuf> {
     start.ancestors().find_map(|ancestor| {
-        let candidate = ancestor.join("tools/webrtc-gst-test-pattern.py");
+        let candidate = ancestor.join("tools").join(script_name);
         candidate.is_file().then_some(candidate)
     })
 }
@@ -238,14 +286,15 @@ fn env_flag_value(value: Option<&str>) -> bool {
 mod tests {
     use std::{
         fs,
+        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use control_protocol::MediaTransport;
 
     use super::{
-        SESSION_PUBLISHER_GST_ELEMENTS, env_flag_value, find_script_from_ancestor,
-        media_transports_for,
+        SESSION_PUBLISHER_GST_ELEMENTS, WebRtcSessionPublisherConfig, env_flag_value,
+        find_script_from_ancestor, media_transports_for,
     };
 
     #[test]
@@ -322,9 +371,36 @@ mod tests {
         )
         .unwrap();
 
-        let found = find_script_from_ancestor(&nested.join("runtime-host-agent")).unwrap();
+        let found = find_script_from_ancestor(
+            &nested.join("runtime-host-agent"),
+            "webrtc-gst-test-pattern.py",
+        )
+        .unwrap();
         assert_eq!(found, tools.join("webrtc-gst-test-pattern.py"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn session_publisher_derives_ports_from_input_ports() {
+        let config = WebRtcSessionPublisherConfig {
+            enabled: true,
+            python_path: PathBuf::from("python3"),
+            script_path: PathBuf::from("publisher.py"),
+            bind_address: "127.0.0.1".to_owned(),
+            port_start: 43_000,
+            port_count: 10,
+            input_port_start: 42_000,
+            answer_directory: PathBuf::from("/tmp/answers"),
+            browser_host_ip: None,
+        };
+
+        assert_eq!(config.signal_port_for_input(42_000), Some(43_000));
+        assert_eq!(config.signal_port_for_input(42_003), Some(43_003));
+        assert_eq!(config.signal_port_for_input(42_010), None);
+        assert_eq!(
+            config.control_plane_template(),
+            "http://127.0.0.1:{webrtc_signal_port}/sessions/{session_id}/offer"
+        );
     }
 }

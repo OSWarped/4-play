@@ -400,6 +400,51 @@ Expected result:
 This manual spike proves the raw media shape before host-agent-owned publisher
 lifecycle is enabled.
 
+## Runtime-host-owned raw-session publishers
+
+The next automated mode lets the runtime host create the secondary FIFOs,
+launch `session-runtime` with those FIFO paths, and supervise a
+`webrtc-gst-raw-session-publisher.py` process for each active session.
+
+Use matching port rules on the control plane and runtime host:
+
+```bash
+FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1
+FOURPLAY_WEBRTC_SESSION_BIND_ADDRESS=127.0.0.1
+FOURPLAY_WEBRTC_SESSION_PORT_START=43000
+FOURPLAY_WEBRTC_SESSION_PORT_COUNT=100
+FOURPLAY_INPUT_PORT_START=42000
+FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10
+FOURPLAY_WEBRTC_SESSION_PUBLISHER_URL_TEMPLATE='http://127.0.0.1:{webrtc_signal_port}/sessions/{session_id}/offer'
+```
+
+The deterministic mapping is:
+
+```text
+webrtc_signal_port = FOURPLAY_WEBRTC_SESSION_PORT_START
+                    + (input_udp_port - FOURPLAY_INPUT_PORT_START)
+```
+
+Examples on the current reference defaults:
+
+| input port | WebRTC signaling port |
+| --- | --- |
+| `42000` | `43000` |
+| `42001` | `43001` |
+| `42002` | `43002` |
+
+The control-plane template can use these placeholders:
+
+- `{session_id}`
+- `{webrtc_signal_port}`
+- `{input_udp_port}`
+- `{media_udp_port}`
+- `{runtime_host_id}`
+
+This is still experimental. Keep UDP/FFplay enabled as the fallback while
+validating that in-browser media has no growing buffer and does not destabilize
+session launch.
+
 ## Manual fallback
 
 If the automated endpoint fails, manual SDP copy/paste is still available:

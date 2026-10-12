@@ -33,6 +33,7 @@ pub const DEFAULT_PREVIEW_STALE_AFTER: Duration = Duration::from_secs(5);
 const MAX_ASSET_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const MAX_WEBRTC_SDP_BYTES: usize = 256 * 1024;
 const WEBRTC_PUBLISHER_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_WEBRTC_SESSION_PORT_START: u16 = 43_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -998,7 +999,7 @@ async fn signal_session_webrtc_offer(
     let publisher_url = state
         .webrtc_session_publisher_url_template
         .as_deref()
-        .map(|template| session_webrtc_publisher_url(template, &session_id))
+        .map(|template| session_webrtc_publisher_url(template, &session, state.port_pools))
         .ok_or_else(|| {
             ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1017,15 +1018,44 @@ async fn signal_session_webrtc_offer(
     }))
 }
 
-fn session_webrtc_publisher_url(template: &str, session_id: &str) -> String {
-    if template.contains("{session_id}") {
-        return template.replace("{session_id}", session_id);
+fn session_webrtc_publisher_url(
+    template: &str,
+    session: &Session,
+    port_pools: PortPoolConfig,
+) -> String {
+    if template.contains('{') {
+        let mut output = template
+            .replace("{session_id}", &session.id)
+            .replace("{runtime_host_id}", &session.runtime_host_id)
+            .replace(
+                "{media_udp_port}",
+                &session.connection_grant.media_udp_port.to_string(),
+            )
+            .replace(
+                "{input_udp_port}",
+                &session.connection_grant.input_udp_port.to_string(),
+            );
+        if let Some(port) = session_webrtc_signal_port(session, port_pools) {
+            output = output.replace("{webrtc_signal_port}", &port.to_string());
+        }
+        return output;
     }
     format!(
         "{}/sessions/{}/offer",
         template.trim_end_matches('/'),
-        session_id
+        session.id
     )
+}
+
+fn session_webrtc_signal_port(session: &Session, port_pools: PortPoolConfig) -> Option<u16> {
+    let input_offset = session
+        .connection_grant
+        .input_udp_port
+        .checked_sub(port_pools.input_port_start)?;
+    if input_offset >= port_pools.input_port_count {
+        return None;
+    }
+    DEFAULT_WEBRTC_SESSION_PORT_START.checked_add(input_offset)
 }
 
 async fn post_sdp_offer_to_publisher(
@@ -1696,6 +1726,7 @@ mod tests {
         AppState, DEFAULT_OFFLINE_AFTER, PortPoolConfig, app, app_with_database,
         app_with_database_tokens_and_ports, app_with_database_tokens_ports_and_assets,
         app_with_database_tokens_ports_assets_and_preview, app_with_state,
+        session_webrtc_publisher_url,
     };
     use axum::{
         Router,
@@ -1703,6 +1734,9 @@ mod tests {
         extract::Path as TestPath,
         http::{Method, Request},
         routing::post as axum_post,
+    };
+    use control_protocol::{
+        ConnectionGrant, GameRuntimeProfile, MediaTransport, Session, SessionState,
     };
     use http_body_util::BodyExt;
     use serde_json::{Value, json};
@@ -2317,6 +2351,53 @@ mod tests {
         assert_eq!(body["session_id"], session_id);
         assert_eq!(body["media_transport"], "web_rtc");
         assert!(body["sdp_answer"].as_str().unwrap().starts_with("v=0"));
+    }
+
+    #[test]
+    fn session_webrtc_publisher_template_supports_deterministic_port_placeholders() {
+        let session = Session {
+            id: "session-one".to_owned(),
+            game_id: "tmnt".to_owned(),
+            seat_id: "seat-one".to_owned(),
+            destination_address: "192.0.2.10".to_owned(),
+            runtime_host_id: "reference-linux".to_owned(),
+            runtime_profile: GameRuntimeProfile {
+                width: 320,
+                height: 224,
+                refresh_hz: 60.0,
+                rotation_degrees: 0,
+                max_players: 4,
+                buttons_per_player: 2,
+                supports_save_state: true,
+            },
+            state: SessionState::Active,
+            connection_grant: ConnectionGrant {
+                token: "private-token".to_owned(),
+                expires_unix_ms: 999,
+                runtime_host_id: "reference-linux".to_owned(),
+                runtime_host_address: "192.0.2.68".to_owned(),
+                media_transport: MediaTransport::UdpMpegTs,
+                media_udp_port: 41_003,
+                input_udp_port: 42_003,
+                webrtc_signaling: None,
+            },
+            player_slots: Vec::new(),
+            active_spectator_count: 0,
+            created_unix_ms: 1,
+            updated_unix_ms: 1,
+            failure_reason: None,
+        };
+
+        let url = session_webrtc_publisher_url(
+            "http://127.0.0.1:{webrtc_signal_port}/sessions/{session_id}/offer?input={input_udp_port}&media={media_udp_port}&host={runtime_host_id}",
+            &session,
+            PortPoolConfig::default(),
+        );
+
+        assert_eq!(
+            url,
+            "http://127.0.0.1:43003/sessions/session-one/offer?input=42003&media=41003&host=reference-linux"
+        );
     }
 
     #[tokio::test]

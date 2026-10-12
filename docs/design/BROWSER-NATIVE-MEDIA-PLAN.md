@@ -211,10 +211,13 @@ Runtime-host changes:
 
 - launch WebRTC publisher per session or per spectator grant;
   - first manual tool exists as `tools/webrtc-gst-raw-session-publisher.py`;
-  - remaining production work is a host-level dispatcher or publisher
-    registration mechanism, because the control plane currently has one
-    session-publisher URL template and cannot infer a different port for every
-    per-session process;
+  - `runtime-host-agent` can now start a raw-session publisher beside each
+    launched session when `FOURPLAY_WEBRTC_SESSION_PUBLISHERS=1`;
+  - the initial routing model is deterministic:
+    `webrtc_signal_port = 43000 + (input_udp_port - 42000)` by default;
+  - the control plane session publisher template supports
+    `{webrtc_signal_port}`, `{session_id}`, `{input_udp_port}`,
+    `{media_udp_port}`, and `{runtime_host_id}` placeholders;
 - bind publisher lifecycle to session lifecycle;
 - expose health/state to the agent;
 - cleanly stop publishers on session stop, runtime loss, and stale cleanup.

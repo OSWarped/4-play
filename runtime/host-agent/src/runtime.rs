@@ -8,6 +8,8 @@ use std::{
 
 use control_protocol::RuntimeSessionAssignment;
 
+use crate::webrtc::WebRtcSessionPublisherConfig;
+
 #[derive(Debug, Clone)]
 pub struct RuntimeAdapterConfig {
     pub session_runtime_path: PathBuf,
@@ -19,6 +21,7 @@ pub struct RuntimeAdapterConfig {
     pub preview_interval_ms: u64,
     pub preview_enabled: bool,
     pub startup_media_timeout_seconds: u64,
+    pub webrtc_session_publishers: WebRtcSessionPublisherConfig,
 }
 
 impl RuntimeAdapterConfig {
@@ -65,6 +68,7 @@ impl RuntimeAdapterConfig {
             preview_interval_ms,
             preview_enabled,
             startup_media_timeout_seconds,
+            webrtc_session_publishers: WebRtcSessionPublisherConfig::from_environment(),
         }
     }
 }
@@ -88,6 +92,17 @@ struct ManagedRuntime {
     pid_file: PathBuf,
     spectator_ports_file: PathBuf,
     preview_image_file: Option<PathBuf>,
+    webrtc_publisher_child: Option<Child>,
+    webrtc_video_file: Option<PathBuf>,
+    webrtc_audio_file: Option<PathBuf>,
+    webrtc_answer_file: Option<PathBuf>,
+}
+
+struct WebRtcSessionRuntime {
+    video_file: PathBuf,
+    audio_file: PathBuf,
+    answer_file: PathBuf,
+    bind_address: String,
 }
 
 #[derive(Debug)]
@@ -125,8 +140,14 @@ impl RuntimeSupervisor {
             .config
             .preview_enabled
             .then(|| self.preview_image_file(&assignment.session_id));
+        let webrtc_session = self.webrtc_session_runtime(assignment)?;
         write_spectator_ports(&spectator_ports_file, &assignment.spectator_media_ports)?;
         if let Some(pid) = read_live_pid(&pid_file, &assignment.session_id)? {
+            let webrtc_publisher_child = if let Some(webrtc_session) = webrtc_session.as_ref() {
+                self.start_webrtc_publisher(assignment, webrtc_session).ok()
+            } else {
+                None
+            };
             self.processes.insert(
                 assignment.session_id.clone(),
                 ManagedRuntime {
@@ -136,6 +157,16 @@ impl RuntimeSupervisor {
                     pid_file,
                     spectator_ports_file,
                     preview_image_file,
+                    webrtc_publisher_child,
+                    webrtc_video_file: webrtc_session
+                        .as_ref()
+                        .map(|session| session.video_file.clone()),
+                    webrtc_audio_file: webrtc_session
+                        .as_ref()
+                        .map(|session| session.audio_file.clone()),
+                    webrtc_answer_file: webrtc_session
+                        .as_ref()
+                        .map(|session| session.answer_file.clone()),
                 },
             );
             return Ok(());
@@ -144,6 +175,11 @@ impl RuntimeSupervisor {
         remove_if_present(&pid_file)?;
         if let Some(preview_image_file) = preview_image_file.as_deref() {
             remove_if_present(preview_image_file)?;
+        }
+        if let Some(webrtc_session) = webrtc_session.as_ref() {
+            prepare_webrtc_fifo(&webrtc_session.video_file)?;
+            prepare_webrtc_fifo(&webrtc_session.audio_file)?;
+            remove_if_present(&webrtc_session.answer_file)?;
         }
         let log_path = self
             .config
@@ -199,6 +235,13 @@ impl RuntimeSupervisor {
                 .arg("--preview-interval-ms")
                 .arg(self.config.preview_interval_ms.to_string());
         }
+        if let Some(webrtc_session) = webrtc_session.as_ref() {
+            command
+                .arg("--webrtc-video-path")
+                .arg(&webrtc_session.video_file)
+                .arg("--webrtc-audio-path")
+                .arg(&webrtc_session.audio_file);
+        }
         if assignment.runtime_profile.supports_save_state {
             command.arg("--autosave");
         }
@@ -207,6 +250,11 @@ impl RuntimeSupervisor {
         }
         let child = command.spawn()?;
         let pid = child.id();
+        let webrtc_publisher_child = if let Some(webrtc_session) = webrtc_session.as_ref() {
+            Some(self.start_webrtc_publisher(assignment, webrtc_session)?)
+        } else {
+            None
+        };
         fs::write(&pid_file, format!("{pid}\n"))?;
         self.processes.insert(
             assignment.session_id.clone(),
@@ -217,6 +265,16 @@ impl RuntimeSupervisor {
                 pid_file,
                 spectator_ports_file,
                 preview_image_file,
+                webrtc_publisher_child,
+                webrtc_video_file: webrtc_session
+                    .as_ref()
+                    .map(|session| session.video_file.clone()),
+                webrtc_audio_file: webrtc_session
+                    .as_ref()
+                    .map(|session| session.audio_file.clone()),
+                webrtc_answer_file: webrtc_session
+                    .as_ref()
+                    .map(|session| session.answer_file.clone()),
             },
         );
         Ok(())
@@ -248,6 +306,7 @@ impl RuntimeSupervisor {
         };
         if let Some(status) = exit {
             let description = format_exit_status(status);
+            stop_webrtc_publisher(process);
             cleanup_process_files(process);
             self.processes.remove(session_id);
             return Ok(RuntimeObservation::Exited(description));
@@ -285,6 +344,7 @@ impl RuntimeSupervisor {
             if let Some(child) = process.child.as_mut() {
                 let _ = child.try_wait();
             }
+            stop_webrtc_publisher(&mut process);
             cleanup_process_files(&process);
         }
     }
@@ -306,6 +366,9 @@ impl RuntimeSupervisor {
         let sessions = self.processes.keys().cloned().collect::<Vec<_>>();
         for session_id in sessions {
             let _ = self.request_stop(&session_id);
+            if let Some(process) = self.processes.get_mut(&session_id) {
+                stop_webrtc_publisher(process);
+            }
         }
     }
 
@@ -331,6 +394,97 @@ impl RuntimeSupervisor {
         self.config
             .preview_directory
             .join(format!("{session_id}.bmp"))
+    }
+
+    fn webrtc_session_runtime(
+        &self,
+        assignment: &RuntimeSessionAssignment,
+    ) -> io::Result<Option<WebRtcSessionRuntime>> {
+        let config = &self.config.webrtc_session_publishers;
+        if !config.enabled {
+            return Ok(None);
+        }
+        let Some(bind_address) = config.bind_address_for_input(assignment.input_udp_port) else {
+            return Err(io::Error::other(format!(
+                "input port {} is outside WebRTC session publisher port mapping",
+                assignment.input_udp_port
+            )));
+        };
+        let directory = self
+            .config
+            .state_directory
+            .join(format!("{}-webrtc", assignment.session_id));
+        Ok(Some(WebRtcSessionRuntime {
+            video_file: directory.join("video.raw"),
+            audio_file: directory.join("audio.pcm"),
+            answer_file: config
+                .answer_directory
+                .join(format!("{}.sdp", assignment.session_id)),
+            bind_address,
+        }))
+    }
+
+    fn start_webrtc_publisher(
+        &self,
+        assignment: &RuntimeSessionAssignment,
+        session: &WebRtcSessionRuntime,
+    ) -> io::Result<Child> {
+        let config = &self.config.webrtc_session_publishers;
+        if !config.script_path.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "WebRTC raw-session publisher script was not found: {}",
+                    config.script_path.display()
+                ),
+            ));
+        }
+        if let Some(parent) = session.answer_file.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let log_path = self
+            .config
+            .state_directory
+            .join(format!("{}.webrtc.log", assignment.session_id));
+        let stdout = File::create(&log_path)?;
+        let stderr = stdout.try_clone()?;
+        let mut command = Command::new(&config.python_path);
+        command
+            .arg(&config.script_path)
+            .arg("--session-id")
+            .arg(&assignment.session_id)
+            .arg("--video-path")
+            .arg(&session.video_file)
+            .arg("--audio-path")
+            .arg(&session.audio_file)
+            .arg("--width")
+            .arg(assignment.runtime_profile.width.to_string())
+            .arg("--height")
+            .arg(assignment.runtime_profile.height.to_string())
+            .arg("--fps-num")
+            .arg(fps_num(assignment.runtime_profile.refresh_hz).to_string())
+            .arg("--fps-den")
+            .arg("1000")
+            .arg("--http-signal")
+            .arg(&session.bind_address)
+            .arg("--answer-file")
+            .arg(&session.answer_file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        if let Some(browser_host_ip) = &config.browser_host_ip {
+            command.arg("--browser-host-ip").arg(browser_host_ip);
+        }
+        let child = command.spawn()?;
+        println!(
+            "Started WebRTC raw-session publisher pid={} session={} bind={}",
+            child.id(),
+            assignment.session_id,
+            session.bind_address
+        );
+        Ok(child)
     }
 }
 
@@ -388,6 +542,15 @@ fn cleanup_process_files(process: &ManagedRuntime) {
     if let Some(preview_image_file) = process.preview_image_file.as_deref() {
         let _ = remove_if_present(preview_image_file);
     }
+    if let Some(webrtc_video_file) = process.webrtc_video_file.as_deref() {
+        let _ = remove_if_present(webrtc_video_file);
+    }
+    if let Some(webrtc_audio_file) = process.webrtc_audio_file.as_deref() {
+        let _ = remove_if_present(webrtc_audio_file);
+    }
+    if let Some(webrtc_answer_file) = process.webrtc_answer_file.as_deref() {
+        let _ = remove_if_present(webrtc_answer_file);
+    }
 }
 
 fn write_spectator_ports(path: &Path, ports: &[u16]) -> io::Result<()> {
@@ -404,6 +567,58 @@ fn write_spectator_ports(path: &Path, ports: &[u16]) -> io::Result<()> {
             format!("{body}\n")
         },
     )
+}
+
+fn fps_num(refresh_hz: f64) -> u32 {
+    (refresh_hz * 1000.0).round().clamp(1.0, u32::MAX as f64) as u32
+}
+
+fn stop_child(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn stop_webrtc_publisher(process: &mut ManagedRuntime) {
+    if let Some(child) = process.webrtc_publisher_child.as_mut() {
+        stop_child(child);
+    }
+    process.webrtc_publisher_child = None;
+}
+
+fn prepare_webrtc_fifo(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+    remove_if_present(path)?;
+    create_fifo(path)
+}
+
+#[cfg(unix)]
+fn create_fifo(path: &Path) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "FIFO path contains NUL"))?;
+    let result = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn create_fifo(_path: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "WebRTC session raw FIFO creation is supported only on Unix hosts",
+    ))
 }
 
 #[cfg(unix)]
