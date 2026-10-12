@@ -123,6 +123,8 @@ Implemented:
 
 - `/webrtc-test` can create a recv-only peer for video-only or video+audio.
 - Browser can signal the standalone publisher through HTTP `/offer`.
+- Browser can signal the standalone publisher through the authenticated
+  control-plane experimental WebRTC proxy.
 - Browser attaches the remote stream directly to an in-page `<video>`.
 - Browser diagnostics log track attach/mute/unmute/end events.
 - Receiver stats include decoded frames, dropped frames, audio samples decoded,
@@ -131,6 +133,9 @@ Implemented:
   optional Opus audio ticks through GStreamer `webrtcbin`.
 - The publisher rewrites browser `.local` mDNS candidates to the HTTP request
   source IP for this spike.
+- When signaling is proxied through the control plane, the publisher accepts
+  `FOURPLAY_WEBRTC_BROWSER_HOST_IP` so candidate rewriting uses the real browser
+  seat IP instead of `127.0.0.1`.
 - The publisher defaults Opus payload type to `111`, matching Chrome/Edge's
   usual WebRTC Opus offer.
 
@@ -139,6 +144,9 @@ Validated:
 - On 2026-10-11, the browser rendered the generated VP8 video test pattern.
 - On 2026-10-11, the browser also received audible generated Opus audio ticks
   with the same in-page media surface.
+- On 2026-10-11, the browser received generated audio/video through the
+  authenticated control-plane proxy after setting
+  `FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10`.
 
 Candidate publisher stacks, in preferred experiment order:
 
@@ -224,9 +232,8 @@ After player seats are stable:
 ## Current next development steps
 
 1. Run the W1 audio/video path for 5-10 minutes and record stats/CPU.
-2. Add control-plane-owned WebRTC offer/answer signaling.
-3. Move the GStreamer publisher under runtime-host/session lifecycle ownership.
-4. Keep publishing a test pattern until lifecycle and cleanup are reliable.
-5. Feed real session-runtime MAME media into the WebRTC publisher.
-6. Add client UI feature flag for browser media while keeping UDP/FFplay
+2. Move the GStreamer publisher under runtime-host/session lifecycle ownership.
+3. Keep publishing a test pattern until lifecycle and cleanup are reliable.
+4. Feed real session-runtime MAME media into the WebRTC publisher.
+5. Add client UI feature flag for browser media while keeping UDP/FFplay
    fallback.

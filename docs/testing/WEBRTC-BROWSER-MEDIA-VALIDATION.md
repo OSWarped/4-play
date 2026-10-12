@@ -115,6 +115,56 @@ lifecycle, while retaining UDP/FFplay as the gameplay fallback.
 
 ## Remaining spike checks
 
+## 2026-10-11 control-plane-proxied audio + video result
+
+Status: passed for browser-native generated audio/video through the
+control-plane experimental WebRTC proxy.
+
+Validated path:
+
+```text
+browser /webrtc-test
+  -> POST /api/v1/experimental/webrtc/test-pattern/offer
+  -> control plane
+  -> local publisher http://127.0.0.1:18080/offer
+  <- SDP answer
+  -> browser <video>
+```
+
+Environment additions:
+
+```bash
+FOURPLAY_WEBRTC_TEST_PATTERN_PUBLISHER_URL=http://127.0.0.1:18080/offer
+FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10
+```
+
+Observed success:
+
+- Browser sent the SDP offer to the authenticated control-plane endpoint.
+- Control plane returned a typed `web_rtc` answer for
+  `experimental-test-pattern`.
+- Browser attached remote video and audio tracks.
+- Browser rendered the test pattern and played generated audio.
+
+Important setup discovered:
+
+- Through the proxy, the standalone publisher sees the request source as
+  `127.0.0.1`.
+- Chrome/Edge still put the real browser ICE address behind `.local` mDNS
+  candidates.
+- Without `FOURPLAY_WEBRTC_BROWSER_HOST_IP`, the publisher rewrote browser ICE
+  candidates to `127.0.0.1`, causing a spinner with attached tracks but no media.
+- Setting `FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10` made the publisher
+  rewrite candidates to the real Windows seat IP, and media flowed.
+
+Conclusion:
+
+The production-shaped signaling path is viable for generated WebRTC media.
+The next work is runtime-host-owned publisher lifecycle and then feeding real
+session-runtime media into the WebRTC publisher.
+
+## Remaining spike checks
+
 - 5-10 minute latency/buffer stability observation.
 - Browser stats recording during the test.
 - CPU observation on the Linux host.

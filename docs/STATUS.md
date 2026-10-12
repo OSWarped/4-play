@@ -203,10 +203,19 @@ Last updated: 2026-10-09
   reference host online throughout, one active session observed, no
   sample/diagnostic errors, clean cleanup, and final strict smoke passing with
   15 checks
+- browser-native WebRTC media has passed generated VP8 video and Opus audio
+  tests in `/webrtc-test`, first directly to the standalone publisher and then
+  through an authenticated control-plane experimental proxy
+- the proxied WebRTC spike requires
+  `FOURPLAY_WEBRTC_BROWSER_HOST_IP=192.168.20.10` on the reference setup so
+  browser `.local` ICE candidates are rewritten to the Windows seat IP instead
+  of the control-plane proxy's `127.0.0.1`
 
 ## Not started
 
 - lower-bitrate preview streams distinct from full-quality spectator media
+- runtime-host-owned WebRTC publisher lifecycle for real sessions
+- feeding real session-runtime MAME media into the browser-native WebRTC path
 
 ## Next milestone
 
