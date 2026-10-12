@@ -137,8 +137,11 @@ behavior:
 - `Session publisher`: `not available yet`.
 - `WebRTC runtime hosts`: `none`.
 
-That last value is expected until real session-runtime media is wired into a
-runtime-host-owned WebRTC publisher.
+If the runtime host is configured to advertise WebRTC prerequisites before real
+session offer routing exists, `WebRTC runtime hosts` may list the host while
+`Session publisher` still says `not available yet`. That is expected until real
+session-runtime media is wired into a runtime-host-owned WebRTC publisher and
+the control plane can route session offers to it.
 
 You can verify the same non-browser plumbing from SSH before opening the
 browser:

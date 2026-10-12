@@ -181,11 +181,20 @@ function renderBrowserMediaStatus() {
   }
   const hostCount = status.web_rtc_runtime_hosts?.length || 0;
   const ready = Boolean(status.session_publisher_available);
+  const gated = !ready && hostCount > 0;
   const spikeOnly = !ready && Boolean(status.test_pattern_proxy_configured);
-  const tone = ready ? "good" : spikeOnly ? "warn" : "";
-  const label = ready ? "Browser media ready" : spikeOnly ? "WebRTC spike only" : "FFplay fallback";
+  const tone = ready ? "good" : gated || spikeOnly ? "warn" : "";
+  const label = ready
+    ? "Browser media ready"
+    : gated
+      ? "WebRTC host gated"
+      : spikeOnly
+        ? "WebRTC spike only"
+        : "FFplay fallback";
   const detail = ready
     ? `${hostCount} runtime host${hostCount === 1 ? "" : "s"} can publish browser-native media.`
+    : gated
+      ? `${hostCount} runtime host${hostCount === 1 ? "" : "s"} advertise WebRTC prerequisites, but session offer routing is still disabled.`
     : spikeOnly
       ? "Test-pattern WebRTC is available; gameplay still uses the proven FFplay path."
       : "Gameplay media uses the proven UDP/FFplay path until WebRTC publishers are enabled.";

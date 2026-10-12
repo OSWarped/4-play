@@ -132,6 +132,7 @@ def print_status(status: dict[str, Any]) -> None:
     print(f"test-pattern proxy: {configured(status.get('test_pattern_proxy_configured'))}")
     print(f"session offer endpoint: {configured(status.get('session_offer_endpoint_available'))}")
     print(f"session publisher: {configured(status.get('session_publisher_available'))}")
+    print(f"session publisher status: {status.get('session_publisher_status') or 'unknown'}")
     print(f"WebRTC runtime hosts: {', '.join(map(str, hosts)) if hosts else 'none'}")
     print(f"test-pattern offer path: {status.get('test_pattern_offer_path') or 'unknown'}")
     print(f"session offer path: {status.get('session_offer_path_template') or 'unknown'}")

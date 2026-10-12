@@ -85,8 +85,12 @@ async function refresh() {
 
 function webrtcSummary(status) {
   if (!status) return "Unknown";
+  const webRtcHostCount = status.web_rtc_runtime_hosts?.length || 0;
   if (status.session_publisher_available) {
-    return `${status.web_rtc_runtime_hosts?.length || 0} hosts`;
+    return `${webRtcHostCount} hosts`;
+  }
+  if (webRtcHostCount) {
+    return "Hosts gated";
   }
   if (status.test_pattern_proxy_configured) {
     return "Spike only";

@@ -997,7 +997,12 @@ async fn get_webrtc_experimental_status(
         "test_pattern_offer_path": "/api/v1/experimental/webrtc/test-pattern/offer",
         "session_offer_endpoint_available": true,
         "session_offer_path_template": "/api/v1/sessions/{session_id}/webrtc/offer",
-        "session_publisher_available": !web_rtc_hosts.is_empty(),
+        "session_publisher_available": false,
+        "session_publisher_status": if web_rtc_hosts.is_empty() {
+            "no_advertising_hosts"
+        } else {
+            "offer_routing_not_implemented"
+        },
         "web_rtc_runtime_hosts": web_rtc_hosts,
     })))
 }
@@ -1837,6 +1842,7 @@ mod tests {
         assert!(script_body.contains("/admin/capture?"));
         assert!(script_body.contains("/api/v1/experimental/webrtc/status"));
         assert!(script_body.contains("webrtcSummary"));
+        assert!(script_body.contains("Hosts gated"));
         assert!(script_body.contains("web_rtc"));
 
         assert_eq!(capture_status, 200);
@@ -1917,6 +1923,7 @@ mod tests {
         assert!(script_body.contains("renderBrowserMediaStatus"));
         assert!(script_body.contains("/api/v1/experimental/webrtc/status"));
         assert!(script_body.contains("Browser media ready"));
+        assert!(script_body.contains("WebRTC host gated"));
         assert!(script_body.contains("startBrowserMedia"));
         assert!(script_body.contains("waitForIceGathering"));
         assert!(script_body.contains("Open in browser player"));
@@ -1967,6 +1974,7 @@ mod tests {
         assert!(script_body.contains("createOffer"));
         assert!(script_body.contains("signalPublisher"));
         assert!(script_body.contains("loadControlPlaneStatus"));
+        assert!(script_body.contains("session_publisher_status"));
         assert!(script_body.contains("getStats"));
 
         assert_eq!(styles_status, 200);
@@ -1995,6 +2003,7 @@ mod tests {
         );
         assert_eq!(body["session_offer_endpoint_available"], true);
         assert_eq!(body["session_publisher_available"], false);
+        assert_eq!(body["session_publisher_status"], "no_advertising_hosts");
         assert_eq!(body["web_rtc_runtime_hosts"], json!([]));
     }
 
@@ -2021,7 +2030,11 @@ mod tests {
         .await;
 
         assert_eq!(status, 200);
-        assert_eq!(body["session_publisher_available"], true);
+        assert_eq!(body["session_publisher_available"], false);
+        assert_eq!(
+            body["session_publisher_status"],
+            "offer_routing_not_implemented"
+        );
         assert_eq!(body["web_rtc_runtime_hosts"], json!(["reference-linux"]));
     }
 
