@@ -510,9 +510,13 @@ function runtimePills(grant) {
   if (!grant) {
     return `<span class="pill warn">runtime grant unavailable</span>`;
   }
+  const browserMedia = grant.webrtc_signaling
+    ? `<span class="pill good">browser media ready</span>`
+    : "";
   return `
     <span class="pill">media ${escapeHtml(String(grant.media_udp_port || "unknown"))}</span>
     <span class="pill">input ${escapeHtml(String(grant.input_udp_port || "unknown"))}</span>
+    ${browserMedia}
   `;
 }
 
@@ -523,7 +527,7 @@ function publicPlayerHandoff(session, playerNumber) {
     session_id: session.id,
     game_id: session.game_id,
     display_name: session.display_name || session.game_id,
-    media: publicMediaHandoff(grant.media_udp_port),
+    media: publicMediaHandoff(grant.media_udp_port, grant.webrtc_signaling),
     input: grant.runtime_host_address && grant.input_udp_port
       ? {
           destination: `${grant.runtime_host_address}:${grant.input_udp_port}`,
@@ -540,17 +544,18 @@ function publicSpectatorHandoff(session, grant) {
     session_id: session.id,
     game_id: session.game_id,
     display_name: session.display_name || session.game_id,
-    media: publicMediaHandoff(grant.media_udp_port),
+    media: publicMediaHandoff(grant.media_udp_port, grant.webrtc_signaling),
     input: null,
   };
 }
 
-function publicMediaHandoff(mediaPort) {
+function publicMediaHandoff(mediaPort, webrtcSignaling) {
   if (!mediaPort) return null;
   return {
     udp_port: mediaPort,
     receiver_url: receiverUrl(mediaPort),
     runtime_command_hint: `seat-client-runtime media --port ${mediaPort} --ffplay-path <path-to-ffplay>`,
+    webrtc_signaling: webrtcSignaling || null,
   };
 }
 
@@ -586,6 +591,7 @@ function playerRuntimePanel(session, playerNumber) {
   return `
     <div class="runtime-panel player-mode">
       <h4>Player runtime</h4>
+      ${browserMediaPanel(handoff.media.webrtc_signaling)}
       ${mediaReceiverCommands(handoff.media.udp_port)}
       <p><strong>Input endpoint:</strong> ${escapeHtml(handoff.input.destination)} for player ${escapeHtml(String(handoff.input.player_number))}</p>
       <p class="muted">Input token is intentionally not displayed or persisted. The packaged client/runtime handoff will consume it internally after start, join, or rejoin.</p>
@@ -600,6 +606,7 @@ function spectatorRuntimeCommands(grant) {
   return `
     <div class="runtime-panel spectator-mode">
       <h4>Spectator runtime</h4>
+      ${browserMediaPanel(grant.webrtc_signaling)}
       ${mediaReceiverCommands(grant.media_udp_port)}
       <p class="muted">Spectator mode opens media only; it does not reserve a player slot or send input.</p>
     </div>
@@ -624,6 +631,21 @@ function mediaReceiverCommands(mediaPort) {
       <p><strong>ffplay command:</strong></p>
       <pre class="command">${escapeHtml(ffplay)}</pre>
       <button type="button" data-copy-text="${escapeHtml(ffplay)}">Copy ffplay command</button>
+    </div>
+  `;
+}
+
+function browserMediaPanel(signaling) {
+  if (!signaling?.offer_path) {
+    return "";
+  }
+  const absoluteOfferUrl = new URL(signaling.offer_path, window.location.origin).toString();
+  return `
+    <div class="browser-media-panel">
+      <p><strong>Browser-native media:</strong> WebRTC signaling is available for this handoff.</p>
+      <pre class="command">${escapeHtml(absoluteOfferUrl)}</pre>
+      <button type="button" data-copy-text="${escapeHtml(absoluteOfferUrl)}">Copy WebRTC offer URL</button>
+      <p class="muted">This is token-safe signaling metadata. The private input token is not exposed to the page.</p>
     </div>
   `;
 }
