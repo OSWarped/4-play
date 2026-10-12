@@ -1140,10 +1140,15 @@ async fn post_sdp_offer_to_publisher(
     })?;
     if !status.is_success() {
         eprintln!("WebRTC {publisher_label} publisher returned {status}: {answer}");
+        let message = if answer.trim().is_empty() {
+            "WebRTC publisher returned an error".to_owned()
+        } else {
+            format!("WebRTC publisher returned {status}: {}", answer.trim())
+        };
         return Err(ApiError::new(
             StatusCode::BAD_GATEWAY,
             "webrtc_publisher_failed",
-            "WebRTC publisher returned an error",
+            &message,
         ));
     }
     Ok(answer)

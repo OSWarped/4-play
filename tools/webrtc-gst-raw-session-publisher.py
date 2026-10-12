@@ -126,6 +126,12 @@ class RawSessionPublisher:
             file=sys.stderr,
             flush=True,
         )
+        result = self.pipeline.set_state(Gst.State.READY)
+        print(
+            f"Raw-session WebRTC pipeline moved to READY result={result.value_nick}",
+            file=sys.stderr,
+            flush=True,
+        )
         self.started = True
 
     def start_media_flow(self) -> None:
