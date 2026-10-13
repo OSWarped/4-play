@@ -7,6 +7,27 @@
   const directions = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
 
   class BrowserInput {
+    static bindEscape(surface, leave, release, environment = globalThis) {
+      const doc = environment.document;
+      const keydown = (event) => {
+        if (event.code !== "Escape" || event.repeat || doc.hidden || !doc.hasFocus()
+            || !surface.contains(doc.activeElement)) return;
+        release();
+        // Browsers reserve Escape for leaving fullscreen. A second press in
+        // windowed mode leaves the game; do not depend on cancelling native Esc.
+        if (doc.fullscreenElement) return;
+        event.preventDefault();
+        leave();
+      };
+      const fullscreen = () => { if (!doc.fullscreenElement) release(); };
+      doc.addEventListener("keydown", keydown, true);
+      doc.addEventListener("fullscreenchange", fullscreen);
+      return () => {
+        doc.removeEventListener("keydown", keydown, true);
+        doc.removeEventListener("fullscreenchange", fullscreen);
+      };
+    }
+
     constructor(channel, surface, environment = globalThis) {
       this.channel = channel;
       this.surface = surface;

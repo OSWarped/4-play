@@ -20,6 +20,8 @@ const state = {
   browserMediaStream: null,
   browserInput: null,
   browserInputLeaseTimer: null,
+  browserMediaContext: null,
+  browserExitPending: false,
   games: [],
   sessions: [],
 };
@@ -62,6 +64,9 @@ const clientApi = {
       destination_address: destinationAddress,
     });
   },
+  async releaseSpectatorGrant(sessionId, grantId, seatId) {
+    return postJson(`/api/v1/sessions/${sessionId}/spectators/${grantId}`, { seat_id: seatId }, "DELETE");
+  },
 };
 
 tokenInput.value = state.token;
@@ -92,7 +97,8 @@ document.querySelector("#browse-games").addEventListener("click", () => {
 document.querySelector("#browse-sessions").addEventListener("click", () => {
   document.querySelector("#sessions").scrollIntoView({ behavior: "smooth", block: "start" });
 });
-stopBrowserMediaButton.addEventListener("click", stopBrowserMedia);
+stopBrowserMediaButton.addEventListener("click", leaveBrowserGame);
+FourPlayBrowserInput.bindEscape(browserPlayer, leaveBrowserGame, () => state.browserInput?.release());
 document.querySelector("#fullscreen-browser-media").addEventListener("click", async () => {
   try {
     await browserPlayer.requestFullscreen();
@@ -116,9 +122,9 @@ async function fetchJson(path) {
   return response.json();
 }
 
-async function postJson(path, body) {
+async function postJson(path, body, method = "POST") {
   const response = await fetch(path, {
-    method: "POST",
+    method,
     headers: {
       ...authHeaders(),
       "Content-Type": "application/json",
@@ -749,6 +755,7 @@ function wireBrowserMediaButtons(container) {
 }
 
 async function startBrowserMedia(button) {
+  if (state.browserExitPending) return;
   syncSettingsFromInputs();
   if (!window.RTCPeerConnection) {
     setBrowserMediaState("This browser does not expose RTCPeerConnection.");
@@ -760,6 +767,14 @@ async function startBrowserMedia(button) {
     return;
   }
   stopBrowserMedia();
+  const sessionMatch = new URL(offerUrl).pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/webrtc\/offer$/);
+  state.browserMediaContext = sessionMatch ? {
+    sessionId: decodeURIComponent(sessionMatch[1]),
+    seatId: state.seatId,
+    role: button.dataset.browserMediaRole || "spectator",
+    playerNumber: Number(button.dataset.browserMediaPlayer),
+    grantId: button.dataset.browserMediaGrant,
+  } : null;
   browserPlayer.hidden = false;
   browserPlayer.scrollIntoView({ behavior: "smooth", block: "start" });
   setBrowserMediaState("Creating browser media peer...");
@@ -783,7 +798,7 @@ async function startBrowserMedia(button) {
       if (state.browserMediaPeer !== peer) return;
       input.start();
       browserMediaVideo.focus();
-      inputStatus.textContent = "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start. Gamepads also supported when available.";
+      inputStatus.textContent = "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start; Esc to leave (fullscreen: Esc twice).";
     });
     channel.addEventListener("close", () => {
       input.stop();
@@ -868,6 +883,36 @@ function stopBrowserMedia() {
     browserMediaVideo.srcObject = null;
   }
   setBrowserMediaState("Browser-native media stopped.");
+  state.browserMediaContext = null;
+}
+
+async function leaveBrowserGame() {
+  if (state.browserExitPending || !state.browserMediaPeer) return;
+  state.browserExitPending = true;
+  const context = state.browserMediaContext;
+  stopBrowserMedia();
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    if (context?.role === "player" && context.playerNumber > 0) {
+      await clientApi.disconnectPlayerSlot(context.sessionId, context.playerNumber, context.seatId);
+      clearLastRuntimeFor(context.sessionId, context.playerNumber);
+    } else if (context?.grantId) {
+      await clientApi.releaseSpectatorGrant(context.sessionId, context.grantId, context.seatId);
+      if (state.lastRuntime?.session_id === context.sessionId && state.lastRuntime?.mode === "spectator") {
+        state.lastRuntime = null;
+        localStorage.removeItem("fourplay.lastRuntime");
+      }
+    }
+    browserPlayer.hidden = true;
+    document.querySelector("#browse-games").focus();
+    document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
+    await refresh();
+  } catch (error) {
+    browserPlayer.hidden = false;
+    setBrowserMediaState(`Media stopped, but leaving the seat failed: ${error.message}. Use the session's Leave action to retry.`);
+  } finally {
+    state.browserExitPending = false;
+  }
 }
 
 function stopBrowserInput() {

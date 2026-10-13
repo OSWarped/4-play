@@ -8,6 +8,14 @@ Sequence numbers reject late states. Input stops when the page/player loses focu
 and controls are neutralized on shutdown. The existing runtime timeout provides
 another release safeguard after 250 ms without accepted input.
 
+Escape now leaves the browser game view and disconnects only this seat's player
+slot (or releases its spectator grant), then returns to the library. Other seats
+and the MAME session continue running. Fullscreen reserves the first Escape for
+the browser's native fullscreen exit; a second Escape leaves the game. Both paths
+release held controls. The **Leave game view (Esc)** button performs the same
+leave action, including exiting fullscreen. Escape is scoped to the focused game
+view and does not intercept keys in settings fields.
+
 The control plane checks slot ownership and forwards the runtime input token only
 to the publisher, using server-to-server headers. Neither the SDP answer nor the
 input messages contain this token. The publisher fixes the authorized player
@@ -74,7 +82,8 @@ plane; its private authorization headers assume trusted server-to-server traffic
 5. Hold **W/A/S/D** to move. Test diagonals and **J + K** together in TMNT.
 6. Six attack buttons are **J/K/L** and **M/,/.** for games such as Killer Instinct.
 7. Change tabs or click a settings field while moving. Movement should stop.
-8. Use **Fullscreen**, click the video, and repeat the controls check.
+8. Use **Fullscreen**, click the video, and repeat the controls check. Escape once
+   exits fullscreen; Escape again leaves your player slot and returns to browsing.
 9. Play for more than one minute to exercise input lease renewal. Check that music
    stays clean and action/sound remain synchronized.
 
@@ -88,3 +97,11 @@ If controls do not work, inspect the newest publisher log for
 `Seat input connected from 127.0.0.1:...`. The connection source stays stable across
 peer replacement; after switching from a different input client, allow the runtime
 input timeout to release that client's source lock.
+
+## Reference validation
+
+On 2026-10-12 the user confirmed successful in-browser MAME gameplay, following
+earlier confirmation of smooth video and clean audio. Escape did not yet exit the
+view in that first manual test. The Escape follow-up has automated coverage for
+windowed/fullscreen behavior, input release, key repeat, and focus scoping;
+manual confirmation of that follow-up remains pending.

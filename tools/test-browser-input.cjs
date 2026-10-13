@@ -64,3 +64,40 @@ test("coin/start, standard gamepad combo, and disconnect", () => {
   s.tick();
   assert.equal(s.messages.length, before);
 });
+
+test("Escape releases controls and leaves a focused windowed game once", () => {
+  const s = setup();
+  const listeners = new Map();
+  s.document.addEventListener = (name, fn) => listeners.set(name, fn);
+  s.document.removeEventListener = (name) => listeners.delete(name);
+  let left = 0;
+  const unbind = BrowserInput.bindEscape(s.input.surface, () => left++, () => s.input.release(), s.env);
+  s.key("KeyD", true);
+  listeners.get("keydown")({ code: "Escape", preventDefault() {} });
+  assert.equal(left, 1);
+  assert.equal(s.messages.at(-1).axis_x, 0);
+  listeners.get("keydown")({ code: "Escape", repeat: true, preventDefault() {} });
+  assert.equal(left, 1);
+  s.document.activeElement = {};
+  listeners.get("keydown")({ code: "Escape", preventDefault() {} });
+  assert.equal(left, 1);
+  unbind();
+  assert.equal(listeners.size, 0);
+});
+
+test("fullscreen Escape releases input; second Escape leaves the game", () => {
+  const s = setup();
+  const listeners = new Map();
+  s.document.addEventListener = (name, fn) => listeners.set(name, fn);
+  let left = 0;
+  BrowserInput.bindEscape(s.input.surface, () => left++, () => s.input.release(), s.env);
+  s.document.fullscreenElement = s.input.surface;
+  s.key("KeyD", true);
+  listeners.get("keydown")({ code: "Escape", preventDefault() { throw Error("Must allow native fullscreen exit"); } });
+  assert.equal(left, 0);
+  assert.equal(s.messages.at(-1).axis_x, 0);
+  s.document.fullscreenElement = null;
+  listeners.get("fullscreenchange")();
+  listeners.get("keydown")({ code: "Escape", preventDefault() {} });
+  assert.equal(left, 1);
+});
