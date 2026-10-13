@@ -2,6 +2,10 @@
 /target/
 **/*.rs.bk
 
+# Python test/publisher bytecode
+__pycache__/
+*.pyc
+
 # Environment and secrets
 .env
 .env.*

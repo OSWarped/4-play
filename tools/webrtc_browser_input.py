@@ -115,6 +115,12 @@ class BrowserInputRelay:
             if self.authorization is not None and self.authorization.peer_id == peer_id:
                 self._neutralize()
 
+    def revoke(self, peer_id):
+        with self.lock:
+            if self.authorization is not None and self.authorization.peer_id == peer_id:
+                self._neutralize()
+                self.authorization = None
+
     def close(self):
         with self.lock:
             self._neutralize()

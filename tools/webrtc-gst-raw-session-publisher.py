@@ -11,7 +11,8 @@ This is the first bridge from real MAME output to browser-native media:
       -> browser <video>
 
 It is intentionally standalone and opt-in. It does not replace the proven
-UDP/FFplay path and should be started only for one manual validation session.
+UDP/FFplay path. Browser connections have independent bounded pipelines; the
+shared FIFO reader never splits frames among viewers.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import traceback
 from pathlib import Path
 from typing import NoReturn
 from webrtc_browser_input import BrowserInputRelay, InputAuthorization
+from webrtc_peer_pool import PeerPool, PeerCapacityError
 
 import gi
 
@@ -62,11 +64,16 @@ appsrc name=audio_source is-live=true format=time block=false max-buffers=4 max-
 
 
 class RawSessionPublisher:
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args: argparse.Namespace, input_relay=None) -> None:
         self.args = args
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
-        self.input_relay = BrowserInputRelay()
+        self.owns_input_relay = input_relay is None
+        self.input_relay = input_relay or BrowserInputRelay()
+        self.input_authorization = None
+        self.closed = False
+        self.created_at = time.monotonic()
+        self.unhealthy_since = None
         self.input_channel = None
         self.media_lock = threading.Lock()
         self.reader_stop = threading.Event()
@@ -83,6 +90,52 @@ class RawSessionPublisher:
         self.webrtc: Gst.Element | None = None
 
         self.build_pipeline()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        if self.ice_timeout_id is not None:
+            GLib.source_remove(self.ice_timeout_id)
+            self.ice_timeout_id = None
+        with self.media_lock:
+            self.media_epoch_ns = None
+        self.input_channel = None
+        if self.input_authorization:
+            self.input_relay.revoke(self.input_authorization.peer_id)
+        if self.owns_input_relay:
+            self.input_relay.close()
+        if self.pending_answer_context is not None:
+            self.fail_pending_answer(self.pending_answer_context, RuntimeError("browser peer closed"))
+            self.pending_answer_context = None
+        if self.pipeline is not None:
+            self.pipeline.get_bus().remove_signal_watch()
+            self.pipeline.set_state(Gst.State.NULL)
+
+    def renew_input(self, authorization):
+        return self.input_relay.renew(authorization)
+
+    def expired(self, now: float) -> bool:
+        if self.closed or self.pipeline_failed:
+            return True
+        if self.input_authorization:
+            current = self.input_relay.authorization
+            if current is None or current.peer_id != self.input_authorization.peer_id:
+                return True
+            if current.expires_ms <= time.time_ns() // 1_000_000:
+                return True
+        if self.webrtc is None:
+            return now - self.created_at >= 30
+        state = self.webrtc.get_property("connection-state").value_nick
+        if state in ("failed", "closed"):
+            return True
+        if state == "connected":
+            self.unhealthy_since = None
+            return False
+        if state == "disconnected":
+            self.unhealthy_since = self.unhealthy_since or now
+            return now - self.unhealthy_since >= 15
+        return now - self.created_at >= 30
 
     def build_pipeline(self) -> None:
         self.pipeline = Gst.parse_launch(
@@ -291,8 +344,11 @@ class RawSessionPublisher:
         input_authorization: InputAuthorization | None = None,
     ) -> str:
         with self.offer_lock:
+            if self.closed:
+                raise RuntimeError("browser peer closed")
             if self.pipeline_failed or self.media_started:
                 self.reset_pipeline("new browser offer")
+            self.input_authorization = input_authorization
             self.input_relay.authorize(input_authorization)
             if browser_host_ip:
                 offer_text = replace_mdns_candidates(offer_text, browser_host_ip)
@@ -319,7 +375,10 @@ class RawSessionPublisher:
             return answer
 
     def on_data_channel(self, _webrtc, channel):
-        authorization = self.input_relay.authorization
+        authorization = self.input_authorization
+        if self.closed:
+            channel.emit("close")
+            return
         if channel.get_property("label") != "4play-input" or authorization is None:
             channel.emit("close")
             return
@@ -348,6 +407,8 @@ class RawSessionPublisher:
         context: dict[str, object] | None = None,
     ) -> bool:
         try:
+            if self.closed:
+                raise RuntimeError("browser peer closed")
             self.start_pipeline()
             result, sdp_message = GstSdp.SDPMessage.new_from_text(offer_text)
             if result != GstSdp.SDPResult.OK:
@@ -375,7 +436,7 @@ class RawSessionPublisher:
         _promise: Gst.Promise,
         context: dict[str, object] | None,
     ) -> None:
-        if self.webrtc is None:
+        if self.closed or self.webrtc is None:
             self.fail_pending_answer(
                 context,
                 RuntimeError("GStreamer WebRTC element is not initialized"),
@@ -385,6 +446,9 @@ class RawSessionPublisher:
         self.webrtc.emit("create-answer", None, promise)
 
     def on_answer_created(self, promise: Gst.Promise, context: dict[str, object] | None) -> None:
+        if self.closed:
+            self.fail_pending_answer(context, RuntimeError("browser peer closed"))
+            return
         reply = promise.get_reply()
         if reply is None:
             self.fail_pending_answer(
@@ -449,6 +513,8 @@ class RawSessionPublisher:
             self.write_current_answer()
 
     def write_current_answer(self) -> bool:
+        if self.closed:
+            return False
         if self.webrtc is None:
             return True
         description = self.webrtc.get_property("local-description")
@@ -487,6 +553,8 @@ class RawSessionPublisher:
             event.set()
 
     def mark_pipeline_failed(self, reason: str) -> None:
+        if self.closed:
+            return
         print(
             f"Raw-session WebRTC pipeline stopped session={self.args.session_id}: {reason}",
             file=sys.stderr,
@@ -494,7 +562,8 @@ class RawSessionPublisher:
         )
         self.pipeline_failed = True
         self.input_channel = None
-        self.input_relay.authorize(None)
+        if self.input_authorization:
+            self.input_relay.revoke(self.input_authorization.peer_id)
         self.media_started = False
         with self.media_lock:
             self.media_epoch_ns = None
@@ -527,7 +596,83 @@ class RawSessionPublisher:
             self.mark_pipeline_failed(f"EOS from {message.src.get_name()}")
 
 
-def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandler]:
+class MultiPeerSessionPublisher:
+    """One frame-aligned FIFO reader per stream; bounded independent receivers."""
+    read_fifo = RawSessionPublisher.read_fifo
+
+    def __init__(self, args):
+        self.args = args
+        self.loop = GLib.MainLoop()
+        self.reader_stop = threading.Event()
+        self.pool = PeerPool(lambda relay: RawSessionPublisher(args, relay), args.max_peers)
+        self.offer_lock = threading.Lock()
+
+    def push_media_block(self, label, data):
+        for _key, peer in self.pool.snapshot():
+            try:
+                peer.push_media_block(label, data)
+            except Exception as error:
+                GLib.idle_add(peer.mark_pipeline_failed, f"{label} peer feed: {error}")
+
+    def mark_pipeline_failed(self, reason):
+        for _key, peer in self.pool.snapshot():
+            peer.mark_pipeline_failed(reason)
+
+    def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None):
+        if not offer.lstrip().startswith("v=0") or "\nm=" not in offer or len(offer.encode("utf-8")) > 262144:
+            raise RuntimeError("invalid SDP offer")
+        with self.offer_lock:
+            self.prune()
+            key, peer = self.pool.create(input_authorization, viewer_key)
+            try:
+                answer = peer.answer_for_offer(offer, host_ip, input_authorization=input_authorization)
+                print(f"Browser peer ready key={key} count={len(self.pool.snapshot())}", file=sys.stderr, flush=True)
+                return answer
+            except Exception:
+                self.pool.remove(key, peer)
+                raise
+
+    def renew_input(self, authorization):
+        return self.pool.renew(authorization)
+
+    def prune(self):
+        now = time.monotonic()
+        for key, peer in self.pool.snapshot():
+            if peer.expired(now):
+                self.pool.remove(key, peer)
+
+    def run_http_signaling(self):
+        threads = []
+        for label, path, size in (
+            ("video", self.args.video_path, self.args.width * self.args.height * 4),
+            ("audio", self.args.audio_path, 960 * 2 * 2),
+        ):
+            thread = threading.Thread(target=self.read_fifo, args=(label, path, size), daemon=True)
+            thread.start()
+            threads.append(thread)
+        def maintenance():
+            while not self.reader_stop.wait(1):
+                self.prune()
+        thread = threading.Thread(target=maintenance, daemon=True)
+        thread.start()
+        threads.append(thread)
+        host, port = self.args.http_signal.rsplit(":", 1)
+        server = ThreadingHTTPServer((host, int(port)), request_handler(self))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        install_signal_handlers(self.loop)
+        print(f"Raw session WebRTC publisher listening at http://{host}:{port}/sessions/{self.args.session_id}/offer max_peers={self.args.max_peers}", file=sys.stderr, flush=True)
+        try:
+            self.loop.run()
+        finally:
+            self.reader_stop.set()
+            server.shutdown()
+            server.server_close()
+            for thread in threads:
+                thread.join(timeout=1)
+            self.pool.close()
+
+
+def request_handler(publisher) -> type[BaseHTTPRequestHandler]:
     class RawSessionHandler(BaseHTTPRequestHandler):
         server_version = "4PlayRawSessionWebRtc/0.1"
 
@@ -539,8 +684,9 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
             self.send_cors_headers()
             self.send_header("content-type", "text/plain; charset=utf-8")
             self.end_headers()
+            peers = f" peers={len(publisher.pool.snapshot())} max_peers={publisher.args.max_peers}" if isinstance(publisher, MultiPeerSessionPublisher) else ""
             self.wfile.write(
-                f"4-Play raw session WebRTC publisher ready for {publisher.args.session_id}\n".encode(
+                f"4-Play raw session WebRTC publisher ready for {publisher.args.session_id}{peers}\n".encode(
                     "utf-8",
                 )
             )
@@ -554,7 +700,7 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
             if self.path == f"/sessions/{publisher.args.session_id}/input-lease":
                 try:
                     authorization = InputAuthorization.from_headers(self.headers)
-                    renewed = publisher.input_relay.renew(authorization)
+                    renewed = publisher.renew_input(authorization)
                 except (ValueError, KeyError):
                     renewed = False
                 self.send_response(204 if renewed else 409)
@@ -569,6 +715,10 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
                 return
             try:
                 length = int(self.headers.get("content-length", "0"))
+                if not 1 <= length <= 262144:
+                    self.send_error(413, "SDP offer must be between 1 and 262144 bytes")
+                    return
+                self.connection.settimeout(10)
                 offer = self.rfile.read(length).decode("utf-8")
                 print(
                     f"Received SDP offer path={self.path} bytes={len(offer)} "
@@ -578,7 +728,13 @@ def request_handler(publisher: RawSessionPublisher) -> type[BaseHTTPRequestHandl
                 )
                 browser_host_ip = publisher.args.browser_host_ip or self.client_address[0]
                 authorization = InputAuthorization.from_headers(self.headers)
-                answer = publisher.answer_for_offer(offer, browser_host_ip, input_authorization=authorization)
+                options = {"input_authorization": authorization}
+                if isinstance(publisher, MultiPeerSessionPublisher):
+                    options["viewer_key"] = self.headers.get("x-4play-viewer-key")
+                answer = publisher.answer_for_offer(offer, browser_host_ip, **options)
+            except PeerCapacityError:
+                self.send_error(409, "session browser peer limit reached")
+                return
             except Exception as error:  # noqa: BLE001 - diagnostic publisher returns text.
                 print(
                     f"Failed to answer SDP offer path={self.path}: {error}",
@@ -675,6 +831,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video-bitrate-kbps", type=int, default=1400)
     parser.add_argument("--audio-bitrate-bps", type=int, default=64000)
     parser.add_argument("--keyframe-distance", type=int, default=15)
+    parser.add_argument("--max-peers", type=int, default=int(os.environ.get("FOURPLAY_WEBRTC_MAX_PEERS", "8")),
+                        help="Bound browser receivers per session (1-32); default 8.")
     parser.add_argument(
         "--browser-host-ip",
         default=os.environ.get("FOURPLAY_WEBRTC_BROWSER_HOST_IP"),
@@ -687,7 +845,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     Gst.init(None)
-    RawSessionPublisher(args).run_http_signaling()
+    MultiPeerSessionPublisher(args).run_http_signaling()
 
 
 if __name__ == "__main__":

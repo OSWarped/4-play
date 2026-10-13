@@ -29,6 +29,28 @@ Cross-subnet testing is deferred at the project owner's request. The experimenta
 fixed `FOURPLAY_WEBRTC_BROWSER_HOST_IP` remains a known multi-machine limitation;
 TCP 8080 access alone does not establish WebRTC media connectivity.
 
+### Subsequent multi-peer increment
+
+The owner confirmed the recovery/Exit/fullscreen increment works. Independent
+browser peers are now implemented behind the same experimental publisher setting:
+one shared complete-frame FIFO reader feeds bounded per-peer VP8/Opus pipelines.
+Reconnect replaces only the authorized player slot or server-derived spectator
+seat/grant key. Player UDP sockets/sequences persist across peer replacement;
+view-only peers cannot forward controller input. Failed/disconnected/unconnected
+peers are reaped, and the default cap is eight receivers per session.
+
+Real Linux integration tests decoded simultaneous audio/video for two players and
+a spectator, rejected a spectator's attempted data channel input, verified both
+player UDP streams, and proved P1 continues through P2 and spectator reconnects.
+This is transport-level validation using generated frames, not manual shared MAME
+acceptance or a long CPU/latency soak. See
+[multi-peer validation](../testing/WEBRTC-MULTI-PEER.md).
+
+The initial implementation encodes separately per receiver to isolate negotiation
+and failures while reusing the validated low-latency pipeline. This trades CPU
+for simpler isolation; shared encoding/SFU optimization remains future work after
+reference-host resource measurements. No extra raw-media queue was introduced.
+
 ## Goal
 
 Move the normal player/spectator video path from an external FFplay window into
@@ -298,11 +320,10 @@ After player seats are stable:
 
 ## Current next development steps
 
-1. Validate Escape, fullscreen, reconnect, and receiver-stall reporting in the
-   reference browser; keep the existing UDP/FFplay path available.
-2. Add isolated concurrent browser peers for shared-session players and
-   spectators. A spectator must never replace another player's connection;
-   independent authorization and bounded fan-out are prerequisites.
+1. Manually validate simultaneous browser players/spectators and reconnect in a
+   real MAME session; keep the existing UDP/FFplay path available.
+2. Record CPU/memory and latency during longer multi-peer play before accepting
+   this as the normal shared-session transport or increasing the peer cap.
 3. Add the spectator actions overlay and spectator-to-open-player transition
    against that multi-peer lifecycle.
 4. Replace the fixed browser-IP workaround with trustworthy per-request client

@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 
 SCRIPT = Path(__file__).with_name("webrtc-gst-raw-session-publisher.py")
@@ -23,6 +24,32 @@ Publisher = namespace["RawSessionPublisher"]
 
 
 class InputTests(unittest.TestCase):
+    def test_peer_cleanup_deadlines_and_connection_recovery(self):
+        publisher = Publisher.__new__(Publisher)
+        publisher.closed = False
+        publisher.pipeline_failed = False
+        publisher.input_authorization = None
+        publisher.created_at = 10
+        publisher.unhealthy_since = None
+        publisher.webrtc = Mock()
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="connecting")
+        self.assertFalse(publisher.expired(39))
+        self.assertTrue(publisher.expired(40))
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="connected")
+        self.assertFalse(publisher.expired(500))
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="disconnected")
+        self.assertFalse(publisher.expired(500))
+        self.assertTrue(publisher.expired(515))
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="connected")
+        self.assertFalse(publisher.expired(516))
+        self.assertIsNone(publisher.unhealthy_since)
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="failed")
+        self.assertTrue(publisher.expired(517))
+        publisher.webrtc.get_property.return_value = SimpleNamespace(value_nick="connected")
+        publisher.input_authorization = SimpleNamespace(peer_id="old")
+        publisher.input_relay = SimpleNamespace(authorization=SimpleNamespace(peer_id="new"))
+        self.assertTrue(publisher.expired(518))
+
     def test_partial_reads_preserve_frame_boundaries(self):
         publisher = Publisher.__new__(Publisher)
         publisher.reader_stop = threading.Event()

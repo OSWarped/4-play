@@ -963,7 +963,8 @@ async fn signal_webrtc_test_pattern(
         })?;
 
     let answer =
-        post_sdp_offer_to_publisher(publisher_url, request.sdp_offer, "test-pattern", None).await?;
+        post_sdp_offer_to_publisher(publisher_url, request.sdp_offer, "test-pattern", None, None)
+            .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
 
     Ok(Json(WebRtcAnswerResponse {
@@ -1056,9 +1057,25 @@ async fn signal_session_webrtc_offer(
     } else {
         None
     };
-    let answer =
-        post_sdp_offer_to_publisher(&publisher_url, request.sdp_offer, "session", input.as_ref())
-            .await?;
+    // The publisher receives a server-built view identity, not a browser header.
+    // Spectator reconnects replace only this seat/grant, never a player slot.
+    let viewer_key = if input.is_none() {
+        Some(format!(
+            "{}:{}",
+            request.seat_id,
+            request.spectator_grant_id.as_deref().unwrap_or("seat-view")
+        ))
+    } else {
+        None
+    };
+    let answer = post_sdp_offer_to_publisher(
+        &publisher_url,
+        request.sdp_offer,
+        "session",
+        input.as_ref(),
+        viewer_key.as_deref(),
+    )
+    .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
 
     Ok(Json(WebRtcAnswerResponse {
@@ -1253,6 +1270,7 @@ async fn post_sdp_offer_to_publisher(
     sdp_offer: String,
     publisher_label: &str,
     input: Option<&PublisherInput>,
+    viewer_key: Option<&str>,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(WEBRTC_PUBLISHER_TIMEOUT)
@@ -1271,6 +1289,9 @@ async fn post_sdp_offer_to_publisher(
         .body(sdp_offer);
     if let Some(input) = input {
         publisher_request = publisher_request.headers(input.headers()?);
+    }
+    if let Some(viewer_key) = viewer_key {
+        publisher_request = publisher_request.header("x-4play-viewer-key", viewer_key);
     }
     let response = publisher_request.send().await.map_err(|error| {
         eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
@@ -2590,6 +2611,7 @@ mod tests {
             "/sessions/{id}/offer",
             axum_post(|headers: HeaderMap| async move {
                 assert!(!headers.contains_key("x-4play-input-token"));
+                assert_eq!(headers["x-4play-viewer-key"], "seat-two:seat-view");
                 "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
             }),
         );

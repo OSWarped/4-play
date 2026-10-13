@@ -2,9 +2,10 @@
 
 The client now shows receiver diagnostics and provides **Reconnect media**. This
 does not allocate another session, player slot, spectator grant, or media port.
-It repeats authorized signaling for the existing view. The experimental publisher
-still has one browser peer per session: do not use this to test concurrent viewers
-yet. UDP/FFplay remains unchanged.
+It repeats authorized signaling for the existing view. The owner confirmed this
+recovery increment works. The subsequent multi-peer publisher now permits
+independent viewers; follow [multi-peer validation](WEBRTC-MULTI-PEER.md) for that
+additional acceptance test. UDP/FFplay remains unchanged.
 
 ## Automated checks
 
