@@ -9,6 +9,8 @@ const browserPlayer = document.querySelector("#browser-player");
 const browserMediaVideo = document.querySelector("#browser-media-video");
 const browserMediaState = document.querySelector("#browser-media-state");
 const stopBrowserMediaButton = document.querySelector("#stop-browser-media");
+const reconnectBrowserMediaButton = document.querySelector("#reconnect-browser-media");
+const browserReceiverStats = document.querySelector("#browser-receiver-stats");
 
 const state = {
   token: localStorage.getItem("fourplay.clientToken") || "",
@@ -22,6 +24,9 @@ const state = {
   browserInputLeaseTimer: null,
   browserMediaContext: null,
   browserExitPending: false,
+  browserMediaMonitor: null,
+  browserMediaRetry: null,
+  browserMediaNegotiating: false,
   games: [],
   sessions: [],
 };
@@ -98,6 +103,9 @@ document.querySelector("#browse-sessions").addEventListener("click", () => {
   document.querySelector("#sessions").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 stopBrowserMediaButton.addEventListener("click", leaveBrowserGame);
+reconnectBrowserMediaButton.addEventListener("click", () => {
+  if (state.browserMediaRetry) startBrowserMedia({ dataset: { ...state.browserMediaRetry } });
+});
 FourPlayBrowserInput.bindEscape(browserPlayer, leaveBrowserGame, () => state.browserInput?.release());
 document.querySelector("#fullscreen-browser-media").addEventListener("click", async () => {
   try {
@@ -755,7 +763,7 @@ function wireBrowserMediaButtons(container) {
 }
 
 async function startBrowserMedia(button) {
-  if (state.browserExitPending) return;
+  if (state.browserExitPending || state.browserMediaNegotiating) return;
   syncSettingsFromInputs();
   if (!window.RTCPeerConnection) {
     setBrowserMediaState("This browser does not expose RTCPeerConnection.");
@@ -767,6 +775,9 @@ async function startBrowserMedia(button) {
     return;
   }
   stopBrowserMedia();
+  state.browserMediaRetry = { ...button.dataset };
+  state.browserMediaNegotiating = true;
+  reconnectBrowserMediaButton.disabled = true;
   const sessionMatch = new URL(offerUrl).pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/webrtc\/offer$/);
   state.browserMediaContext = sessionMatch ? {
     sessionId: decodeURIComponent(sessionMatch[1]),
@@ -784,6 +795,14 @@ async function startBrowserMedia(button) {
   state.browserMediaPeer = peer;
   state.browserMediaStream = stream;
   browserMediaVideo.srcObject = stream;
+  browserReceiverStats.textContent = "Waiting for receiver statistics...";
+  state.browserMediaMonitor = new FourPlayBrowserMediaMonitor(peer, (stats) => {
+    if (state.browserMediaPeer !== peer) return;
+    browserReceiverStats.textContent = stats ?
+      `${stats.stalled ? "Video stalled — reconnect media if it does not recover. " : ""}${stats.fps.toFixed(1)} fps · ${stats.decodeCounter ? stats.frames : "unknown"} decoded · ${stats.dropped} dropped · ${stats.lost} lost packets · jitter ${stats.jitterMs.toFixed(1)} ms · RTT ${stats.rttMs === null ? "unknown" : stats.rttMs.toFixed(1) + " ms"}` :
+      "Receiver statistics unavailable in this browser.";
+  });
+  state.browserMediaMonitor.start();
 
   peer.addTransceiver("video", { direction: "recvonly" });
   peer.addTransceiver("audio", { direction: "recvonly" });
@@ -796,7 +815,7 @@ async function startBrowserMedia(button) {
     inputStatus.textContent = "Connecting game controls...";
     channel.addEventListener("open", () => {
       if (state.browserMediaPeer !== peer) return;
-      input.start();
+      if (peer.connectionState === "connected") input.start();
       browserMediaVideo.focus();
       inputStatus.textContent = "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start; Esc to leave (fullscreen: Esc twice).";
     });
@@ -809,25 +828,41 @@ async function startBrowserMedia(button) {
     });
   }
   peer.addEventListener("track", (event) => {
+    if (state.browserMediaPeer !== peer) return;
     stream.addTrack(event.track);
     setBrowserMediaState(`Attached remote ${event.track.kind} track.`);
     browserMediaVideo.play().catch((error) => {
+      if (state.browserMediaPeer !== peer || error.name === "AbortError") return;
       setBrowserMediaState(`Browser media attached; press play if autoplay was blocked. ${error.message}`);
     });
   });
   peer.addEventListener("connectionstatechange", () => {
+    if (state.browserMediaPeer !== peer) return;
+    if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+      state.browserInput?.stop();
+      inputStatus.textContent = "Controls released while media is disconnected. Reconnect media to resume.";
+    } else if (peer.connectionState === "connected") {
+      state.browserInput?.start();
+    }
     setBrowserMediaState(`Browser media connection: ${peer.connectionState}`);
   });
   peer.addEventListener("iceconnectionstatechange", () => {
+    if (state.browserMediaPeer !== peer) return;
     if (["failed", "disconnected"].includes(peer.iceConnectionState)) {
+      state.browserInput?.stop();
       setBrowserMediaState(`Browser media ICE state: ${peer.iceConnectionState}`);
+    } else if (["connected", "completed"].includes(peer.iceConnectionState)
+        && peer.connectionState === "connected") {
+      state.browserInput?.start();
     }
   });
 
   try {
     const offer = await peer.createOffer();
+    if (state.browserMediaPeer !== peer) return;
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer, 2000);
+    if (state.browserMediaPeer !== peer) return;
     const body = {
       seat_id: state.seatId,
       role: button.dataset.browserMediaRole || "spectator",
@@ -843,6 +878,7 @@ async function startBrowserMedia(button) {
     const answer = await postJson(offerUrl, body);
     if (state.browserMediaPeer !== peer) return;
     await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp_answer });
+    if (state.browserMediaPeer !== peer) return;
     if (answer.input_peer_id && body.player_number) {
       const leaseUrl = `${offerUrl.replace(/\/webrtc\/offer$/, "")}/player-slots/${body.player_number}/webrtc-input/lease`;
       state.browserInputLeaseTimer = window.setInterval(async () => {
@@ -858,17 +894,29 @@ async function startBrowserMedia(button) {
     }
     setBrowserMediaState("Applied WebRTC answer; waiting for media packets...");
   } catch (error) {
+    if (state.browserMediaPeer !== peer) return;
     setBrowserMediaState(`Browser media failed: ${error.message || error}`);
     peer.close();
     if (state.browserMediaPeer === peer) {
       stopBrowserInput();
+      state.browserMediaMonitor?.stop();
+      state.browserMediaMonitor = null;
+      stream.getTracks().forEach((track) => track.stop());
+      browserMediaVideo.srcObject = null;
       state.browserMediaPeer = null;
       state.browserMediaStream = null;
     }
+  } finally {
+    state.browserMediaNegotiating = false;
+    reconnectBrowserMediaButton.disabled = !state.browserMediaRetry || state.browserExitPending;
   }
 }
 
 function stopBrowserMedia() {
+  state.browserMediaMonitor?.stop();
+  state.browserMediaMonitor = null;
+  state.browserMediaRetry = null;
+  reconnectBrowserMediaButton.disabled = true;
   stopBrowserInput();
   if (state.browserMediaPeer) {
     state.browserMediaPeer.close();
@@ -887,7 +935,7 @@ function stopBrowserMedia() {
 }
 
 async function leaveBrowserGame() {
-  if (state.browserExitPending || !state.browserMediaPeer) return;
+  if (state.browserExitPending || !state.browserMediaContext) return;
   state.browserExitPending = true;
   const context = state.browserMediaContext;
   stopBrowserMedia();

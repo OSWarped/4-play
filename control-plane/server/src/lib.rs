@@ -351,6 +351,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/client/", get(client_index))
         .route("/client/app.js", get(client_script))
         .route("/client/input.js", get(client_input_script))
+        .route("/client/media.js", get(client_media_script))
         .route("/client/styles.css", get(client_styles))
         .route("/webrtc-test", get(webrtc_test_index))
         .route("/webrtc-test/", get(webrtc_test_index))
@@ -475,6 +476,13 @@ async fn client_input_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/client/input.js"),
+    )
+}
+
+async fn client_media_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client/media.js"),
     )
 }
 
@@ -2156,6 +2164,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/client").await;
         let (script_status, script_content_type, script_body) =
             request_bytes(service.clone(), Method::GET, "/client/app.js").await;
+        let (media_status, media_content_type, media_body) =
+            request_bytes(service.clone(), Method::GET, "/client/media.js").await;
         let (styles_status, styles_content_type, styles_body) =
             request_bytes(service, Method::GET, "/client/styles.css").await;
 
@@ -2169,6 +2179,18 @@ mod tests {
         assert!(index_body.contains("id=\"browser-media-status\""));
         assert!(index_body.contains("id=\"browser-player\""));
         assert!(index_body.contains("id=\"browser-media-video\""));
+        assert!(index_body.contains("id=\"reconnect-browser-media\""));
+        assert!(index_body.contains("/client/media.js"));
+        assert_eq!(media_status, 200);
+        assert_eq!(
+            media_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert!(
+            String::from_utf8(media_body)
+                .unwrap()
+                .contains("BrowserMediaMonitor")
+        );
 
         assert_eq!(script_status, 200);
         assert_eq!(

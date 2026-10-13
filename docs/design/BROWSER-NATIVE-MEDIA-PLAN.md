@@ -12,6 +12,23 @@ See [browser input validation](../testing/WEBRTC-BROWSER-INPUT.md) for deploymen
 controls, and tests. The experimental publisher still supports one browser peer
 per MAME session; concurrent browser players/spectators are subsequent work.
 
+## Progress on 2026-10-13
+
+Browser receiver recovery now has a dedicated reconnect action, once-per-second
+receiver diagnostics (decoded FPS, dropped frames, packet loss, jitter, and RTT),
+and a warning when connected video stops progressing for three seconds. Stats
+are observational: they do not change playback buffers or add media queues.
+Disconnect/ICE failure releases gameplay input; reconnect keeps the current seat
+or spectator grant rather than claiming another slot. Failed signaling retains
+the Leave action, and obsolete peer callbacks cannot update a replacement view.
+Twelve deterministic Node tests and the control-plane/protocol/host-agent Rust
+tests pass. Real browser recovery and the earlier Escape change still require
+manual confirmation after deployment.
+
+Cross-subnet testing is deferred at the project owner's request. The experimental
+fixed `FOURPLAY_WEBRTC_BROWSER_HOST_IP` remains a known multi-machine limitation;
+TCP 8080 access alone does not establish WebRTC media connectivity.
+
 ## Goal
 
 Move the normal player/spectator video path from an external FFplay window into
@@ -281,12 +298,16 @@ After player seats are stable:
 
 ## Current next development steps
 
-1. Run the W1 audio/video path for 5-10 minutes and record stats/CPU.
-2. Validate runtime-host-agent-owned test-pattern publisher startup, restart,
-   and shutdown on the Linux host.
-3. Validate the raw-media WebRTC pipeline plan against throwaway FIFOs.
-4. Feed real session-runtime MAME media into the WebRTC publisher.
-5. Move from the manual raw-session publisher to runtime-host-owned
-   per-session/per-spectator WebRTC publisher lifecycle.
-6. Add client UI feature flag for browser media while keeping UDP/FFplay
-   fallback.
+1. Validate Escape, fullscreen, reconnect, and receiver-stall reporting in the
+   reference browser; keep the existing UDP/FFplay path available.
+2. Add isolated concurrent browser peers for shared-session players and
+   spectators. A spectator must never replace another player's connection;
+   independent authorization and bounded fan-out are prerequisites.
+3. Add the spectator actions overlay and spectator-to-open-player transition
+   against that multi-peer lifecycle.
+4. Replace the fixed browser-IP workaround with trustworthy per-request client
+   addressing and document bounded ICE/firewall settings before multi-subnet
+   deployment. Do not trust arbitrary browser-supplied forwarding headers.
+5. Validate longer browser gameplay soaks, resource ceilings, audio sync, and
+   latency against the accepted FFplay experience before making WebRTC default.
+6. Follow through with Admin/Producer browser capture and later mobile controls.

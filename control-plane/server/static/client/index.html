@@ -71,12 +71,14 @@
           </div>
           <button id="stop-browser-media" type="button">Leave game view (Esc)</button>
           <button id="fullscreen-browser-media" type="button">Fullscreen</button>
+          <button id="reconnect-browser-media" type="button" disabled>Reconnect media</button>
         </div>
         <video id="browser-media-video" tabindex="0" autoplay playsinline controls></video>
         <p id="browser-input-state" class="muted">Spectators have view-only access.</p>
         <p id="browser-media-state" class="muted">
           Browser-native WebRTC media will appear here when a session publisher is available.
         </p>
+        <p id="browser-receiver-stats" class="muted" aria-live="off">Receiver diagnostics appear when media connects.</p>
       </section>
 
       <section class="card">
@@ -98,6 +100,7 @@
     </template>
 
     <script src="/client/input.js" defer></script>
+    <script src="/client/media.js" defer></script>
     <script src="/client/app.js" defer></script>
   </body>
 </html>
