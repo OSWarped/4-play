@@ -368,6 +368,12 @@ confirmation prompts. The client-served runbook must use placeholders such as
 
 ## Relationship to existing tools
 
+The optional [TheGamesDB provider](THEGAMESDB-METADATA-PROVIDER.md) now adds
+server-side arcade search, operator-reviewed descriptive metadata and image
+staging to the game editor. Existing overrides remain unchecked, publishing uses
+the normal Save metadata action, and the provider key is server-only. Live API
+acceptance awaits private key setup; fixture validation is automated.
+
 The admin app can initially wrap existing APIs and scripts:
 
 - control-plane game/session/runtime-host APIs;

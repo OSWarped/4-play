@@ -390,7 +390,10 @@ function renderGame(game) {
   return element;
 }
 
+let cleanupMetadataProvider = null;
+window.addEventListener("pagehide", () => cleanupMetadataProvider?.());
 function renderGameEditor(game) {
+  cleanupMetadataProvider?.();
   const metadata = game.metadata || {};
   const slotCount = metadata.player_count || game.availability?.[0]?.profile?.max_players || 1;
   const previewPath = primaryMediaPath(metadata);
@@ -457,6 +460,16 @@ function renderGameEditor(game) {
         <button id="upload-asset" type="button">Upload asset</button>
         <div id="asset-upload-result"></div>
       </details>
+      <details id="provider-panel" class="provider-panel">
+        <summary>Find metadata &amp; artwork on TheGamesDB</summary>
+        <p class="muted">Server-side API key required. Search arcade matches, review changes, then Save metadata. Your own artwork and edits are preserved unless you explicitly select replacements.</p>
+        <p id="provider-status" class="muted" role="status">Checking server provider configuration…</p>
+        <div class="form-actions">
+          <input id="provider-query" type="search" aria-label="TheGamesDB arcade title search" />
+          <button id="provider-search" type="button">Search Arcade</button>
+        </div>
+        <div id="provider-results" class="stack" aria-live="polite"></div>
+      </details>
       <details class="player-slot-editor">
         <summary>Player slot metadata</summary>
         <p class="muted">
@@ -474,8 +487,10 @@ function renderGameEditor(game) {
     </form>
   `;
   const form = editor.querySelector("#metadata-form");
+  cleanupMetadataProvider = FourPlayMetadataEditor.bind(form, game, { post: postJson, fetch, headers: authHeaders, escapeHtml });
   form.addEventListener("submit", (event) => saveGameMetadata(event, game));
   editor.querySelector("#cancel-metadata-edit").addEventListener("click", () => {
+    cleanupMetadataProvider?.();
     editor.classList.add("muted");
     editor.textContent = "Select a game to edit its metadata.";
   });

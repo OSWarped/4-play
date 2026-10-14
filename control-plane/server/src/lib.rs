@@ -1,4 +1,6 @@
 mod store;
+mod thegamesdb;
+pub use thegamesdb::with_thegamesdb;
 
 use std::{
     net::{IpAddr, SocketAddr},
@@ -258,6 +260,7 @@ pub async fn app_with_database_tokens_ports_assets_preview_and_webrtc(
 
 pub fn app_with_state(state: AppState) -> Router {
     let protected = Router::new()
+        .merge(thegamesdb::routes())
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
         .route("/api/v1/games/{game_id}", get(get_catalog_game))
@@ -361,6 +364,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin/", get(admin_index))
         .route("/admin/app.js", get(admin_script))
         .route("/admin/asset-upload.js", get(admin_asset_upload_script))
+        .route(
+            "/admin/metadata-provider.js",
+            get(admin_metadata_provider_script),
+        )
         .route("/admin/capture", get(admin_capture))
         .route("/admin/capture.js", get(admin_capture_script))
         .route("/admin/styles.css", get(admin_styles))
@@ -453,6 +460,13 @@ async fn admin_asset_upload_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/admin/asset-upload.js"),
+    )
+}
+
+async fn admin_metadata_provider_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/admin/metadata-provider.js"),
     )
 }
 
@@ -2157,6 +2171,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/admin/app.js").await;
         let (upload_status, _, upload_body) =
             request_bytes(service.clone(), Method::GET, "/admin/asset-upload.js").await;
+        let (provider_status, _, provider_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/metadata-provider.js").await;
         let (capture_status, capture_content_type, capture_body) =
             request_bytes(service.clone(), Method::GET, "/admin/capture").await;
         let (capture_script_status, capture_script_content_type, capture_script_body) =
@@ -2172,6 +2188,13 @@ mod tests {
         let index_body = String::from_utf8(index_body).unwrap();
         assert!(index_body.contains("Admin / Producer Console"));
         assert!(index_body.contains("/admin/asset-upload.js"));
+        assert!(index_body.contains("/admin/metadata-provider.js"));
+        assert_eq!(provider_status, 200);
+        assert!(
+            String::from_utf8(provider_body)
+                .unwrap()
+                .contains("approvedPatch")
+        );
         assert_eq!(upload_status, 200);
         assert!(
             String::from_utf8(upload_body)

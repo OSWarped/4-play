@@ -64,6 +64,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         webrtc_session_publisher_url_template.clone(),
     )
     .await?;
+    let app = control_plane_server::with_thegamesdb(
+        app,
+        env::var("FOURPLAY_THEGAMESDB_API_KEY").ok(),
+        PathBuf::from(
+            env::var("FOURPLAY_THEGAMESDB_CACHE").unwrap_or_else(|_| "data/thegamesdb".to_owned()),
+        ),
+    )?;
 
     println!(
         "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms} webrtc_test_pattern_publisher={} webrtc_session_publisher_template={}",
