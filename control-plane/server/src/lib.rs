@@ -9,7 +9,7 @@ use std::{
 use axum::{
     Extension, Json, Router,
     body::{Body, Bytes},
-    extract::{ConnectInfo, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path as AxumPath, State},
     http::{HeaderMap, Request, StatusCode, header::CONTENT_TYPE},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -267,7 +267,9 @@ pub fn app_with_state(state: AppState) -> Router {
         )
         .route(
             "/api/v1/assets/{*asset_path}",
-            get(get_asset).put(put_asset),
+            get(get_asset)
+                .put(put_asset)
+                .layer(DefaultBodyLimit::max(MAX_ASSET_UPLOAD_BYTES)),
         )
         .route(
             "/api/v1/active-sessions",
@@ -358,6 +360,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin", get(admin_index))
         .route("/admin/", get(admin_index))
         .route("/admin/app.js", get(admin_script))
+        .route("/admin/asset-upload.js", get(admin_asset_upload_script))
         .route("/admin/capture", get(admin_capture))
         .route("/admin/capture.js", get(admin_capture_script))
         .route("/admin/styles.css", get(admin_styles))
@@ -443,6 +446,13 @@ async fn admin_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/admin/app.js"),
+    )
+}
+
+async fn admin_asset_upload_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/admin/asset-upload.js"),
     )
 }
 
@@ -2145,6 +2155,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/admin").await;
         let (script_status, script_content_type, script_body) =
             request_bytes(service.clone(), Method::GET, "/admin/app.js").await;
+        let (upload_status, _, upload_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/asset-upload.js").await;
         let (capture_status, capture_content_type, capture_body) =
             request_bytes(service.clone(), Method::GET, "/admin/capture").await;
         let (capture_script_status, capture_script_content_type, capture_script_body) =
@@ -2159,6 +2171,13 @@ mod tests {
         );
         let index_body = String::from_utf8(index_body).unwrap();
         assert!(index_body.contains("Admin / Producer Console"));
+        assert!(index_body.contains("/admin/asset-upload.js"));
+        assert_eq!(upload_status, 200);
+        assert!(
+            String::from_utf8(upload_body)
+                .unwrap()
+                .contains("validateUpload")
+        );
         assert!(index_body.contains("id=\"webrtc-status\""));
 
         assert_eq!(script_status, 200);
@@ -3531,6 +3550,38 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(content_type.as_deref(), Some("image/png"));
         assert_eq!(body, b"fake-png");
+    }
+
+    #[tokio::test]
+    async fn asset_upload_uses_the_advertised_ten_mib_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = app_with_database_tokens_ports_and_assets(
+            directory.path().join("control-plane.sqlite3"),
+            Duration::from_secs(15),
+            "test-seat-token".to_owned(),
+            "test-runtime-host-token".to_owned(),
+            PortPoolConfig::default(),
+            Some(directory.path().join("assets")),
+        )
+        .await
+        .unwrap();
+        let (status, _) = request_raw(
+            service.clone(),
+            Method::PUT,
+            "/api/v1/assets/large.jpg",
+            Body::from(vec![0u8; 3 * 1024 * 1024]),
+        )
+        .await;
+        assert_eq!(status, 204);
+        let (status, _) = request_raw(
+            service,
+            Method::PUT,
+            "/api/v1/assets/too-large.jpg",
+            Body::from(vec![0u8; super::MAX_ASSET_UPLOAD_BYTES + 1]),
+        )
+        .await;
+        assert_eq!(status, 413);
+        assert!(!directory.path().join("assets/too-large.jpg").exists());
     }
 
     #[tokio::test]

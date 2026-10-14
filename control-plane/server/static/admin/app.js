@@ -434,7 +434,8 @@ function renderGameEditor(game) {
       <details class="asset-upload-editor">
         <summary>Upload artwork/media asset</summary>
         <p class="muted">
-          Upload a file under the configured asset root, then apply that relative path to a metadata field.
+          Choose a file to suggest a destination with the correct extension. Upload it,
+          then click Save metadata to publish the image reference. Maximum file size: 10 MiB.
         </p>
         <label>
           <span>Destination asset path</span>
@@ -479,6 +480,18 @@ function renderGameEditor(game) {
     editor.textContent = "Select a game to edit its metadata.";
   });
   editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
+  const uploadPath = form.querySelector("#asset-upload-path");
+  const uploadFile = form.querySelector("#asset-upload-file");
+  const uploadField = form.querySelector("#asset-upload-field");
+  let suggestedUploadPath = "";
+  function suggestUploadPath() {
+    const file = uploadFile.files?.[0];
+    if (!file || (uploadPath.value.trim() && uploadPath.value !== suggestedUploadPath)) return;
+    suggestedUploadPath = FourPlayAssetUpload.suggestedPath(game.id, uploadField.value, file);
+    uploadPath.value = suggestedUploadPath;
+  }
+  uploadFile.addEventListener("change", suggestUploadPath);
+  uploadField.addEventListener("change", suggestUploadPath);
   loadMediaPreviews(editor);
 }
 
@@ -493,7 +506,7 @@ function primaryMediaPath(metadata) {
 }
 
 function assetUrl(path) {
-  return `/assets/${encodeAssetPath(path)}`;
+  return FourPlayAssetUpload.assetUrl(path);
 }
 
 function mediaPreview(path, alt, className) {
@@ -633,6 +646,7 @@ async function uploadAsset(form) {
   }
   result.innerHTML = `<p class="pill warn">Uploading asset...</p>`;
   try {
+    FourPlayAssetUpload.validateUpload(path, file);
     if (await assetExists(path)) {
       const confirmed = window.confirm(
         `Replace existing asset?\n\n${path}\n\nThis will overwrite the current file at that asset path.`,
