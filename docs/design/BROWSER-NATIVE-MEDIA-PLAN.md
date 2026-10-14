@@ -51,6 +51,24 @@ and failures while reusing the validated low-latency pipeline. This trades CPU
 for simpler isolation; shared encoding/SFU optimization remains future work after
 reference-host resource measurements. No extra raw-media queue was introduced.
 
+### Spectator actions increment
+
+The browser spectator view now has a bottom actions overlay. It slides into view
+on keyboard, pointer, or standard-gamepad activity and hides after 3.5 seconds of
+inactivity. Keyboard focus, pointer hover, and an in-progress join keep it visible;
+reduced-motion preferences disable animation. The menu offers joinable positions,
+fullscreen, reconnect, and leave. Position availability refreshes every five
+seconds without changing media buffers or sending spectator input.
+
+Join transitions reserve/connect on the control plane before requesting an input
+channel. Slot conflicts keep the original spectator stream; cancelled or failed
+acquisition cleans up the newly acquired slot. A successful handoff remembers only
+token-safe runtime metadata and releases the old spectator grant. Promotion swaps
+the server-identified spectator peer for its player peer, including at capacity.
+Real Linux WebRTC tests verify that promotion leaves the other players running;
+browser menu/fullscreen/joystick feel still needs manual acceptance.
+See [spectator overlay validation](../testing/WEBRTC-SPECTATOR-OVERLAY.md).
+
 ## Goal
 
 Move the normal player/spectator video path from an external FFplay window into
@@ -324,8 +342,9 @@ After player seats are stable:
    real MAME session; keep the existing UDP/FFplay path available.
 2. Record CPU/memory and latency during longer multi-peer play before accepting
    this as the normal shared-session transport or increasing the peer cap.
-3. Add the spectator actions overlay and spectator-to-open-player transition
-   against that multi-peer lifecycle.
+3. Validate the implemented spectator actions overlay and spectator-to-open-player
+   transition, including keyboard/gamepad navigation, fullscreen, slot conflicts,
+   and leaving while a join is pending.
 4. Replace the fixed browser-IP workaround with trustworthy per-request client
    addressing and document bounded ICE/firewall settings before multi-subnet
    deployment. Do not trust arbitrary browser-supplied forwarding headers.

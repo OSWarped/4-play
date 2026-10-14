@@ -102,6 +102,19 @@ class PoolTests(unittest.TestCase):
         self.assertFalse(player.closed)
         self.assertIsNone(replacement.relay)
 
+    def test_spectator_promotes_to_player_at_capacity_without_evicting_others(self):
+        _, p1 = self.add(self.auth)
+        _, viewer = self.pool.create(None, "seat-two:grant-a")
+        _, other = self.pool.create(None, "seat-three:grant-b")
+        auth2 = replace(self.auth, player=2, peer_id=str(uuid.uuid4()))
+        _, p2 = self.pool.create(auth2, "seat-two:grant-a")
+        p2.authorize(auth2)
+        self.assertTrue(viewer.closed)
+        self.assertFalse(p1.closed)
+        self.assertFalse(other.closed)
+        self.assertEqual(len(self.pool.snapshot()), 3)
+        self.assertTrue(self.pool.renew(auth2))
+
 
 if __name__ == "__main__":
     unittest.main()

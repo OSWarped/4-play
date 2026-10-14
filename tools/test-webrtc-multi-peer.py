@@ -152,6 +152,13 @@ def main():
             clients.append(Client(publisher, None, "spectator-grant"))
             wait_for(lambda: clients[-1].counts["video"] > 10, "spectator reconnect at capacity")
             assert len(publisher.pool.snapshot()) == 3
+            auth3 = replace(auth1, player=3, peer_id=str(uuid.uuid4()))
+            clients.append(Client(publisher, auth3, "spectator-grant"))
+            wait_for(lambda: clients[-1].channel_open and clients[-1].counts["video"] > 10, "spectator promotes to P3 at capacity")
+            assert len(publisher.pool.snapshot()) == 3
+            clients[-1].send(1, 5)
+            source3, _ = receive_combo(3, 5)
+            assert source3 not in (source1, source2)
             wait_for(lambda: clients[0].counts["video"] > before["video"] + 10, "P1 continues after spectator closes")
             clients[1].close()
             auth2_new = replace(auth2, peer_id=str(uuid.uuid4()))
@@ -174,7 +181,7 @@ def main():
                 pass
             wait_for(lambda: clients[0].counts["video"] > before + 10, "P1 survives another peer's invalid offer")
             assert len(publisher.pool.snapshot()) == 3
-            print("PASS: P1, P2 and spectator simultaneously decode audio/video; spectator input rejected; P2 reconnect preserves source; P1 survives all changes")
+            print("PASS: P1/P2/spectator decode audio/video; spectator input rejected; promotion at capacity and P2 reconnect preserve other players")
     finally:
         stop.set()
         if feeder:

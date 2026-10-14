@@ -3,14 +3,17 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const fs = require("node:fs");
 const vm = require("node:vm");
+const Spectator = require("../control-plane/server/static/client/spectator.js");
 
 function setup() {
   const peers = [], inputs = [], monitors = [], calls = [];
-  const state = { seatId: "seat-1", browserExitPending: false, browserMediaNegotiating: false };
+  const state = { seatId: "seat-1", browserExitPending: false, browserMediaNegotiating: false, sessions: [] };
   const video = { focus() {}, pause() {}, srcObject: null, play: async () => {} };
   const player = { hidden: true, scrollIntoView() {} };
   const status = { textContent: "" }, reconnect = {};
   const inputStatus = { textContent: "" };
+  const slots = { contains: () => false, replaceChildren() {}, querySelectorAll: () => [] };
+  const elements = { "#spectator-player-slots": slots, "#spectator-actions": {}, "#spectator-action-status": {} };
   class Peer {
     constructor() { this.listeners = {}; this.connectionState = "new"; this.iceGatheringState = "complete"; peers.push(this); }
     addTransceiver() {}
@@ -39,7 +42,10 @@ function setup() {
     MediaStream: class { constructor() { this.tracks = []; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } },
     browserPlayer: player, browserMediaVideo: video, browserMediaState: status,
     reconnectBrowserMediaButton: reconnect, browserReceiverStats: { textContent: "" },
-    document: { querySelector: () => inputStatus }, window: { RTCPeerConnection: Peer, setInterval: () => 1, clearInterval() {} },
+    document: { querySelector: (selector) => elements[selector] || inputStatus },
+    window: { RTCPeerConnection: Peer, setInterval: () => 1, clearInterval() {}, location: { origin: "http://server" } },
+    FourPlaySpectator: { ...Spectator, SpectatorOverlay: class { start() {} stop() {} setBusy() {} } },
+    clientApi: {}, rememberRuntime() {}, publicPlayerHandoff: () => ({ mode: "player" }), refresh: async () => {},
     syncSettingsFromInputs() {},
     postJson: async (url, body) => { calls.push({ url, body }); return { sdp_answer: "answer" }; },
   });
@@ -85,4 +91,38 @@ test("stop during signaling ignores the late answer and prevents concurrent offe
   s.context.stopBrowserMedia(); resolve({ sdp_answer: "late" }); await pending;
   assert.equal(s.state.browserMediaPeer, null); assert.equal(s.reconnect.disabled, true);
   assert.equal(s.state.browserMediaNegotiating, false);
+});
+
+test("spectator joins directly, negotiates input only after slot ownership, releases old grant", async () => {
+  const s = setup(); s.button.dataset.browserMediaRole = "spectator";
+  s.button.dataset.browserMediaGrant = "old-grant";
+  await s.context.startBrowserMedia(s.button);
+  assert.equal(s.inputs.length, 0);
+  const spectatorPeer = s.peers[0];
+  const actions = [];
+  const session = { id: "game-1", connection_grant: { webrtc_signaling: { offer_path: "/api/v1/sessions/game-1/webrtc/offer" } } };
+  s.context.clientApi = {
+    reservePlayerSlot: async (...args) => { actions.push(["reserve", ...args]); assert.equal(s.inputs.length, 0); },
+    connectPlayerSlot: async (...args) => { actions.push(["connect", ...args]); assert.equal(s.inputs.length, 0); return session; },
+    releaseSpectatorGrant: async (...args) => actions.push(["release", ...args]),
+  };
+  s.state.seatId = "edited-seat"; // Active view ownership must not follow a settings edit.
+  await s.context.joinBrowserSpectator(2);
+  assert.equal(s.state.browserMediaContext.role, "player");
+  assert.equal(s.state.browserMediaContext.seatId, "seat-1");
+  assert.equal(s.inputs.length, 1); assert.equal(spectatorPeer.connectionState, "closed");
+  assert.deepEqual(actions, [["reserve", "game-1", 2, "seat-1"], ["connect", "game-1", 2, "seat-1"], ["release", "game-1", "old-grant", "seat-1"]]);
+  assert.equal(s.calls.at(-1).body.role, "player");
+  assert.equal(s.calls.at(-1).body.spectator_grant_id, "old-grant");
+  assert.equal(s.calls.at(-1).body.seat_id, "seat-1");
+});
+
+test("failed slot reservation keeps the existing spectator peer running", async () => {
+  const s = setup(); s.button.dataset.browserMediaRole = "spectator";
+  await s.context.startBrowserMedia(s.button);
+  const peer = s.peers[0];
+  s.context.clientApi = { reservePlayerSlot: async () => { throw Error("slot taken"); } };
+  await s.context.joinBrowserSpectator(2);
+  assert.equal(s.state.browserMediaPeer, peer); assert.notEqual(peer.connectionState, "closed");
+  assert.equal(s.inputs.length, 0); assert.equal(s.state.browserJoinPending, false);
 });

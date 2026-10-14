@@ -73,7 +73,18 @@
           <button id="fullscreen-browser-media" type="button">Fullscreen</button>
           <button id="reconnect-browser-media" type="button" disabled>Reconnect media</button>
         </div>
-        <video id="browser-media-video" tabindex="0" autoplay playsinline controls></video>
+        <div class="browser-video-stage">
+          <video id="browser-media-video" tabindex="0" autoplay playsinline controls></video>
+          <nav id="spectator-actions" class="spectator-actions" aria-label="Spectator actions" aria-hidden="true" inert hidden>
+            <p id="spectator-action-status" aria-live="polite">Watching. Move the joystick or press a key to show actions.</p>
+            <div id="spectator-player-slots" class="form-actions"></div>
+            <div class="form-actions">
+              <button id="spectator-fullscreen" type="button">Fullscreen</button>
+              <button id="spectator-reconnect" type="button">Reconnect media</button>
+              <button id="spectator-leave" type="button">Leave spectator view</button>
+            </div>
+          </nav>
+        </div>
         <p id="browser-input-state" class="muted">Spectators have view-only access.</p>
         <p id="browser-media-state" class="muted">
           Browser-native WebRTC media will appear here when a session publisher is available.
@@ -101,6 +112,7 @@
 
     <script src="/client/input.js" defer></script>
     <script src="/client/media.js" defer></script>
+    <script src="/client/spectator.js" defer></script>
     <script src="/client/app.js" defer></script>
   </body>
 </html>

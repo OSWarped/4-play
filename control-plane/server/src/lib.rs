@@ -352,6 +352,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/client/app.js", get(client_script))
         .route("/client/input.js", get(client_input_script))
         .route("/client/media.js", get(client_media_script))
+        .route("/client/spectator.js", get(client_spectator_script))
         .route("/client/styles.css", get(client_styles))
         .route("/webrtc-test", get(webrtc_test_index))
         .route("/webrtc-test/", get(webrtc_test_index))
@@ -483,6 +484,13 @@ async fn client_media_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/client/media.js"),
+    )
+}
+
+async fn client_spectator_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client/spectator.js"),
     )
 }
 
@@ -1059,7 +1067,7 @@ async fn signal_session_webrtc_offer(
     };
     // The publisher receives a server-built view identity, not a browser header.
     // Spectator reconnects replace only this seat/grant, never a player slot.
-    let viewer_key = if input.is_none() {
+    let viewer_key = if input.is_none() || request.spectator_grant_id.is_some() {
         Some(format!(
             "{}:{}",
             request.seat_id,
@@ -2187,6 +2195,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/client/app.js").await;
         let (media_status, media_content_type, media_body) =
             request_bytes(service.clone(), Method::GET, "/client/media.js").await;
+        let (spectator_status, _, spectator_body) =
+            request_bytes(service.clone(), Method::GET, "/client/spectator.js").await;
         let (styles_status, styles_content_type, styles_body) =
             request_bytes(service, Method::GET, "/client/styles.css").await;
 
@@ -2202,6 +2212,14 @@ mod tests {
         assert!(index_body.contains("id=\"browser-media-video\""));
         assert!(index_body.contains("id=\"reconnect-browser-media\""));
         assert!(index_body.contains("/client/media.js"));
+        assert!(index_body.contains("/client/spectator.js"));
+        assert!(index_body.contains("id=\"spectator-actions\""));
+        assert_eq!(spectator_status, 200);
+        assert!(
+            String::from_utf8(spectator_body)
+                .unwrap()
+                .contains("SpectatorOverlay")
+        );
         assert_eq!(media_status, 200);
         assert_eq!(
             media_content_type.as_deref(),
@@ -2545,6 +2563,9 @@ mod tests {
                     assert_eq!(headers["x-4play-input-port"], "42000");
                     assert!(uuid::Uuid::parse_str(headers["x-4play-input-token"].to_str().unwrap()).is_ok());
                     assert!(uuid::Uuid::parse_str(headers["x-4play-input-peer"].to_str().unwrap()).is_ok());
+                    if let Some(viewer) = headers.get("x-4play-viewer-key") {
+                        assert_eq!(viewer, "seat-one:promote-grant");
+                    }
                     "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
                 },
             ),
@@ -2581,7 +2602,7 @@ mod tests {
         let path = format!("/api/v1/sessions/{session_id}/webrtc/offer");
 
         let (status, body) = request_json(
-            service,
+            service.clone(),
             Method::POST,
             &path,
             Some(json!({
@@ -2598,6 +2619,18 @@ mod tests {
         assert_eq!(body["media_transport"], "web_rtc");
         assert!(body["sdp_answer"].as_str().unwrap().starts_with("v=0"));
         assert!(body["input_peer_id"].is_string());
+        let (promotion_status, _) = request_json(
+            service,
+            Method::POST,
+            &path,
+            Some(json!({
+                "seat_id": "seat-one", "role": "player", "player_number": 1,
+                "spectator_grant_id": "promote-grant",
+                "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+            })),
+        )
+        .await;
+        assert_eq!(promotion_status, 200);
         assert!(
             !body
                 .to_string()

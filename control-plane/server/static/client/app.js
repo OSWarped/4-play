@@ -27,6 +27,10 @@ const state = {
   browserMediaMonitor: null,
   browserMediaRetry: null,
   browserMediaNegotiating: false,
+  spectatorOverlay: null,
+  spectatorSlotsTimer: null,
+  spectatorSlotsLoading: false,
+  browserJoinPending: false,
   games: [],
   sessions: [],
 };
@@ -114,6 +118,9 @@ document.querySelector("#fullscreen-browser-media").addEventListener("click", as
   } catch (error) { setBrowserMediaState(`Fullscreen unavailable: ${error.message}`); }
 });
 browserMediaVideo.addEventListener("click", () => browserMediaVideo.focus());
+document.querySelector("#spectator-fullscreen").addEventListener("click", () => document.querySelector("#fullscreen-browser-media").click());
+document.querySelector("#spectator-reconnect").addEventListener("click", () => reconnectBrowserMediaButton.click());
+document.querySelector("#spectator-leave").addEventListener("click", leaveBrowserGame);
 window.addEventListener("pagehide", stopBrowserMedia);
 
 function authHeaders() {
@@ -764,6 +771,7 @@ function wireBrowserMediaButtons(container) {
 
 async function startBrowserMedia(button) {
   if (state.browserExitPending || state.browserMediaNegotiating) return;
+  if (state.browserJoinPending && !button.dataset.browserMediaPromotion) return;
   syncSettingsFromInputs();
   if (!window.RTCPeerConnection) {
     setBrowserMediaState("This browser does not expose RTCPeerConnection.");
@@ -781,7 +789,7 @@ async function startBrowserMedia(button) {
   const sessionMatch = new URL(offerUrl).pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/webrtc\/offer$/);
   state.browserMediaContext = sessionMatch ? {
     sessionId: decodeURIComponent(sessionMatch[1]),
-    seatId: state.seatId,
+    seatId: button.dataset.browserMediaSeat || state.seatId,
     role: button.dataset.browserMediaRole || "spectator",
     playerNumber: Number(button.dataset.browserMediaPlayer),
     grantId: button.dataset.browserMediaGrant,
@@ -795,6 +803,7 @@ async function startBrowserMedia(button) {
   state.browserMediaPeer = peer;
   state.browserMediaStream = stream;
   browserMediaVideo.srcObject = stream;
+  if (state.browserMediaContext?.role === "spectator") startSpectatorOverlay();
   browserReceiverStats.textContent = "Waiting for receiver statistics...";
   state.browserMediaMonitor = new FourPlayBrowserMediaMonitor(peer, (stats) => {
     if (state.browserMediaPeer !== peer) return;
@@ -864,7 +873,7 @@ async function startBrowserMedia(button) {
     await waitForIceGathering(peer, 2000);
     if (state.browserMediaPeer !== peer) return;
     const body = {
-      seat_id: state.seatId,
+      seat_id: state.browserMediaContext?.seatId || state.seatId,
       role: button.dataset.browserMediaRole || "spectator",
       sdp_offer: peer.localDescription?.sdp || offer.sdp,
     };
@@ -913,6 +922,7 @@ async function startBrowserMedia(button) {
 }
 
 function stopBrowserMedia() {
+  stopSpectatorOverlay();
   state.browserMediaMonitor?.stop();
   state.browserMediaMonitor = null;
   state.browserMediaRetry = null;
@@ -932,6 +942,125 @@ function stopBrowserMedia() {
   }
   setBrowserMediaState("Browser-native media stopped.");
   state.browserMediaContext = null;
+}
+
+function stopSpectatorOverlay() {
+  if (state.spectatorSlotsTimer !== null) window.clearInterval(state.spectatorSlotsTimer);
+  state.spectatorSlotsTimer = null;
+  state.spectatorOverlay?.stop();
+  state.spectatorOverlay = null;
+  document.querySelector("#spectator-actions").hidden = true;
+}
+
+function startSpectatorOverlay() {
+  const context = state.browserMediaContext;
+  const panel = document.querySelector("#spectator-actions");
+  panel.hidden = false;
+  renderSpectatorSlots(state.sessions.find((session) => session.id === context.sessionId));
+  state.spectatorOverlay = new FourPlaySpectator.SpectatorOverlay(browserPlayer, panel, {
+    onShow: () => refreshSpectatorSlots(context),
+  });
+  state.spectatorOverlay.start();
+  browserMediaVideo.focus();
+  state.spectatorSlotsTimer = window.setInterval(() => refreshSpectatorSlots(context), 5000);
+}
+
+async function refreshSpectatorSlots(context) {
+  if (state.browserMediaContext !== context || state.browserJoinPending || state.spectatorSlotsLoading) return;
+  state.spectatorSlotsLoading = true;
+  try {
+    const result = await clientApi.loadActiveSessions();
+    if (state.browserMediaContext !== context || state.browserJoinPending) return;
+    renderSpectatorSlots((result.sessions || []).find((session) => session.id === context.sessionId));
+  } catch {
+    if (state.browserMediaContext !== context || state.browserJoinPending) return;
+    document.querySelector("#spectator-player-slots").replaceChildren();
+    document.querySelector("#spectator-action-status").textContent = "Cannot refresh player slots. Media can continue; try again shortly.";
+  } finally {
+    state.spectatorSlotsLoading = false;
+  }
+}
+
+function renderSpectatorSlots(session) {
+  const context = state.browserMediaContext;
+  if (context?.role !== "spectator") return;
+  const container = document.querySelector("#spectator-player-slots");
+  const focusedPlayer = container.contains(document.activeElement) ? document.activeElement.dataset.playerNumber : null;
+  const available = ["active", "ready"].includes(session?.state) ? FourPlaySpectator.joinableSlots(session, context.seatId) : [];
+  const buttons = available.map((slot) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.playerNumber = String(slot.player_number);
+    button.textContent = `Join ${slot.presentation?.label || slot.label || `P${slot.player_number}`}`;
+    button.disabled = state.browserJoinPending;
+    button.addEventListener("click", () => joinBrowserSpectator(slot.player_number));
+    return button;
+  });
+  container.replaceChildren(...buttons);
+  if (focusedPlayer) {
+    const next = buttons.find((button) => button.dataset.playerNumber === focusedPlayer);
+    if (next) next.focus(); else browserMediaVideo.focus();
+  }
+  document.querySelector("#spectator-action-status").textContent = !session ? "Session unavailable. You can leave this view." :
+    available.length ? "Choose a player slot to join. Joystick/arrows select; A/Enter confirms." : "No open player slots. Keep watching — positions refresh automatically.";
+}
+
+async function joinBrowserSpectator(playerNumber) {
+  const context = state.browserMediaContext;
+  if (context?.role !== "spectator" || state.browserJoinPending || state.browserMediaNegotiating) return;
+  state.browserJoinPending = true;
+  state.spectatorOverlay?.setBusy(true);
+  document.querySelector("#spectator-player-slots").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  document.querySelector("#spectator-action-status").textContent = `Joining player ${playerNumber}...`;
+  let acquired = false;
+  let handedOff = false;
+  try {
+    const session = await FourPlaySpectator.acquirePlayer(clientApi, context, playerNumber,
+      () => state.browserMediaContext === context && !state.browserExitPending);
+    if (!session) return;
+    acquired = true;
+    const signaling = session.connection_grant?.webrtc_signaling?.offer_path;
+    if (!signaling) throw Error("This player slot has no browser media handoff.");
+    const offerUrl = new URL(signaling, window.location.origin).toString();
+    rememberRuntime(publicPlayerHandoff(session, playerNumber));
+    handedOff = true;
+    await startBrowserMedia({ dataset: {
+      browserMediaUrl: offerUrl,
+      browserMediaRole: "player", browserMediaPlayer: String(playerNumber),
+      browserMediaSeat: context.seatId, browserMediaPromotion: "true",
+      ...(context.grantId ? { browserMediaGrant: context.grantId } : {}),
+    } });
+    if (state.browserMediaRetry?.browserMediaPromotion) delete state.browserMediaRetry.browserMediaPromotion;
+    if (context.grantId) {
+      try {
+        await clientApi.releaseSpectatorGrant(context.sessionId, context.grantId, context.seatId);
+        if (state.browserMediaContext?.role === "player" && state.browserMediaContext.sessionId === context.sessionId
+            && state.browserMediaContext.grantId === context.grantId) {
+          state.browserMediaContext.grantId = undefined;
+          if (state.browserMediaRetry) delete state.browserMediaRetry.browserMediaGrant;
+        }
+      } catch {
+        if (state.browserMediaContext?.sessionId === context.sessionId) {
+          setBrowserMediaState("Player handoff prepared, but the old spectator grant could not be released; it will expire automatically.");
+        }
+      }
+    }
+    await refresh();
+  } catch (error) {
+    if (acquired && !handedOff) {
+      try { await clientApi.disconnectPlayerSlot(context.sessionId, playerNumber, context.seatId); }
+      catch { error = Error(`${error.message} Player-slot cleanup also failed; use the session Leave action.`); }
+    }
+    if (state.browserMediaContext === context) {
+      document.querySelector("#spectator-action-status").textContent = `Could not join: ${error.message}. You are still spectating.`;
+    }
+  } finally {
+    state.browserJoinPending = false;
+    state.spectatorOverlay?.setBusy(false);
+    if (state.browserMediaContext === context) {
+      document.querySelector("#spectator-player-slots").querySelectorAll("button").forEach((button) => { button.disabled = false; });
+    }
+  }
 }
 
 async function leaveBrowserGame() {

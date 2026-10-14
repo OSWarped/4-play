@@ -23,6 +23,11 @@ class PeerPool:
         with self.lock:
             # A reconnect may replace its own slot, never another player/viewer.
             key = f"player:{authorization.player}" if authorization else f"viewer:{viewer_key or uuid.uuid4()}"
+            # Promotion relinquishes only the server-identified spectator view.
+            if authorization and viewer_key:
+                viewer = self.peers.pop(f"viewer:{viewer_key}", None)
+                if viewer:
+                    viewer.close()
             if key not in self.peers and len(self.peers) >= self.max_peers:
                 raise PeerCapacityError("session browser peer limit reached")
             old = self.peers.pop(key, None)
