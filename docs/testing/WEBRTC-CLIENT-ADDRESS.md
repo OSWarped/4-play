@@ -89,9 +89,10 @@ while someone is playing. No environment/firewall edits are made by this update.
 
    Packet arrival does not by itself prove UFW accepted it. No packets suggest a
    client/network path problem, but further router/client evidence is needed.
-4. TCP 8080 is signaling, not media. WebRTC still uses dynamic UDP ports; the
-   existing `41000`/`42000` rules are not a complete WebRTC media policy. Bounded
-   ICE port configuration and corresponding firewall guidance are the next task.
+4. TCP 8080 is signaling, not media. The subsequent bounded-UDP implementation
+   allocates ICE ports inside `50000-50999` by default. The existing `41000`/`42000`
+   rules are not that policy. Follow [bounded UDP validation](WEBRTC-BOUNDED-UDP.md)
+   to generate and review matching rules from the current configuration.
 5. The earlier one-PC UDP allow was diagnostic only. If it was added, remove it
    after testing once an appropriate bounded rule is in place:
 

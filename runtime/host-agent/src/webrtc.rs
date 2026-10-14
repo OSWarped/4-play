@@ -14,6 +14,8 @@ const DEFAULT_SESSION_PORT_COUNT: u16 = 100;
 const DEFAULT_INPUT_PORT_START: u16 = 42_000;
 const SESSION_PUBLISHER_GST_ELEMENTS: &[&str] = &[
     "webrtcbin",
+    "nicesrc",
+    "nicesink",
     "appsrc",
     "videoconvert",
     "audioconvert",
@@ -107,7 +109,20 @@ impl WebRtcSessionPublisherConfig {
     }
 
     pub fn prerequisites_present(&self) -> bool {
+        let Some(directory) = self.script_path.parent() else {
+            return false;
+        };
+        let check = directory.join("webrtc_ice_ports.py");
         gstreamer_webrtc_prerequisites_present()
+            && check.is_file()
+            && Command::new(&self.python_path)
+                .env("G_DEBUG", "fatal-criticals")
+                .arg("-B")
+                .arg(check)
+                .arg("--check")
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
     }
 
     pub fn can_advertise(&self) -> bool {

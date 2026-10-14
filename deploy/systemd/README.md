@@ -161,3 +161,20 @@ sudo ufw allow from 192.168.20.0/24 to any port 42000:42099 proto udp
 
 If the host does not use `ufw`, apply equivalent rules for the active firewall.
 The planner also prints nftables-style equivalents.
+
+Browser WebRTC uses a separate bounded ICE UDP pool, default `50000:50999`.
+The legacy `41000` media and `42000` input ranges above are not its media policy.
+Print source-restricted WebRTC commands from the actual systemd environment:
+
+```bash
+sudo python3 tools/webrtc-firewall-plan.py \
+  --env-file /etc/4play/4play.env \
+  --source 192.168.20.0/24 \
+  --source 192.168.0.186
+```
+
+This command only reads selected configuration and prints a plan; it never applies
+rules or executes environment-file contents. Review the output before applying.
+Only one firewall manager should own the rules. See
+[bounded WebRTC UDP validation](../../docs/testing/WEBRTC-BOUNDED-UDP.md) for
+activation, diagnostics, limitations, and removal of the temporary all-UDP rule.

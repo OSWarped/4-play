@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from webrtc_client_address import browser_host_for_request
+from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_ice_udp_ports, validate_answer_candidates
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import signal
@@ -57,6 +58,7 @@ audiotestsrc is-live=true wave=ticks tick-interval=1000000000
 class WebRtcTestPatternPublisher:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        self.ice_ports = IceUdpPortRange.from_args(args)
         self.loop = GLib.MainLoop()
         self.answer_written = False
         self.started = False
@@ -84,6 +86,7 @@ class WebRtcTestPatternPublisher:
         self.webrtc = self.pipeline.get_by_name("webrtc")
         if self.webrtc is None:
             raise RuntimeError("pipeline did not create webrtcbin named 'webrtc'")
+        configure_ice_udp_ports(self.webrtc, self.ice_ports)
 
         self.webrtc.connect("notify::ice-gathering-state", self.on_ice_gathering_state)
         self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
@@ -150,6 +153,7 @@ class WebRtcTestPatternPublisher:
         answer = context.get("answer")
         if not isinstance(answer, str):
             raise RuntimeError("GStreamer did not produce an SDP answer")
+        validate_answer_candidates(answer, self.ice_ports)
         if self.args.answer_file:
             Path(self.args.answer_file).write_text(answer, encoding="utf-8")
         return answer
@@ -224,6 +228,15 @@ class WebRtcTestPatternPublisher:
 
         answer_text = normalize_sdp(description.sdp.as_text())
         context = self.pending_answer_context
+        try:
+            validate_answer_candidates(answer_text, self.ice_ports)
+        except RuntimeError as error:
+            if self.ice_timeout_id is not None:
+                GLib.source_remove(self.ice_timeout_id)
+                self.ice_timeout_id = None
+            self.pending_answer_context = None
+            self.fail_pending_answer(context, error)
+            return False
         if context is not None:
             context["answer"] = answer_text
             event = context.get("event")
@@ -461,6 +474,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--verbose", action="store_true")
+    add_ice_port_arguments(parser)
     return parser.parse_args()
 
 

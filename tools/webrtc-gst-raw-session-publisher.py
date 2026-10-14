@@ -31,6 +31,7 @@ from typing import NoReturn
 from webrtc_browser_input import BrowserInputRelay, InputAuthorization
 from webrtc_peer_pool import PeerPool, PeerCapacityError
 from webrtc_client_address import browser_host_for_request
+from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_ice_udp_ports, validate_answer_candidates
 
 import gi
 
@@ -67,6 +68,7 @@ appsrc name=audio_source is-live=true format=time block=false max-buffers=4 max-
 class RawSessionPublisher:
     def __init__(self, args: argparse.Namespace, input_relay=None) -> None:
         self.args = args
+        self.ice_ports = IceUdpPortRange.from_args(args)
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
         self.owns_input_relay = input_relay is None
@@ -76,6 +78,9 @@ class RawSessionPublisher:
         self.created_at = time.monotonic()
         self.unhealthy_since = None
         self.input_channel = None
+        self.input_channel_handlers = []
+        self.webrtc_handlers = []
+        self.bus_handler = None
         self.media_lock = threading.Lock()
         self.reader_stop = threading.Event()
         self.reader_threads: list[threading.Thread] = []
@@ -101,7 +106,7 @@ class RawSessionPublisher:
             self.ice_timeout_id = None
         with self.media_lock:
             self.media_epoch_ns = None
-        self.input_channel = None
+        self.detach_callbacks()
         if self.input_authorization:
             self.input_relay.revoke(self.input_authorization.peer_id)
         if self.owns_input_relay:
@@ -112,6 +117,21 @@ class RawSessionPublisher:
         if self.pipeline is not None:
             self.pipeline.get_bus().remove_signal_watch()
             self.pipeline.set_state(Gst.State.NULL)
+
+    def detach_callbacks(self):
+        if self.input_channel is not None:
+            for handler in self.input_channel_handlers:
+                self.input_channel.disconnect(handler)
+            self.input_channel_handlers = []
+            self.input_channel.emit("close")
+            self.input_channel = None
+        if self.webrtc is not None:
+            for handler in self.webrtc_handlers:
+                self.webrtc.disconnect(handler)
+            self.webrtc_handlers = []
+        if self.pipeline is not None and self.bus_handler is not None:
+            self.pipeline.get_bus().disconnect(self.bus_handler)
+            self.bus_handler = None
 
     def renew_input(self, authorization):
         return self.input_relay.renew(authorization)
@@ -155,17 +175,20 @@ class RawSessionPublisher:
         self.webrtc = self.pipeline.get_by_name("webrtc")
         if self.webrtc is None:
             raise RuntimeError("pipeline did not create webrtcbin named 'webrtc'")
+        configure_ice_udp_ports(self.webrtc, self.ice_ports)
 
-        self.webrtc.connect("notify::ice-gathering-state", self.on_ice_gathering_state)
-        self.webrtc.connect("notify::ice-connection-state", self.on_webrtc_state_changed)
-        self.webrtc.connect("notify::connection-state", self.on_webrtc_state_changed)
-        self.webrtc.connect("notify::signaling-state", self.on_webrtc_state_changed)
-        self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
-        self.webrtc.connect("on-data-channel", self.on_data_channel)
+        self.webrtc_handlers = [self.webrtc.connect(signal, callback) for signal, callback in (
+            ("notify::ice-gathering-state", self.on_ice_gathering_state),
+            ("notify::ice-connection-state", self.on_webrtc_state_changed),
+            ("notify::connection-state", self.on_webrtc_state_changed),
+            ("notify::signaling-state", self.on_webrtc_state_changed),
+            ("on-ice-candidate", self.on_ice_candidate),
+            ("on-data-channel", self.on_data_channel),
+        )]
 
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
-        bus.connect("message", self.on_bus_message)
+        self.bus_handler = bus.connect("message", self.on_bus_message)
 
     def reset_pipeline(self, reason: str) -> None:
         print(
@@ -178,7 +201,7 @@ class RawSessionPublisher:
             self.ice_timeout_id = None
         with self.media_lock:
             self.media_epoch_ns = None
-        self.input_channel = None
+        self.detach_callbacks()
         self.input_relay.authorize(None)
         if self.pipeline is not None:
             self.pipeline.get_bus().remove_signal_watch()
@@ -371,6 +394,7 @@ class RawSessionPublisher:
             answer = context.get("answer")
             if not isinstance(answer, str):
                 raise RuntimeError("GStreamer did not produce an SDP answer")
+            validate_answer_candidates(answer, self.ice_ports)
             if self.args.answer_file:
                 Path(self.args.answer_file).write_text(answer, encoding="utf-8")
             return answer
@@ -396,10 +420,12 @@ class RawSessionPublisher:
         def closed(_channel):
             if self.input_channel is channel:
                 self.input_relay.neutralize(peer_id)
+                for handler in self.input_channel_handlers:
+                    channel.disconnect(handler)
+                self.input_channel_handlers = []
                 self.input_channel = None
 
-        channel.connect("on-message-string", receive)
-        channel.connect("on-close", closed)
+        self.input_channel_handlers = [channel.connect("on-message-string", receive), channel.connect("on-close", closed)]
         print(f"Browser input channel authorized for player {authorization.player}", file=sys.stderr, flush=True)
 
     def apply_offer_and_create_answer(
@@ -522,6 +548,11 @@ class RawSessionPublisher:
         if description is None:
             return True
         answer_text = normalize_sdp(description.sdp.as_text())
+        try:
+            validate_answer_candidates(answer_text, self.ice_ports)
+        except RuntimeError as error:
+            self.mark_pipeline_failed(str(error))
+            return False
         context = self.pending_answer_context
         if context is not None:
             context["answer"] = answer_text
@@ -562,7 +593,10 @@ class RawSessionPublisher:
             flush=True,
         )
         self.pipeline_failed = True
-        self.input_channel = None
+        if self.ice_timeout_id is not None:
+            GLib.source_remove(self.ice_timeout_id)
+            self.ice_timeout_id = None
+        self.detach_callbacks()
         if self.input_authorization:
             self.input_relay.revoke(self.input_authorization.peer_id)
         self.media_started = False
@@ -603,6 +637,7 @@ class MultiPeerSessionPublisher:
 
     def __init__(self, args):
         self.args = args
+        self.ice_ports = IceUdpPortRange.from_args(args)
         self.loop = GLib.MainLoop()
         self.reader_stop = threading.Event()
         self.pool = PeerPool(lambda relay: RawSessionPublisher(args, relay), args.max_peers)
@@ -661,7 +696,7 @@ class MultiPeerSessionPublisher:
         server = ThreadingHTTPServer((host, int(port)), request_handler(self))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         install_signal_handlers(self.loop)
-        print(f"Raw session WebRTC publisher listening at http://{host}:{port}/sessions/{self.args.session_id}/offer max_peers={self.args.max_peers}", file=sys.stderr, flush=True)
+        print(f"Raw session WebRTC publisher listening at http://{host}:{port}/sessions/{self.args.session_id}/offer max_peers={self.args.max_peers} ice_udp={self.ice_ports.start}-{self.ice_ports.end}", file=sys.stderr, flush=True)
         try:
             self.loop.run()
         finally:
@@ -685,7 +720,7 @@ def request_handler(publisher) -> type[BaseHTTPRequestHandler]:
             self.send_cors_headers()
             self.send_header("content-type", "text/plain; charset=utf-8")
             self.end_headers()
-            peers = f" peers={len(publisher.pool.snapshot())} max_peers={publisher.args.max_peers}" if isinstance(publisher, MultiPeerSessionPublisher) else ""
+            peers = f" peers={len(publisher.pool.snapshot())} max_peers={publisher.args.max_peers} ice_udp={publisher.ice_ports.start}-{publisher.ice_ports.end}" if isinstance(publisher, MultiPeerSessionPublisher) else ""
             self.wfile.write(
                 f"4-Play raw session WebRTC publisher ready for {publisher.args.session_id}{peers}\n".encode(
                     "utf-8",
@@ -840,6 +875,7 @@ def parse_args() -> argparse.Namespace:
         help="Fallback browser IP for manual signaling without trusted client address metadata.",
     )
     parser.add_argument("--verbose", action="store_true")
+    add_ice_port_arguments(parser)
     return parser.parse_args()
 
 

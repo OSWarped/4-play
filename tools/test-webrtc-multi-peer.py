@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import replace
+import gc
 
 from webrtc_browser_input import InputAuthorization
 
@@ -111,6 +112,7 @@ def main():
                 session_id="multi-peer-check", video_path=str(video), audio_path=str(audio),
                 width=304, height=224, fps_num=60, fps_den=1, video_bitrate_kbps=1400,
                 audio_bitrate_bps=64000, keyframe_distance=15, answer_file=None, verbose=False, max_peers=3,
+                ice_udp_port_start=51000, ice_udp_port_count=100,
             ))
 
             def feed():
@@ -161,6 +163,10 @@ def main():
             assert source3 not in (source1, source2)
             wait_for(lambda: clients[0].counts["video"] > before["video"] + 10, "P1 continues after spectator closes")
             clients[1].close()
+            old_ice = publisher.pool.peers["player:2"].webrtc.get_property("ice-agent")
+            released = threading.Event()
+            ice_watch = old_ice.weak_ref(lambda *_: released.set())
+            del old_ice
             auth2_new = replace(auth2, peer_id=str(uuid.uuid4()))
             clients.append(Client(publisher, auth2_new))
             wait_for(lambda: clients[-1].channel_open and clients[-1].counts["video"] > 10, "P2 reconnect")
@@ -172,6 +178,8 @@ def main():
             assert continued_source == source1 and continued_sequence > sequence1
             assert publisher.pool.renew(auth1) and publisher.pool.renew(auth2_new)
             assert not publisher.pool.renew(auth2)
+            gc.collect()
+            wait_for(released.is_set, "replaced P2 ICE native object released")
             # Failure in P2's own replacement must not reset P1 or the spectator.
             before = clients[0].counts["video"]
             try:
@@ -181,7 +189,7 @@ def main():
                 pass
             wait_for(lambda: clients[0].counts["video"] > before + 10, "P1 survives another peer's invalid offer")
             assert len(publisher.pool.snapshot()) == 3
-            print("PASS: P1/P2/spectator decode audio/video; spectator input rejected; promotion at capacity and P2 reconnect preserve other players")
+            print("PASS: bounded UDP-only candidates; P1/P2/spectator audio/video and isolated input; promotion/reconnect; old ICE object released")
     finally:
         stop.set()
         if feeder:

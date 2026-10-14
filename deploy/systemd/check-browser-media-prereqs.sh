@@ -35,9 +35,9 @@ check_command gst-inspect-1.0
 check_command python3
 echo
 check_gst_element webrtcbin
-check_gst_element filesrc
-check_gst_element rawvideoparse
-check_gst_element rawaudioparse
+check_gst_element appsrc
+check_gst_element nicesrc
+check_gst_element nicesink
 check_gst_element videoconvert
 check_gst_element audioconvert
 check_gst_element audioresample
@@ -69,6 +69,15 @@ PY
   fi
 else
   printf '%-24s %s\n' "python3 gi GstWebRTC" "unknown (python3 missing)"
+fi
+echo
+
+check_path="$(dirname "$0")/../../tools/webrtc_ice_ports.py"
+if command -v python3 >/dev/null 2>&1 && python3 "$check_path" --check >/dev/null 2>&1; then
+  printf '%-24s %s\n' "bounded UDP-only ICE" "present"
+else
+  printf '%-24s %s\n' "bounded UDP-only ICE" "missing or invalid configuration"
+  missing=1
 fi
 echo
 

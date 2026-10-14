@@ -87,6 +87,27 @@ STUN/TURN, or establish cross-subnet playback acceptance. Direct LAN access to t
 control plane and same-host loopback publishers remain the supported reference
 topology. See [client address validation](../testing/WEBRTC-CLIENT-ADDRESS.md).
 
+### Bounded ICE UDP increment (2026-10-14)
+
+Both GStreamer publishers now configure a host-only UDP ICE pool before gathering
+candidates, default `50000-50999`. ICE-TCP is explicitly disabled, and SDP answers
+with TCP, out-of-range, non-host, or no usable candidates fail instead of silently
+opening an unplanned transport. Start/count are configurable; overlap with the
+input/media pools is rejected. The agent's readiness probe checks the actual ICE
+properties before advertising WebRTC capability.
+
+The new read-only firewall planner parses selected systemd environment values as
+data, requires trusted host/subnet sources, and prints UFW/nftables examples. It
+does not execute environment contents, apply rules, or expose tokens.
+
+Automated Linux tests cover bounded candidates, simultaneous decoded media/input,
+promotion/reconnect, native ICE object cleanup, standalone test-pattern playback,
+and an exhausted port range failing closed. A GStreamer 1.26.2 default-agent
+floating-reference issue discovered during testing has a narrowly guarded native
+ownership compatibility fix; critical errors are fatal in the integration checks.
+Manual firewall/routed-subnet acceptance and longer latency/resource tests remain
+pending. See [bounded UDP validation](../testing/WEBRTC-BOUNDED-UDP.md).
+
 ## Goal
 
 Move the normal player/spectator video path from an external FFplay window into
@@ -363,8 +384,8 @@ After player seats are stable:
 3. Validate the implemented spectator actions overlay and spectator-to-open-player
    transition, including keyboard/gamepad navigation, fullscreen, slot conflicts,
    and leaving while a join is pending.
-4. Validate the implemented per-request client addressing on other PCs, then add
-   bounded ICE port allocation/firewall guidance and verify routed-subnet access.
+4. Validate the implemented per-request client addressing and bounded ICE port
+   configuration/firewall guidance on other PCs and routed subnets.
    Explicit reverse-proxy/NAT trust and STUN/TURN support remain subsequent work.
 5. Validate longer browser gameplay soaks, resource ceilings, audio sync, and
    latency against the accepted FFplay experience before making WebRTC default.
