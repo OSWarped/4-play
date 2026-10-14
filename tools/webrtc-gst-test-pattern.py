@@ -10,6 +10,7 @@ low-latency GStreamer test pattern to the browser `/webrtc-test` page.
 from __future__ import annotations
 
 import argparse
+from webrtc_client_address import browser_host_for_request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import signal
@@ -352,7 +353,7 @@ def publisher_request_handler(
             try:
                 length = int(self.headers.get("content-length", "0"))
                 offer = self.rfile.read(length).decode("utf-8")
-                browser_host_ip = publisher.args.browser_host_ip or self.client_address[0]
+                browser_host_ip = browser_host_for_request(self.headers, self.client_address[0], publisher.args.browser_host_ip)
                 answer = publisher.answer_for_offer(offer, browser_host_ip)
             except Exception as error:  # noqa: BLE001 - spike server returns diagnostic text.
                 self.send_response(500)

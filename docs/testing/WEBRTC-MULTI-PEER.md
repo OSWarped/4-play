@@ -24,8 +24,10 @@ unchanged. This does not replace UDP/FFplay or alter MAME's original FIFO reader
 - All peers and relay sockets are closed when the publisher/session stops.
 - Keep publisher HTTP listeners loopback-only: private input headers are trusted
   server-to-server authorization, not a public authentication mechanism.
-- Other machines/subnets remain deferred because the browser-IP workaround is
-  still configured for the original reference PC.
+- Other-machine/subnet playback acceptance remains deferred. Per-request browser
+  IP metadata now overrides the old fixed-PC fallback, but UDP firewall rules,
+  routing/ACLs, and NAT must still allow the actual WebRTC connection. See
+  [client address validation](WEBRTC-CLIENT-ADDRESS.md).
 
 ## Automated tests
 

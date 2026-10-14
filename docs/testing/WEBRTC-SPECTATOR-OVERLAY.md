@@ -27,7 +27,8 @@ the old spectator grant fails, a warning is shown and its expiry remains a backs
 
 At the WebRTC peer limit, promotion replaces only the server-identified old
 spectator view. It does not evict another viewer or player. UDP/FFplay remains
-unchanged, and the fixed browser-IP/subnet limitations remain deferred.
+unchanged; cross-subnet network acceptance remains deferred. Per-request IP
+metadata is covered in [client address validation](WEBRTC-CLIENT-ADDRESS.md).
 
 ## Automated validation
 

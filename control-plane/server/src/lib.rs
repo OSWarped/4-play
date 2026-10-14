@@ -1,15 +1,15 @@
 mod store;
 
 use std::{
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     path::{Component, Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::{Body, Bytes},
-    extract::{Path as AxumPath, State},
+    extract::{ConnectInfo, Path as AxumPath, State},
     http::{HeaderMap, Request, StatusCode, header::CONTENT_TYPE},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -36,6 +36,20 @@ const MAX_WEBRTC_SDP_BYTES: usize = 256 * 1024;
 const WEBRTC_PUBLISHER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_WEBRTC_SESSION_PORT_START: u16 = 43_000;
 const WEBRTC_INPUT_LEASE_MS: u64 = 60_000;
+type BrowserConnectInfo = Option<Extension<ConnectInfo<SocketAddr>>>;
+
+fn browser_source_ip(peer: BrowserConnectInfo) -> Option<IpAddr> {
+    let Extension(ConnectInfo(address)) = peer?;
+    let ip = match address.ip() {
+        IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(ip)),
+        ip => ip,
+    };
+    // Reverse proxies need an explicit trust policy; never guess from HTTP headers.
+    (!ip.is_loopback() && !ip.is_unspecified() && !ip.is_multicast()).then_some(ip)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortPoolConfig {
@@ -956,6 +970,7 @@ async fn request_session_stop(
 
 async fn signal_webrtc_test_pattern(
     State(state): State<AppState>,
+    peer: BrowserConnectInfo,
     Json(request): Json<WebRtcOfferRequest>,
 ) -> Result<Json<WebRtcAnswerResponse>, ApiError> {
     validate_webrtc_offer_request(&request)?;
@@ -970,9 +985,15 @@ async fn signal_webrtc_test_pattern(
             )
         })?;
 
-    let answer =
-        post_sdp_offer_to_publisher(publisher_url, request.sdp_offer, "test-pattern", None, None)
-            .await?;
+    let answer = post_sdp_offer_to_publisher(
+        publisher_url,
+        request.sdp_offer,
+        "test-pattern",
+        None,
+        None,
+        browser_source_ip(peer),
+    )
+    .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
 
     Ok(Json(WebRtcAnswerResponse {
@@ -1022,6 +1043,7 @@ async fn get_webrtc_experimental_status(
 async fn signal_session_webrtc_offer(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<String>,
+    peer: BrowserConnectInfo,
     Json(request): Json<WebRtcOfferRequest>,
 ) -> Result<Json<WebRtcAnswerResponse>, ApiError> {
     validate_webrtc_offer_request(&request)?;
@@ -1082,6 +1104,7 @@ async fn signal_session_webrtc_offer(
         "session",
         input.as_ref(),
         viewer_key.as_deref(),
+        browser_source_ip(peer),
     )
     .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
@@ -1279,6 +1302,7 @@ async fn post_sdp_offer_to_publisher(
     publisher_label: &str,
     input: Option<&PublisherInput>,
     viewer_key: Option<&str>,
+    browser_ip: Option<IpAddr>,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(WEBRTC_PUBLISHER_TIMEOUT)
@@ -1300,6 +1324,9 @@ async fn post_sdp_offer_to_publisher(
     }
     if let Some(viewer_key) = viewer_key {
         publisher_request = publisher_request.header("x-4play-viewer-key", viewer_key);
+    }
+    if let Some(browser_ip) = browser_ip {
+        publisher_request = publisher_request.header("x-4play-browser-ip", browser_ip.to_string());
     }
     let response = publisher_request.send().await.map_err(|error| {
         eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
@@ -2701,6 +2728,95 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn webrtc_proxy_uses_transport_peer_not_spoofed_address_headers() {
+        use std::sync::{Arc, Mutex};
+        let addresses = Arc::new(Mutex::new(Vec::new()));
+        let captured = addresses.clone();
+        let publisher = Router::new().route(
+            "/sessions/{id}/offer",
+            axum_post(move |headers: HeaderMap| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().unwrap().push(
+                        headers
+                            .get("x-4play-browser-ip")
+                            .map(|value| value.to_str().unwrap().to_owned()),
+                    );
+                    "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut state = AppState::in_memory(DEFAULT_OFFLINE_AFTER).await.unwrap();
+        state.webrtc_session_publisher_url_template = Some(format!(
+            "http://{}/sessions/{{session_id}}/offer",
+            listener.local_addr().unwrap()
+        ));
+        tokio::spawn(async move {
+            axum::serve(listener, publisher).await.unwrap();
+        });
+        let service = app_with_state(state);
+        register_host_and_catalog(&service).await;
+        let (_, created) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        let path = format!(
+            "/api/v1/sessions/{}/webrtc/offer",
+            created["id"].as_str().unwrap()
+        );
+        for peer in [
+            Some("192.168.20.10:1234"),
+            Some("192.168.0.186:1234"),
+            Some("[::ffff:192.168.0.186]:1234"),
+            Some("127.0.0.1:1234"),
+            None,
+        ] {
+            let app = match peer {
+                Some(address) => {
+                    service
+                        .clone()
+                        .layer(axum::Extension(axum::extract::ConnectInfo(
+                            address.parse::<std::net::SocketAddr>().unwrap(),
+                        )))
+                }
+                None => service.clone(),
+            };
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri(&path)
+                .header("authorization", "Bearer test-seat-token")
+                .header("content-type", "application/json")
+                .header("x-4play-browser-ip", "10.0.0.99")
+                .header("x-forwarded-for", "10.0.0.99")
+                .header("forwarded", "for=10.0.0.99")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "seat_id": "seat-one", "role": "player", "player_number": 1,
+                        "sdp_offer": "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), 200);
+        }
+        assert_eq!(
+            *addresses.lock().unwrap(),
+            vec![
+                Some("192.168.20.10".to_owned()),
+                Some("192.168.0.186".to_owned()),
+                Some("192.168.0.186".to_owned()),
+                None,
+                None,
+            ]
+        );
     }
 
     #[tokio::test]

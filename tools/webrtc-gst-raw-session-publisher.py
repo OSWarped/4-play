@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import NoReturn
 from webrtc_browser_input import BrowserInputRelay, InputAuthorization
 from webrtc_peer_pool import PeerPool, PeerCapacityError
+from webrtc_client_address import browser_host_for_request
 
 import gi
 
@@ -726,7 +727,7 @@ def request_handler(publisher) -> type[BaseHTTPRequestHandler]:
                     file=sys.stderr,
                     flush=True,
                 )
-                browser_host_ip = publisher.args.browser_host_ip or self.client_address[0]
+                browser_host_ip = browser_host_for_request(self.headers, self.client_address[0], publisher.args.browser_host_ip)
                 authorization = InputAuthorization.from_headers(self.headers)
                 options = {"input_authorization": authorization}
                 if isinstance(publisher, MultiPeerSessionPublisher):
@@ -836,7 +837,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--browser-host-ip",
         default=os.environ.get("FOURPLAY_WEBRTC_BROWSER_HOST_IP"),
-        help="Replace browser .local ICE candidates with this LAN IP.",
+        help="Fallback browser IP for manual signaling without trusted client address metadata.",
     )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()

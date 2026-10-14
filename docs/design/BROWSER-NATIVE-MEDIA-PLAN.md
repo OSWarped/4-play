@@ -26,8 +26,9 @@ tests pass. Real browser recovery and the earlier Escape change still require
 manual confirmation after deployment.
 
 Cross-subnet testing is deferred at the project owner's request. The experimental
-fixed `FOURPLAY_WEBRTC_BROWSER_HOST_IP` remains a known multi-machine limitation;
-TCP 8080 access alone does not establish WebRTC media connectivity.
+fixed `FOURPLAY_WEBRTC_BROWSER_HOST_IP` was a known multi-machine limitation, now
+addressed by the client-address increment below. TCP 8080 access alone still does
+not establish WebRTC media connectivity; UDP firewall and router checks remain.
 
 ### Subsequent multi-peer increment
 
@@ -68,6 +69,23 @@ the server-identified spectator peer for its player peer, including at capacity.
 Real Linux WebRTC tests verify that promotion leaves the other players running;
 browser menu/fullscreen/joystick feel still needs manual acceptance.
 See [spectator overlay validation](../testing/WEBRTC-SPECTATOR-OVERLAY.md).
+
+### Client-address metadata increment
+
+The control-plane listener now captures each connection's TCP peer and forwards
+its non-loopback address to the local publisher through a private header. It
+ignores client-supplied `Forwarded`, `X-Forwarded-For`, and private address headers.
+Both raw-session and test-pattern publishers accept the metadata only from a
+loopback signaling caller, validate the IP, and prefer it over the old fixed-IP
+fallback. Direct publisher callers use their TCP address instead of HTTP headers.
+
+Automated checks cover both reference/subnet IPs, spoofed address headers, IPv6
+normalization, invalid metadata rejection, legacy manual fallback, and the shipped
+raw HTTP handler. Real WebRTC/media tests continue to pass. This removes one
+configuration obstacle; it does not open firewall ports, bypass router ACLs, add
+STUN/TURN, or establish cross-subnet playback acceptance. Direct LAN access to the
+control plane and same-host loopback publishers remain the supported reference
+topology. See [client address validation](../testing/WEBRTC-CLIENT-ADDRESS.md).
 
 ## Goal
 
@@ -345,9 +363,9 @@ After player seats are stable:
 3. Validate the implemented spectator actions overlay and spectator-to-open-player
    transition, including keyboard/gamepad navigation, fullscreen, slot conflicts,
    and leaving while a join is pending.
-4. Replace the fixed browser-IP workaround with trustworthy per-request client
-   addressing and document bounded ICE/firewall settings before multi-subnet
-   deployment. Do not trust arbitrary browser-supplied forwarding headers.
+4. Validate the implemented per-request client addressing on other PCs, then add
+   bounded ICE port allocation/firewall guidance and verify routed-subnet access.
+   Explicit reverse-proxy/NAT trust and STUN/TURN support remain subsequent work.
 5. Validate longer browser gameplay soaks, resource ceilings, audio sync, and
    latency against the accepted FFplay experience before making WebRTC default.
 6. Follow through with Admin/Producer browser capture and later mobile controls.
