@@ -105,8 +105,23 @@ promotion/reconnect, native ICE object cleanup, standalone test-pattern playback
 and an exhausted port range failing closed. A GStreamer 1.26.2 default-agent
 floating-reference issue discovered during testing has a narrowly guarded native
 ownership compatibility fix; critical errors are fatal in the integration checks.
-Manual firewall/routed-subnet acceptance and longer latency/resource tests remain
-pending. See [bounded UDP validation](../testing/WEBRTC-BOUNDED-UDP.md).
+The owner confirmed successful joining-player and spectator playback from
+`192.168.0.186` across the routed LAN on 2026-10-14. Longer latency/resource tests
+remain separate gates. See [bounded UDP validation](../testing/WEBRTC-BOUNDED-UDP.md).
+
+### Repeatable stability/resource increment (2026-10-14)
+
+The local multi-peer integration fixture now offers an optional timed soak with
+decoded video/audio progress checks, input lease renewal and authenticated input
+verification for every active player, periodic P2 reconnects, and continued
+playback checks for unaffected peers. Process-local RSS, CPU, thread and descriptor
+samples are emitted as token-free JSON records. A configurable combined-fixture
+RSS ceiling can fail a run; no unmeasured production memory limit is invented.
+
+These generated-media measurements include the publisher and three software
+receivers in one process. They are not MAME host-only resource estimates, browser
+latency measurements, music-sync acceptance, or a substitute for longer real
+gameplay. See [automated soak guidance](../testing/WEBRTC-AUTOMATED-SOAK.md).
 
 ## Goal
 
@@ -384,8 +399,8 @@ After player seats are stable:
 3. Validate the implemented spectator actions overlay and spectator-to-open-player
    transition, including keyboard/gamepad navigation, fullscreen, slot conflicts,
    and leaving while a join is pending.
-4. Validate the implemented per-request client addressing and bounded ICE port
-   configuration/firewall guidance on other PCs and routed subnets.
+4. Routed-LAN joining and spectating are manually accepted from `192.168.0.186`.
+   Retain the bounded ICE port configuration/firewall guidance for other installs.
    Explicit reverse-proxy/NAT trust and STUN/TURN support remain subsequent work.
 5. Validate longer browser gameplay soaks, resource ceilings, audio sync, and
    latency against the accepted FFplay experience before making WebRTC default.

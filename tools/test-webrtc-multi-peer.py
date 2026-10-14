@@ -16,6 +16,7 @@ from dataclasses import replace
 import gc
 
 from webrtc_browser_input import InputAuthorization
+from webrtc_soak_metrics import interval_sample, progress_rates, read_process_sample
 
 
 spec = importlib.util.spec_from_file_location("raw_publisher", Path(__file__).with_name("webrtc-gst-raw-session-publisher.py"))
@@ -44,7 +45,8 @@ class Client:
         self.channel = None
         self.channel_open = False
         self.channel_closed = False
-        self.peer.connect("pad-added", self.pad_added)
+        self.handlers = []
+        self.handlers.append((self.peer, self.peer.connect("pad-added", self.pad_added)))
         self.pipeline.set_state(Gst.State.PLAYING)
         for caps in ["application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000",
                      "application/x-rtp,media=audio,encoding-name=OPUS,payload=111,clock-rate=48000"]:
@@ -52,8 +54,8 @@ class Client:
         # The spectator deliberately requests an input channel; the server must reject it.
         self.channel = self.peer.emit("create-data-channel", "4play-input", Gst.Structure.new_from_string(
             "application/data-channel,ordered=(boolean)false,max-retransmits=(int)0"))
-        self.channel.connect("on-open", lambda *_: setattr(self, "channel_open", True))
-        self.channel.connect("on-close", lambda *_: setattr(self, "channel_closed", True))
+        self.handlers.append((self.channel, self.channel.connect("on-open", lambda *_: setattr(self, "channel_open", True))))
+        self.handlers.append((self.channel, self.channel.connect("on-close", lambda *_: setattr(self, "channel_closed", True))))
         event = threading.Event()
         context = {}
 
@@ -81,7 +83,8 @@ class Client:
             return
         decoder = "rtpvp8depay ! vp8dec" if kind == "video" else "rtpopusdepay ! opusdec"
         branch = Gst.parse_bin_from_description(f"queue ! {decoder} ! fakesink name=sink sync=false signal-handoffs=true", True)
-        branch.get_by_name("sink").connect("handoff", lambda *_: self.counts.__setitem__(kind, self.counts[kind] + 1))
+        sink = branch.get_by_name("sink")
+        self.handlers.append((sink, sink.connect("handoff", lambda *_: self.counts.__setitem__(kind, self.counts[kind] + 1))))
         self.pipeline.add(branch)
         branch.sync_state_with_parent()
         assert pad.link(branch.get_static_pad("sink")) == Gst.PadLinkReturn.OK
@@ -91,9 +94,83 @@ class Client:
 
     def close(self):
         self.pipeline.set_state(Gst.State.NULL)
+        for owner, handler in self.handlers:
+            owner.disconnect(handler)
+        self.handlers.clear()
+
+
+def soak(publisher, clients, authorizations, receive_combo, seconds, sample_seconds,
+         reconnect_seconds, max_rss_mib):
+    """Measure only this fixture: publisher AND three software decoding clients."""
+    started = time.monotonic()
+    deadline = started + seconds
+    previous = read_process_sample()
+    counts = [client.counts.copy() for client in clients]
+    sequences = [10, 10, 10]
+    reconnect_at = started + reconnect_seconds if reconnect_seconds else float('inf')
+    samples, reconnects = [], 0
+    print('SOAK ' + json.dumps(dict(event='start', seconds=seconds, peers=3,
+          scope='combined generated publisher and three software receivers; not browser latency')),
+          flush=True)
+    while time.monotonic() < deadline:
+        # Complete the final sample too: a sub-frame final interval cannot
+        # reliably establish decoder progress and would report a false stall.
+        time.sleep(sample_seconds)
+        current = read_process_sample()
+        measured = interval_sample(previous, current)
+        measured['receivers'] = progress_rates(counts, [c.counts.copy() for c in clients],
+            current['monotonic_seconds'] - previous['monotonic_seconds'])
+        assert len(publisher.pool.snapshot()) == 3, 'peer count changed during soak'
+        if max_rss_mib:
+            assert current['rss_mib'] <= max_rss_mib, 'configured RSS ceiling exceeded'
+        for index, authorization in enumerate(authorizations):
+            renewed = replace(authorization, expires_ms=time.time_ns() // 1_000_000 + 60000)
+            assert publisher.pool.renew(renewed), 'input lease renewal failed'
+            authorizations[index] = renewed
+            sequences[index] += 1
+            clients[index].send(sequences[index], index + 1)
+            receive_combo(renewed.player, index + 1)
+        measured['elapsed_seconds'] = current['monotonic_seconds'] - started
+        samples.append(measured)
+        print('SOAK ' + json.dumps(dict(event='sample', **measured)), flush=True)
+        if time.monotonic() >= reconnect_at and time.monotonic() < deadline:
+            unaffected = [clients[i].counts['video'] for i in (0, 2)]
+            clients[1].close()
+            authorizations[1] = replace(authorizations[1], peer_id=str(uuid.uuid4()))
+            clients[1] = Client(publisher, authorizations[1])
+            wait_for(lambda: clients[1].channel_open and clients[1].counts['video'] > 10
+                     and clients[1].counts['audio'] > 10, 'soak P2 reconnect')
+            wait_for(lambda: all(clients[i].counts['video'] > count
+                     for i, count in zip((0, 2), unaffected)), 'other peers continue')
+            sequences[1] = 0
+            reconnects += 1
+            reconnect_at = time.monotonic() + reconnect_seconds
+            gc.collect()
+        # Reconnect resets the new receiver counters; exclude negotiation from
+        # the next decode-rate interval rather than reporting negative rates.
+        previous = read_process_sample()
+        counts = [c.counts.copy() for c in clients]
+    print('SOAK ' + json.dumps(dict(event='passed', samples=len(samples), reconnects=reconnects,
+          elapsed_seconds=time.monotonic() - started,
+          peak_rss_mib=max(s['rss_mib'] for s in samples),
+          peak_cpu_percent=max(s['cpu_percent'] for s in samples),
+          rss_change_mib=samples[-1]['rss_mib'] - samples[0]['rss_mib'],
+          fd_change=samples[-1]['fds'] - samples[0]['fds'],
+          peak_fds=max(s['fds'] for s in samples),
+          peak_threads=max(s['threads'] for s in samples))), flush=True)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--soak-seconds', type=int, default=0)
+    parser.add_argument('--sample-seconds', type=int, default=5)
+    parser.add_argument('--reconnect-seconds', type=int, default=30)
+    parser.add_argument('--max-rss-mib', type=int, default=0,
+                        help='optional combined fixture RSS ceiling; zero only observes')
+    args = parser.parse_args()
+    if not 0 <= args.soak_seconds <= 86400 or not 1 <= args.sample_seconds <= 60 or \
+       not 0 <= args.reconnect_seconds <= 86400 or args.max_rss_mib < 0:
+        parser.error('invalid soak duration, interval, or RSS ceiling')
     loop = GLib.MainLoop()
     loop_thread = threading.Thread(target=loop.run, daemon=True)
     loop_thread.start()
@@ -180,6 +257,18 @@ def main():
             assert not publisher.pool.renew(auth2)
             gc.collect()
             wait_for(released.is_set, "replaced P2 ICE native object released")
+            if args.soak_seconds:
+                active = [clients[0], clients[-1], clients[-2]]
+                try:
+                    soak(publisher, active, [auth1, auth2_new, auth3], receive_combo,
+                         args.soak_seconds, args.sample_seconds, args.reconnect_seconds,
+                         args.max_rss_mib)
+                finally:
+                    for client in active:
+                        client.close()
+                # Soak cleanup intentionally closes receivers; the short
+                # malformed-offer checks below require the original live set.
+                return
             # Failure in P2's own replacement must not reset P1 or the spectator.
             before = clients[0].counts["video"]
             try:

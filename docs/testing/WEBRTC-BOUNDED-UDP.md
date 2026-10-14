@@ -129,7 +129,12 @@ firewall is touched. Host input/media sockets remain distinct from ICE sockets.
 The serial Rust command avoids existing short wall-clock expiry tests being
 affected by unrelated parallel test scheduling.
 
-## Manual network acceptance still required
+## Reference network acceptance
+
+On 2026-10-14 the project owner confirmed successful joining-player and spectator
+playback from `192.168.0.186`. This accepts the tested routed LAN topology, not
+arbitrary router/NAT/proxy environments. Use the following checklist for new
+installations and regressions; longer gameplay/resource validation is separate.
 
 1. Start a new game on the original PC; verify media, held controls, audio sync,
    spectator joining, reconnect, and continued playback for other seats.
