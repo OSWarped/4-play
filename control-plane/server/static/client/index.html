@@ -41,15 +41,43 @@
       </section>
 
       <section class="layout">
-        <article class="card">
+        <article class="card library-panel" aria-label="Game library">
           <div class="section-heading">
             <div>
               <p class="eyebrow">Games</p>
               <h2>Library</h2>
             </div>
-            <input id="game-filter" type="search" placeholder="Filter games" />
+            <input id="game-filter" type="search" aria-label="Filter games by title, genre, year or manufacturer" placeholder="Find your next game" />
           </div>
-          <div id="games" class="game-grid muted">No games loaded.</div>
+          <section id="game-carousel" class="game-carousel" aria-roledescription="carousel" aria-label="Available games">
+            <div class="featured-game">
+              <div class="featured-art" id="featured-art">
+                <div class="arcade-fallback" aria-hidden="true"><span>4</span><span>PLAY</span><small>CHOOSE YOUR NEXT GAME</small></div>
+                <img id="featured-image" alt="" hidden />
+                <span id="featured-genre" class="art-genre">ARCADE LIBRARY</span>
+              </div>
+              <div class="featured-copy">
+                <p class="eyebrow">Step up and play</p>
+                <h3 id="featured-title">Your next game awaits</h3>
+                <div id="featured-meta" class="muted"></div>
+                <p id="featured-description" class="muted">Load the library to browse available games.</p>
+                <div class="form-actions">
+                  <button id="featured-start" type="button" disabled>Start game</button>
+                  <button id="featured-details" type="button" disabled>Details &amp; sessions</button>
+                </div>
+                <p id="featured-running" class="muted"></p>
+              </div>
+            </div>
+            <div class="carousel-toolbar">
+              <p id="carousel-status" role="status">No games loaded.</p>
+              <div class="form-actions">
+                <button id="game-previous" type="button" aria-label="Previous game" disabled>&#8592;</button>
+                <button id="game-next" type="button" aria-label="Next game" disabled>&#8594;</button>
+              </div>
+            </div>
+            <div id="games" class="game-rail" aria-label="Choose a featured game">No games loaded.</div>
+            <p class="carousel-hint muted">Browse with the arrows, swipe the row, or focus a card and use Left / Right. Enter selects; Start game launches.</p>
+          </section>
         </article>
 
         <article class="card">
@@ -113,6 +141,7 @@
     <script src="/client/input.js" defer></script>
     <script src="/client/media.js" defer></script>
     <script src="/client/spectator.js" defer></script>
+    <script src="/client/carousel.js" defer></script>
     <script src="/client/app.js" defer></script>
   </body>
 </html>

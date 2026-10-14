@@ -367,6 +367,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/client/input.js", get(client_input_script))
         .route("/client/media.js", get(client_media_script))
         .route("/client/spectator.js", get(client_spectator_script))
+        .route("/client/carousel.js", get(client_carousel_script))
         .route("/client/styles.css", get(client_styles))
         .route("/webrtc-test", get(webrtc_test_index))
         .route("/webrtc-test/", get(webrtc_test_index))
@@ -505,6 +506,13 @@ async fn client_spectator_script() -> Response {
     static_response(
         "text/javascript; charset=utf-8",
         include_str!("../static/client/spectator.js"),
+    )
+}
+
+async fn client_carousel_script() -> Response {
+    static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client/carousel.js"),
     )
 }
 
@@ -2224,6 +2232,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/client/media.js").await;
         let (spectator_status, _, spectator_body) =
             request_bytes(service.clone(), Method::GET, "/client/spectator.js").await;
+        let (carousel_status, carousel_content_type, carousel_body) =
+            request_bytes(service.clone(), Method::GET, "/client/carousel.js").await;
         let (styles_status, styles_content_type, styles_body) =
             request_bytes(service, Method::GET, "/client/styles.css").await;
 
@@ -2240,6 +2250,18 @@ mod tests {
         assert!(index_body.contains("id=\"reconnect-browser-media\""));
         assert!(index_body.contains("/client/media.js"));
         assert!(index_body.contains("/client/spectator.js"));
+        assert!(index_body.contains("/client/carousel.js"));
+        assert!(index_body.contains("id=\"game-carousel\""));
+        assert_eq!(carousel_status, 200);
+        assert_eq!(
+            carousel_content_type.as_deref(),
+            Some("text/javascript; charset=utf-8")
+        );
+        assert!(
+            String::from_utf8(carousel_body)
+                .unwrap()
+                .contains("GameSelection")
+        );
         assert!(index_body.contains("id=\"spectator-actions\""));
         assert_eq!(spectator_status, 200);
         assert!(

@@ -11,6 +11,10 @@ const browserMediaState = document.querySelector("#browser-media-state");
 const stopBrowserMediaButton = document.querySelector("#stop-browser-media");
 const reconnectBrowserMediaButton = document.querySelector("#reconnect-browser-media");
 const browserReceiverStats = document.querySelector("#browser-receiver-stats");
+const librarySelection = new FourPlayCarousel.GameSelection();
+const libraryArtwork = new FourPlayCarousel.ArtworkLoader();
+let libraryArtworkKey = null;
+let libraryLaunchPending = false;
 
 const state = {
   token: localStorage.getItem("fourplay.clientToken") || "",
@@ -100,6 +104,40 @@ destinationInput.addEventListener("input", () => {
   renderDestinationWarning();
 });
 gameFilter.addEventListener("input", renderGames);
+document.querySelector("#game-previous").addEventListener("click", () => moveFeaturedGame(-1));
+document.querySelector("#game-next").addEventListener("click", () => moveFeaturedGame(1));
+document.querySelector("#featured-details").addEventListener("click", () => {
+  if (librarySelection.selected) {
+    renderGameDetails(librarySelection.selected);
+    document.querySelector("#details").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+document.querySelector("#featured-start").addEventListener("click", async () => {
+  const game = librarySelection.selected;
+  if (!game || libraryLaunchPending) return;
+  libraryLaunchPending = true;
+  document.querySelector("#featured-start").disabled = true;
+  renderGameDetails(game);
+  document.querySelector("#details").scrollIntoView({ behavior: "smooth", block: "start" });
+  try { await startGame(game); }
+  finally {
+    libraryLaunchPending = false;
+    document.querySelector("#featured-start").disabled = !librarySelection.selected;
+  }
+});
+document.querySelector("#games").addEventListener("keydown", (event) => {
+  if (!event.target.closest(".game-cover")) return;
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  if (event.key === "Home" || event.key === "End") {
+    librarySelection.select(librarySelection.games[event.key === "Home" ? 0 : librarySelection.games.length - 1]?.id);
+    updateFeaturedGame(true);
+  } else moveFeaturedGame(event.key === "ArrowLeft" ? -1 : 1, true);
+});
+window.addEventListener("pagehide", () => libraryArtwork.clear());
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) { libraryArtworkKey = null; updateFeaturedGame(); }
+});
 document.querySelector("#browse-games").addEventListener("click", () => {
   document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
 });
@@ -250,38 +288,73 @@ function findOwnDisconnectedSlot() {
 }
 
 function renderGames() {
-  const query = gameFilter.value.trim().toLowerCase();
-  const games = state.games.filter((game) => {
-    const metadata = game.metadata || {};
-    const haystack = [
-      game.display_name,
-      game.id,
-      metadata.genre,
-      metadata.manufacturer,
-      metadata.release_year,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(query);
-  });
-  replaceChildren(document.querySelector("#games"), games.map(renderGame));
+  librarySelection.update(state.games, gameFilter.value);
+  replaceChildren(document.querySelector("#games"), librarySelection.games.map(renderGame));
+  updateFeaturedGame();
 }
 
 function renderGame(game) {
   const metadata = game.metadata || {};
-  const element = item();
-  element.classList.add("clickable");
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = "game-cover";
+  element.dataset.gameId = game.id;
+  element.setAttribute("aria-label", `Feature ${game.display_name || game.id}`);
   element.innerHTML = `
-    <div class="thumbnail">${escapeHtml(metadata.genre || "4-Play")}</div>
-    <h3>${escapeHtml(game.display_name || game.id)}</h3>
-    <span class="pill">${escapeHtml(game.id)}</span>
-    <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
-    <span class="pill">${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))} players</span>
-    <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
+    <span class="cover-kicker">${escapeHtml(metadata.genre || "Arcade")}</span>
+    <span class="cover-name">${escapeHtml(game.display_name || game.id)}</span>
+    <span class="cover-footer">${escapeHtml(String(metadata.release_year || "CLASSIC"))} <span>${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))}P</span></span>
   `;
-  element.addEventListener("click", () => renderGameDetails(game));
+  element.addEventListener("click", () => {
+    librarySelection.select(game.id);
+    updateFeaturedGame();
+  });
   return element;
+}
+
+function moveFeaturedGame(delta, focus = false) {
+  librarySelection.move(delta);
+  updateFeaturedGame(focus);
+}
+
+function updateFeaturedGame(focus = false) {
+  const game = librarySelection.selected;
+  const metadata = game?.metadata || {};
+  const count = librarySelection.games.length;
+  setText("#carousel-status", game ? `${librarySelection.index + 1} / ${count} games` : "No matching games. Try another search.");
+  setText("#featured-title", game?.display_name || game?.id || "No games to show");
+  setText("#featured-genre", metadata.genre || "ARCADE LIBRARY");
+  setText("#featured-meta", game ? [metadata.release_year, metadata.manufacturer,
+    `${metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"} players`].filter(Boolean).join(" · ") : "");
+  setText("#featured-description", game ? metadata.description || "An arcade classic. Open details for controls and session options." : "Clear the filter or refresh your library.");
+  const running = state.sessions.filter((session) => session.game_id === game?.id).length;
+  setText("#featured-running", running ? `${running} running session${running === 1 ? "" : "s"} · Open details to join or spectate` : "Start a new session, or see what others are playing alongside the library.");
+  document.querySelector("#featured-start").disabled = !game || libraryLaunchPending;
+  document.querySelector("#featured-details").disabled = !game;
+  for (const id of ["#game-previous", "#game-next"]) document.querySelector(id).disabled = count < 2;
+  for (const card of document.querySelectorAll(".game-cover")) {
+    const selected = card.dataset.gameId === game?.id;
+    card.setAttribute("aria-pressed", String(selected));
+    card.tabIndex = selected ? 0 : -1;
+    if (selected) {
+      if (focus) card.focus({ preventScroll: true });
+      // Scroll the rail only; never pull the page away from gameplay/details.
+      const rail = card.parentElement;
+      const left = card.offsetLeft - rail.offsetLeft - (rail.clientWidth - card.offsetWidth) / 2;
+      rail.scrollTo({ left, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
+  }
+  const artworkKey = JSON.stringify([game?.id, FourPlayCarousel.artworkPaths(game), state.token]);
+  if (artworkKey !== libraryArtworkKey) {
+    libraryArtworkKey = artworkKey;
+    const image = document.querySelector("#featured-image");
+    libraryArtwork.load(game, authHeaders(), (url) => {
+      image.hidden = !url;
+      if (url) image.src = url;
+      else image.removeAttribute("src");
+    });
+    image.onerror = () => { image.hidden = true; };
+  }
 }
 
 function renderSessions() {
