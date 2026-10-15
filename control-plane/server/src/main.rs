@@ -71,6 +71,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
             env::var("FOURPLAY_THEGAMESDB_CACHE").unwrap_or_else(|_| "data/thegamesdb".to_owned()),
         ),
     )?;
+    let import_config = if env::var("FOURPLAY_GAME_IMPORT_ENABLED").as_deref() == Ok("1") {
+        let setting = |name: &str| {
+            env::var(name)
+                .map_err(|_| std::io::Error::other(format!("{name} is required for game imports")))
+        };
+        Some(control_plane_server::GameImportConfig {
+            python: env::var("FOURPLAY_GAME_IMPORT_PYTHON")
+                .unwrap_or_else(|_| "/usr/bin/python3".into()),
+            worker: setting("FOURPLAY_GAME_IMPORT_WORKER")?,
+            mame: setting("FOURPLAY_MAME_PATH")?,
+            ini: setting("FOURPLAY_MAME_INI_PATH")?,
+            rom_root: setting("FOURPLAY_GAME_IMPORT_ROM_ROOT")?,
+            sample_root: setting("FOURPLAY_GAME_IMPORT_SAMPLE_ROOT")?,
+            stage_root: setting("FOURPLAY_GAME_IMPORT_STAGE_ROOT")?,
+            manifest: setting("FOURPLAY_CATALOG_PATH")?,
+            host_id: setting("FOURPLAY_RUNTIME_HOST_ID")?,
+            chdman: env::var("FOURPLAY_GAME_IMPORT_CHDMAN").ok(),
+        })
+    } else {
+        None
+    };
+    let app = control_plane_server::with_game_imports(app, import_config);
     let app = control_plane_server::with_browser_seats(
         app,
         seat_api_token,

@@ -538,3 +538,7 @@ code {
     display: grid;
   }
 }
+
+#game-import-panel fieldset { display: grid; gap: 0.8rem; border: 1px solid var(--border); border-radius: 0.9rem; padding: 1rem; min-width: 0; }
+#game-import-panel label { display: grid; gap: 0.35rem; }
+#game-import-panel input { min-width: 0; max-width: 100%; }

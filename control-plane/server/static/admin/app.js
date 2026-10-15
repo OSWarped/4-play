@@ -30,6 +30,20 @@ saveTokenButton.addEventListener("click", () => {
 refreshButton.addEventListener("click", refresh);
 gameFilter.addEventListener("input", renderGames);
 renderOperationsRunbook();
+const loadGameImport = FourPlayGameImport.bind({
+  panel: document.querySelector("#game-import-panel"), refreshed: refresh,
+  request: async (path, body, method) => {
+    const binary = body instanceof Blob;
+    const response = await fetch(path, {
+      method: method || (body === undefined ? "GET" : "POST"),
+      headers: { ...authHeaders(), ...(body !== undefined ? {"Content-Type": binary ? "application/octet-stream" : "application/json"} : {}) },
+      body: body === undefined ? undefined : binary ? body : JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.message || "Game import request failed");
+    return result;
+  },
+});
 
 function authHeaders() {
   if (!state.token) return {};
@@ -48,6 +62,7 @@ async function fetchJson(path, protectedApi = true) {
 }
 
 async function refresh() {
+  loadGameImport();
   setText("#health-status", "Loading…");
   try {
     const [health, hosts, games, sessions, activeSessions, webrtcStatus] = await Promise.all([

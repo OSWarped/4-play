@@ -46,6 +46,26 @@
         </article>
       </section>
 
+      <section class="card" id="game-import-panel">
+        <div class="section-heading"><div><p class="eyebrow">Library intake</p><h2>Add a game</h2></div></div>
+        <p>Select a game archive or a folder of files you own. MAME identifies required parent sets, BIOS/device ROMs, CHDs, and optional sound samples. Nothing is downloaded or overwritten.</p>
+        <fieldset disabled>
+          <label>Choose files <input type="file" id="game-import-files" multiple accept=".zip,.7z,.chd" /></label>
+          <label>Or choose a folder <input type="file" id="game-import-folder" webkitdirectory multiple /></label>
+          <label>Optional WAV sample packs (not QSound/BIOS) <input type="file" id="game-import-samples" multiple accept=".zip" /></label>
+          <label>Game / MAME short name <input id="game-import-name" type="text" list="game-import-names" placeholder="aof, msh, kinst2…" /></label>
+          <datalist id="game-import-names"></datalist>
+          <p class="muted">For a folder, choose one game from the short-name list. Parent and BIOS archives stay available as dependencies; they are not separate catalog entries. Large audits can take time—prefer a quiet maintenance window.</p>
+          <div class="form-actions">
+            <button id="game-import-inspect" type="button">1. Inspect dependencies</button>
+            <button id="game-import-upload" type="button">2. Upload matching files &amp; audit</button>
+            <button id="game-import-install" type="button" disabled>3. Install verified game</button>
+            <button id="game-import-discard" type="button">Discard staged copies</button>
+          </div>
+        </fieldset>
+        <pre id="game-import-result" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere">Save your Admin token and refresh to check upload availability.</pre>
+      </section>
+
       <section class="layout">
         <article class="card">
           <div class="section-heading">
@@ -139,6 +159,7 @@
     </template>
 
     <script src="/admin/asset-upload.js" defer></script>
+    <script src="/admin/game-import.js" defer></script>
     <script src="/admin/metadata-provider.js" defer></script>
     <script src="/admin/app.js" defer></script>
   </body>

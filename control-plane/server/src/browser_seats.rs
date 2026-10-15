@@ -635,6 +635,7 @@ mod tests {
             (Method::POST, "games/tmnt/metadata"),
             (Method::POST, "runtime-hosts/reference-linux/heartbeat"),
             (Method::GET, "sessions"),
+            (Method::GET, "admin/game-imports"),
             (Method::POST, "sessions/cleanup-stale"),
             (Method::GET, "admin/metadata-providers/thegamesdb/search"),
             (Method::GET, "games?token=x"),

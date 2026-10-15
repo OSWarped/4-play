@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let webrtc_session_publishers = WebRtcSessionPublisherConfig::from_environment();
     let agent = RuntimeHostAgent::new(config, capabilities)
         .with_catalog(catalog)
+        .with_catalog_source(catalog_path, mame_path, mame_ini_path)
         .with_runtime_adapter(runtime_adapter)
         .with_webrtc_test_publisher(webrtc_test_publisher.clone());
 

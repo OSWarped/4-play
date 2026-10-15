@@ -1,4 +1,6 @@
 mod browser_seats;
+mod game_imports;
+pub use game_imports::{GameImportConfig, with_game_imports};
 mod store;
 mod thegamesdb;
 pub use browser_seats::with_browser_seats;
@@ -262,6 +264,7 @@ pub async fn app_with_database_tokens_ports_assets_preview_and_webrtc(
 
 pub fn app_with_state(state: AppState) -> Router {
     let protected = Router::new()
+        .merge(game_imports::routes())
         .merge(thegamesdb::routes())
         .route("/api/v1/runtime-hosts", get(list_runtime_hosts))
         .route("/api/v1/games", get(list_catalog_games))
@@ -366,6 +369,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin/", get(admin_index))
         .route("/admin/app.js", get(admin_script))
         .route("/admin/asset-upload.js", get(admin_asset_upload_script))
+        .route("/admin/game-import.js", get(game_imports::script))
         .route(
             "/admin/metadata-provider.js",
             get(admin_metadata_provider_script),

@@ -95,6 +95,7 @@ pub struct RuntimeHostAgent {
     config: AgentConfig,
     registration: RegisterRuntimeHost,
     catalog: Option<RuntimeHostCatalog>,
+    catalog_source: Option<(String, String, Option<String>)>,
     runtime_adapter: Option<RuntimeAdapterConfig>,
     webrtc_test_publisher: Option<WebRtcTestPublisherConfig>,
 }
@@ -111,6 +112,7 @@ impl RuntimeHostAgent {
             config,
             registration,
             catalog: None,
+            catalog_source: None,
             runtime_adapter: None,
             webrtc_test_publisher: None,
         }
@@ -119,6 +121,22 @@ impl RuntimeHostAgent {
     pub fn with_catalog(mut self, catalog: RuntimeHostCatalog) -> Self {
         self.catalog = Some(catalog);
         self
+    }
+
+    pub fn with_catalog_source(
+        mut self,
+        manifest: String,
+        mame: String,
+        ini: Option<String>,
+    ) -> Self {
+        self.catalog_source = Some((manifest, mame, ini));
+        self
+    }
+
+    fn catalog_revision(&self) -> Option<Vec<u8>> {
+        self.catalog_source
+            .as_ref()
+            .and_then(|(path, _, _)| fs::read(path).ok())
     }
 
     pub fn with_runtime_adapter(mut self, config: RuntimeAdapterConfig) -> Self {
@@ -170,20 +188,34 @@ impl RuntimeHostAgent {
             .await
     }
 
-    pub async fn publish_catalog(&self) -> Result<Option<RuntimeHostCatalog>, reqwest::Error> {
-        let Some(catalog) = &self.catalog else {
+    pub async fn publish_catalog(&self) -> Result<Option<RuntimeHostCatalog>, String> {
+        let catalog = if let Some((manifest, mame, ini)) = self.catalog_source.clone() {
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    catalog::discover_catalog(manifest, &mame, ini.as_deref())
+                })
+                .await
+                .map_err(|error| error.to_string())??,
+            )
+        } else {
+            self.catalog.clone()
+        };
+        let Some(catalog) = catalog else {
             return Ok(None);
         };
         self.client
             .put(format!("{}/catalog", self.runtime_host_url()))
             .bearer_auth(&self.config.api_token)
-            .json(catalog)
+            .json(&catalog)
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
             .json()
             .await
             .map(Some)
+            .map_err(|error| error.to_string())
     }
 
     pub async fn runtime_assignments(
@@ -234,6 +266,7 @@ impl RuntimeHostAgent {
         let mut reconcile_timer = interval(self.config.reconcile_interval);
         reconcile_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut next_sequence = None;
+        let mut published_catalog_revision = None;
         let mut supervisor = self.runtime_adapter.clone().map(RuntimeSupervisor::new);
         let mut webrtc_test_publisher = self
             .webrtc_test_publisher
@@ -257,6 +290,13 @@ impl RuntimeHostAgent {
                     break;
                 },
                 _ = timer.tick() => {
+                    let revision = self.catalog_revision();
+                    if next_sequence.is_some() && revision != published_catalog_revision {
+                        match self.publish_catalog().await {
+                            Ok(_) => { published_catalog_revision = revision.clone(); println!("Verified catalog manifest update published"); }
+                            Err(error) => eprintln!("Catalog refresh failed; retaining previous catalog: {error}"),
+                        }
+                    }
                     if let Some(publisher) = webrtc_test_publisher.as_mut()
                         && let Err(error) = publisher.ensure_started()
                     {
@@ -288,11 +328,11 @@ impl RuntimeHostAgent {
                                     host.id, self.config.control_plane_url
                                 );
                                 match self.publish_catalog().await {
-                                    Ok(Some(catalog)) => println!(
+                                    Ok(Some(catalog)) => { published_catalog_revision = revision; println!(
                                         "Runtime catalog published: host={} games={}",
                                         host.id,
                                         catalog.games.len()
-                                    ),
+                                    ); },
                                     Ok(None) => {}
                                     Err(error) => {
                                         eprintln!("Runtime catalog publication failed: {error}; retrying");
@@ -689,6 +729,32 @@ mod tests {
             agent.publish_catalog().await.unwrap().unwrap().games.len(),
             1
         );
+        let temporary = tempfile::tempdir().unwrap();
+        let manifest = temporary.path().join("catalog.json");
+        std::fs::write(&manifest, r#"{"schema_version":1,"games":[]}"#).unwrap();
+        let sourced = agent.clone().with_catalog_source(
+            manifest.to_string_lossy().into_owned(),
+            "missing-test-mame".into(),
+            None,
+        );
+        let revision = sourced.catalog_revision();
+        assert!(
+            sourced
+                .publish_catalog()
+                .await
+                .unwrap()
+                .unwrap()
+                .games
+                .is_empty()
+        );
+        std::fs::write(
+            &manifest,
+            r#"{"schema_version":1,"games":[{"id":"new","rom_name":"new"}]}"#,
+        )
+        .unwrap();
+        assert_ne!(revision, sourced.catalog_revision());
+        assert!(sourced.publish_catalog().await.is_err()); // No stale cached fallback.
+        agent.publish_catalog().await.unwrap(); // Restore fixture's original catalog.
         agent.heartbeat(5, 2).await.unwrap();
         let refreshed = agent.register().await.unwrap();
         assert_eq!(refreshed.heartbeat_sequence, 5);
