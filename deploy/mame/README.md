@@ -44,6 +44,9 @@ invalidate the test. A stream smoke test is not a gameplay-accuracy guarantee.
 
 On 2026-10-15 the reference host passed opt-out/opt-in raw audio/video probes
 for `elvact2u`, `indytemp` and `kidnikiu`, using the actual installed ROMs.
+Invalid opt-in, missing raw-audio mode, and Contra's undumped-ROM warning all
+remained blocked. The 10 Linux runtime unit tests passed. Runtime Clippy passed
+with existing `too_many_arguments` and `let_and_return` lint allowances.
 
 Deploy the rebuilt MAME and `session-runtime` binaries together. The host agent
 launches them for new sessions; no service restart is required when paths are
