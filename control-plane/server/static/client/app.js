@@ -750,6 +750,7 @@ function playerRuntimePanel(session, playerNumber) {
       ${browserMediaPanel(handoff.media.webrtc_signaling, {
         role: "player",
         playerNumber,
+        buttonCount: session.runtime_profile?.buttons_per_player,
       })}
       ${mediaReceiverCommands(handoff.media.udp_port)}
       <p><strong>Input endpoint:</strong> ${escapeHtml(handoff.input.destination)} for player ${escapeHtml(String(handoff.input.player_number))}</p>
@@ -813,6 +814,7 @@ function browserMediaPanel(signaling, context) {
         data-browser-media-url="${escapeHtml(absoluteOfferUrl)}"
         data-browser-media-role="${escapeHtml(context?.role || "spectator")}"
         ${playerNumber}
+        ${context?.role === "player" ? `data-browser-media-buttons="${escapeHtml(String(context.buttonCount ?? ""))}"` : ""}
         ${spectatorGrantId}
       >Open in browser player</button>
       <button type="button" data-copy-text="${escapeHtml(absoluteOfferUrl)}">Copy WebRTC offer URL</button>
@@ -897,13 +899,18 @@ async function startBrowserMedia(button) {
   if (button.dataset.browserMediaRole === "player") {
     const channel = peer.createDataChannel("4play-input", { ordered: false, maxRetransmits: 0 });
     const input = new FourPlayBrowserInput(channel, browserPlayer);
+    const session = state.sessions.find((session) => session.id === state.browserMediaContext?.sessionId);
+    input.bindTouch(document.querySelector("#touch-controls"),
+      button.dataset.browserMediaButtons ?? session?.runtime_profile?.buttons_per_player);
     state.browserInput = input;
     inputStatus.textContent = "Connecting game controls...";
     channel.addEventListener("open", () => {
       if (state.browserMediaPeer !== peer) return;
       if (peer.connectionState === "connected") input.start();
       browserMediaVideo.focus();
-      inputStatus.textContent = "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start; Esc to leave (fullscreen: Esc twice).";
+      inputStatus.textContent = input.touch?.running
+        ? "Touch controls ready. Hold the left pad to move; combine action buttons on the right. Coin adds credit; Start begins play."
+        : "Controls ready. Click the video to play: W/A/S/D move; J/K/L and M/,/. attack; 1 coin; 2 start; Esc to leave (fullscreen: Esc twice).";
     });
     channel.addEventListener("close", () => {
       input.stop();
@@ -1122,6 +1129,7 @@ async function joinBrowserSpectator(playerNumber) {
       browserMediaUrl: offerUrl,
       browserMediaRole: "player", browserMediaPlayer: String(playerNumber),
       browserMediaSeat: context.seatId, browserMediaPromotion: "true",
+      browserMediaButtons: String(session.runtime_profile?.buttons_per_player ?? ""),
       ...(context.grantId ? { browserMediaGrant: context.grantId } : {}),
     } });
     if (state.browserMediaRetry?.browserMediaPromotion) delete state.browserMediaRetry.browserMediaPromotion;

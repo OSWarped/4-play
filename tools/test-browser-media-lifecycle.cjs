@@ -30,6 +30,7 @@ function setup() {
   }
   class Input {
     constructor() { this.running = false; inputs.push(this); }
+    bindTouch(panel, count) { this.touchCount = count; }
     start() { this.running = true; }
     stop() { this.running = false; }
   }
@@ -53,7 +54,7 @@ function setup() {
   const code = fs.readFileSync("control-plane/server/static/client/app.js", "utf8");
   vm.runInContext(code.slice(code.indexOf("async function startBrowserMedia("), code.indexOf("function renderLastRuntimeHint(")), context);
   const button = { dataset: { browserMediaUrl: "http://server/api/v1/sessions/game-1/webrtc/offer",
-    browserMediaRole: "player", browserMediaPlayer: "2" } };
+    browserMediaRole: "player", browserMediaPlayer: "2", browserMediaButtons: "2" } };
   return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button, bodyClasses };
 }
 
@@ -61,12 +62,14 @@ test("disconnect releases controls, reconnect preserves slot and closes old medi
   const s = setup(); await s.context.startBrowserMedia(s.button);
   const peer = s.peers[0]; peer.connectionState = "connected"; peer.listeners.connectionstatechange();
   peer.channel.listeners.open(); assert.equal(s.inputs[0].running, true);
+  assert.equal(s.inputs[0].touchCount, "2");
   peer.connectionState = "disconnected"; peer.listeners.connectionstatechange();
   assert.equal(s.inputs[0].running, false);
   const retry = s.state.browserMediaRetry;
   await s.context.startBrowserMedia({ dataset: retry });
   assert.equal(peer.connectionState, "closed"); assert.equal(s.monitors[0].stopped, true);
   assert.equal(s.state.browserMediaContext.playerNumber, 2);
+  assert.equal(s.inputs[1].touchCount, "2");
   assert.equal(s.calls.length, 2); // Only signaling; no disconnect/re-reserve request.
   const before = s.status.textContent;
   peer.listeners.track({ track: { kind: "video" } }); peer.listeners.connectionstatechange();
@@ -120,7 +123,7 @@ test("spectator joins directly, negotiates input only after slot ownership, rele
   assert.equal(s.inputs.length, 0);
   const spectatorPeer = s.peers[0];
   const actions = [];
-  const session = { id: "game-1", connection_grant: { webrtc_signaling: { offer_path: "/api/v1/sessions/game-1/webrtc/offer" } } };
+  const session = { id: "game-1", runtime_profile: { buttons_per_player: 6 }, connection_grant: { webrtc_signaling: { offer_path: "/api/v1/sessions/game-1/webrtc/offer" } } };
   s.context.clientApi = {
     reservePlayerSlot: async (...args) => { actions.push(["reserve", ...args]); assert.equal(s.inputs.length, 0); },
     connectPlayerSlot: async (...args) => { actions.push(["connect", ...args]); assert.equal(s.inputs.length, 0); return session; },
@@ -131,6 +134,7 @@ test("spectator joins directly, negotiates input only after slot ownership, rele
   assert.equal(s.state.browserMediaContext.role, "player");
   assert.equal(s.state.browserMediaContext.seatId, "seat-1");
   assert.equal(s.inputs.length, 1); assert.equal(spectatorPeer.connectionState, "closed");
+  assert.equal(s.inputs[0].touchCount, "6");
   assert.deepEqual(actions, [["reserve", "game-1", 2, "seat-1"], ["connect", "game-1", 2, "seat-1"], ["release", "game-1", "old-grant", "seat-1"]]);
   assert.equal(s.calls.at(-1).body.role, "player");
   assert.equal(s.calls.at(-1).body.spectator_grant_id, "old-grant");

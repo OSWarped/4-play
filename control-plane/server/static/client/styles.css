@@ -368,6 +368,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 .browser-video-stage { position: relative; overflow: hidden; }
+.touch-controls { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.25rem; }
+.touch-controls[hidden] { display: none; }
+.touch-controls, .touch-controls button { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.touch-controls button { min-width: 44px; min-height: 44px; padding: 0.45rem; font-weight: 700; }
+.touch-controls button[aria-pressed="true"] { background: var(--accent); color: #071220; box-shadow: 0 0 0 2px var(--accent); }
+.touch-dpad { display: grid; grid-template-columns: repeat(3, clamp(44px, 8vw, 56px)); gap: 3px; flex-shrink: 0; }
+.touch-right { display: grid; gap: 0.6rem; min-width: 0; }
+.touch-attacks { display: grid; grid-template-columns: repeat(3, minmax(44px, 56px)); gap: 6px; }
+.touch-attacks button { border-radius: 50%; aspect-ratio: 1; }
+.touch-system { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.touch-system button { font-size: 0.8rem; }
+.touch-right small { max-width: 11rem; font-size: 0.75rem; }
 .spectator-actions {
   position: absolute;
   z-index: 2;
@@ -398,7 +410,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: #000;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 900px), (any-pointer: coarse) {
   .topbar,
   .hero,
   .section-heading {
@@ -423,10 +435,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .player-controls button { font-size: 0.85rem; padding: 0.6rem; }
   body.browser-playing .topbar,
   body.browser-playing main > :not(#browser-player) { display: none; }
-  body.browser-playing main { padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem max(0.5rem, env(safe-area-inset-bottom)); }
+  body.browser-playing main { padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left)); }
   .browser-player video { min-height: 0; aspect-ratio: 4 / 3; max-height: 65vh; max-height: 65svh; object-fit: contain; }
   .browser-player #browser-input-state, .browser-player #browser-receiver-stats { font-size: 0.75rem; overflow-wrap: anywhere; margin-bottom: 0; }
   .spectator-actions { max-height: 80%; overflow-y: auto; padding: 0.65rem; }
   .spectator-actions .form-actions { flex-wrap: wrap; gap: 0.35rem; }
   .spectator-actions button { padding: 0.55rem; font-size: 0.85rem; }
+}
+
+@media (orientation: landscape) and (max-height: 550px) and (any-pointer: coarse) {
+  .browser-player { padding: 0.5rem; gap: 0.35rem; }
+  .browser-player .player-toolbar { flex-direction: row; align-items: center; }
+  .browser-player .player-toolbar > div:first-child { display: none; }
+  .browser-player .player-controls { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .browser-player .player-controls button { padding: 0.35rem 0.6rem; }
+  .browser-player video, .browser-player:fullscreen video { height: 40vh; height: 40svh; min-height: 0; }
+  .touch-controls { padding-inline: 0.5rem; }
+}
+
+@media (max-width: 380px) {
+  .touch-controls { gap: 0.5rem; }
+  .touch-attacks { grid-template-columns: repeat(2, 44px); }
+  .touch-system { gap: 0.25rem; }
 }

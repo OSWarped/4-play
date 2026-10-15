@@ -63,8 +63,8 @@ After pulling and building the control plane on the server:
 4. Check that the compact controls leave room for the video. If playback does
    not start, tap Play / resume once. Verify moving video and audible sound,
    portrait/landscape layout, leave, and a second launch.
-5. Recheck a Windows player and a spectator. Touchscreen game controls are not
-   included in this change.
+5. Recheck a Windows player and a spectator. The follow-up touch controller is
+   covered in [mobile touch validation](MOBILE-TOUCH-CONTROLS.md).
 
 If video remains black, report the iOS version and receiver diagnostics: decoded
 frame count/rate, video surface dimensions, paused/playing state, and connection
