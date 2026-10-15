@@ -449,8 +449,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .browser-player .player-toolbar > div:first-child { display: none; }
   .browser-player .player-controls { display: flex; flex-wrap: wrap; gap: 0.35rem; }
   .browser-player .player-controls button { padding: 0.35rem 0.6rem; }
-  .browser-player video, .browser-player:fullscreen video { height: 40vh; height: 40svh; min-height: 0; }
+  .browser-player video, .browser-player:fullscreen video { height: calc(100vh - 90px); height: calc(100svh - 90px); min-height: 0; max-height: none; object-fit: contain; }
   .touch-controls { padding-inline: 0.5rem; }
+  .touch-dpad { grid-template-columns: repeat(3, 44px); }
+  .touch-attacks { grid-template-columns: repeat(3, 44px); }
+  .browser-player:has(> .touch-controls:not([hidden])) { grid-template-columns: 146px minmax(0, 1fr) 166px; column-gap: 0.5rem; }
+  .browser-player > .player-toolbar, .browser-player > p { grid-column: 1 / -1; }
+  .browser-player:has(> .touch-controls:not([hidden])) > .browser-video-stage { grid-column: 2; grid-row: 2; }
+  .browser-player:has(> .touch-controls:not([hidden])) > .touch-controls { grid-column: 1 / -1; grid-row: 2; pointer-events: none; }
+  .touch-controls > * { pointer-events: auto; }
 }
 
 @media (max-width: 380px) {

@@ -405,3 +405,11 @@ After player seats are stable:
 5. Validate longer browser gameplay soaks, resource ceilings, audio sync, and
    latency against the accepted FFplay experience before making WebRTC default.
 6. Follow through with Admin/Producer browser capture and later mobile controls.
+
+### End-user client V2 draft
+
+The separate `/client-v2` draft adds operator-approved automatic browser seats,
+animated cover browsing, automatic browser-viewer handoff, and the mobile
+landscape layout correction. See [CLIENT-V2.md](CLIENT-V2.md) for the access
+boundary and [validation](../testing/CLIENT-V2-VALIDATION.md) for activation.
+This does not remove V1 or change the WebRTC latency/soak acceptance gates above.

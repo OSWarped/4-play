@@ -12,15 +12,15 @@ const stopBrowserMediaButton = document.querySelector("#stop-browser-media");
 const reconnectBrowserMediaButton = document.querySelector("#reconnect-browser-media");
 const browserReceiverStats = document.querySelector("#browser-receiver-stats");
 const librarySelection = new FourPlayCarousel.GameSelection();
-const libraryArtwork = new FourPlayCarousel.ArtworkLoader();
+const libraryArtwork = new FourPlayCarousel.ArtworkLoader(window.FourPlayV2?.artworkEnvironment);
 let libraryArtworkKey = null;
 let libraryLaunchPending = false;
 
 const state = {
-  token: localStorage.getItem("fourplay.clientToken") || "",
+  token: window.FourPlayV2 ? "" : localStorage.getItem("fourplay.clientToken") || "",
   seatId: localStorage.getItem("fourplay.seatId") || "windows-seat-1",
   destinationIp: localStorage.getItem("fourplay.destinationIp") || "",
-  lastRuntime: loadLastRuntime(),
+  lastRuntime: window.FourPlayV2 ? null : loadLastRuntime(),
   browserMediaStatus: null,
   browserMediaPeer: null,
   browserMediaStream: null,
@@ -165,12 +165,13 @@ document.querySelector("#spectator-leave").addEventListener("click", leaveBrowse
 window.addEventListener("pagehide", stopBrowserMedia);
 
 function authHeaders() {
+  if (window.FourPlayV2) return window.FourPlayV2.headers;
   if (!state.token) return {};
   return { Authorization: `Bearer ${state.token}` };
 }
 
 async function fetchJson(path) {
-  const response = await fetch(path, { headers: authHeaders() });
+  const response = await fetch(window.FourPlayV2 ? window.FourPlayV2.apiUrl(path) : path, { headers: authHeaders() });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
@@ -179,7 +180,7 @@ async function fetchJson(path) {
 }
 
 async function postJson(path, body, method = "POST") {
-  const response = await fetch(path, {
+  const response = await fetch(window.FourPlayV2 ? window.FourPlayV2.apiUrl(path) : path, {
     method,
     headers: {
       ...authHeaders(),
@@ -215,7 +216,7 @@ async function refresh() {
     renderDetails(`
       <div class="item">
         <h3>Connection problem</h3>
-        <p class="muted">Check the seat token, network, and control-plane service.</p>
+        <p class="muted">${window.FourPlayV2 ? "Reload this page or ask the site operator to check the connection." : "Check the seat token, network, and control-plane service."}</p>
       </div>
     `);
   }
@@ -228,7 +229,7 @@ function renderHome() {
   );
   if (ownDisconnected) {
     setText("#primary-title", `Rejoin ${ownDisconnected.displayName}`);
-    setText("#primary-detail", `Seat ${state.seatId} has a disconnected player slot waiting.`);
+    setText("#primary-detail", window.FourPlayV2 ? "Your player slot is waiting. Rejoin from Active sessions." : `Seat ${state.seatId} has a disconnected player slot waiting.`);
   } else if (openSession) {
     setText("#primary-title", `Join ${openSession.display_name || openSession.game_id}`);
     setText("#primary-detail", "An active game has an open player slot.");
@@ -335,7 +336,9 @@ function updateFeaturedGame(focus = false) {
   document.querySelector("#featured-start").disabled = !game || libraryLaunchPending;
   document.querySelector("#featured-details").disabled = !game;
   for (const id of ["#game-previous", "#game-next"]) document.querySelector(id).disabled = count < 2;
-  for (const card of document.querySelectorAll(".game-cover")) {
+  const covers = document.querySelectorAll(".game-cover");
+  window.FourPlayV2?.updateCovers(librarySelection, covers);
+  for (const card of covers) {
     const selected = card.dataset.gameId === game?.id;
     card.setAttribute("aria-pressed", String(selected));
     card.tabIndex = selected ? 0 : -1;
@@ -370,7 +373,7 @@ function renderSession(session) {
     .map((slot) => {
       const tone = slot.state === "open" ? "good" : slot.state === "disconnected" ? "warn" : "";
       const label = slot.label || `P${slot.player_number}`;
-      const owner = slot.seat_id ? ` by ${slot.seat_id}` : "";
+      const owner = window.FourPlayV2 ? slot.seat_id === state.seatId ? " (you)" : "" : slot.seat_id ? ` by ${slot.seat_id}` : "";
       return `<span class="pill ${tone}">${escapeHtml(label)}: ${escapeHtml(slot.state || "open")}${escapeHtml(owner)}</span>`;
     })
     .join("");
@@ -395,6 +398,7 @@ function sessionStateTone(sessionState) {
 }
 
 function destinationMismatchBadge(session) {
+  if (window.FourPlayV2) return "";
   if (!session.destination_address || !state.destinationIp) return "";
   if (session.destination_address === state.destinationIp) return "";
   return `<span class="pill warn">streaming to ${escapeHtml(session.destination_address)}</span>`;
@@ -467,16 +471,19 @@ function renderInlineSession(session) {
 }
 
 async function startGame(game) {
+  if (window.FourPlayV2?.launching) return;
   const result = document.querySelector("#client-action-result");
   syncSettingsFromInputs();
   if (!state.destinationIp) {
     result.innerHTML = `<p class="pill bad">Enter this seat's Media IP before starting a game.</p>`;
     return;
   }
+  if (window.FourPlayV2) window.FourPlayV2.launching = true;
   result.innerHTML = `<p class="pill warn">Requesting session...</p>`;
   try {
     const session = await clientApi.startGame(game.id, state.seatId, state.destinationIp);
     rememberRuntime(publicPlayerHandoff(session, 1));
+    if (window.FourPlayV2) { await openV2Player(session, 1); await refresh(); return; }
     result.innerHTML = `
       <div class="item">
         <h3>Session requested</h3>
@@ -491,10 +498,29 @@ async function startGame(game) {
     await refresh();
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+    if (window.FourPlayV2) setText("#primary-detail", error.message || String(error));
+  } finally {
+    if (window.FourPlayV2) window.FourPlayV2.launching = false;
   }
 }
 
+async function openV2Player(session, playerNumber) {
+  setText("#primary-title", "Starting your game…");
+  setText("#primary-detail", "Getting the screen and controls ready.");
+  const active = await window.FourPlayV2.waitForSession(session,
+    (id) => fetchJson(`/api/v1/sessions/${encodeURIComponent(id)}`),
+    (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)));
+  const path = active.connection_grant.webrtc_signaling.offer_path;
+  await startBrowserMedia({ dataset: {
+    browserMediaUrl: new URL(path, window.location.origin).toString(),
+    browserMediaRole: "player", browserMediaPlayer: String(playerNumber),
+    browserMediaSeat: state.seatId,
+    browserMediaButtons: String(active.runtime_profile?.buttons_per_player ?? ""),
+  } });
+}
+
 function syncSettingsFromInputs() {
+  if (window.FourPlayV2) return;
   state.token = tokenInput.value.trim();
   state.seatId = seatInput.value.trim() || "windows-seat-1";
   state.destinationIp = destinationInput.value.trim();
@@ -574,12 +600,14 @@ function renderSessionDetails(session) {
 }
 
 async function joinPlayerSlot(session, playerNumber, rejoin) {
+  if (window.FourPlayV2?.launching) return;
   const result = document.querySelector("#client-action-result");
   syncSettingsFromInputs();
   if (!Number.isInteger(playerNumber) || playerNumber <= 0) {
     result.innerHTML = `<p class="pill bad">Invalid player slot.</p>`;
     return;
   }
+  if (window.FourPlayV2) window.FourPlayV2.launching = true;
   result.innerHTML = `<p class="pill warn">${rejoin ? "Rejoining" : "Joining"} player ${escapeHtml(String(playerNumber))}...</p>`;
   try {
     if (!rejoin) {
@@ -587,6 +615,7 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
     }
     const connected = await clientApi.connectPlayerSlot(session.id, playerNumber, state.seatId);
     rememberRuntime(publicPlayerHandoff(connected, playerNumber));
+    if (window.FourPlayV2) { await openV2Player(connected, playerNumber); await refresh(); return; }
     const slot = (connected.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
     );
@@ -604,6 +633,8 @@ async function joinPlayerSlot(session, playerNumber, rejoin) {
     await refresh();
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  } finally {
+    if (window.FourPlayV2) window.FourPlayV2.launching = false;
   }
 }
 
@@ -636,16 +667,26 @@ async function leavePlayerSlot(session, playerNumber) {
 }
 
 async function spectateSession(session) {
+  if (window.FourPlayV2?.launching) return;
   const result = document.querySelector("#client-action-result");
   syncSettingsFromInputs();
   if (!state.destinationIp) {
     result.innerHTML = `<p class="pill bad">Enter this seat's Media IP before spectating.</p>`;
     return;
   }
+  if (window.FourPlayV2) window.FourPlayV2.launching = true;
   result.innerHTML = `<p class="pill warn">Creating spectator feed...</p>`;
   try {
     const grant = await clientApi.spectate(session.id, state.seatId, state.destinationIp);
     rememberRuntime(publicSpectatorHandoff(session, grant));
+    if (window.FourPlayV2) {
+      if (!grant.webrtc_signaling?.offer_path) throw Error("Browser viewing is not ready for this game. Please ask the site operator.");
+      await startBrowserMedia({ dataset: {
+        browserMediaUrl: new URL(grant.webrtc_signaling.offer_path, window.location.origin).toString(),
+        browserMediaRole: "spectator", browserMediaGrant: grant.id, browserMediaSeat: state.seatId,
+      } });
+      await refresh(); return;
+    }
     result.innerHTML = `
       <div class="item">
         <h3>Spectator feed created</h3>
@@ -659,6 +700,8 @@ async function spectateSession(session) {
     await refresh();
   } catch (error) {
     result.innerHTML = `<p class="pill bad">${escapeHtml(String(error))}</p>`;
+  } finally {
+    if (window.FourPlayV2) window.FourPlayV2.launching = false;
   }
 }
 
@@ -717,7 +760,7 @@ function publicMediaHandoff(mediaPort, webrtcSignaling) {
 
 function rememberRuntime(runtime) {
   state.lastRuntime = runtime;
-  localStorage.setItem("fourplay.lastRuntime", JSON.stringify(runtime));
+  if (!window.FourPlayV2) localStorage.setItem("fourplay.lastRuntime", JSON.stringify(runtime));
 }
 
 function loadLastRuntime() {
@@ -735,7 +778,7 @@ function clearLastRuntimeFor(sessionId, playerNumber) {
     state.lastRuntime.input?.player_number === playerNumber
   ) {
     state.lastRuntime = null;
-    localStorage.removeItem("fourplay.lastRuntime");
+    if (!window.FourPlayV2) localStorage.removeItem("fourplay.lastRuntime");
   }
 }
 
@@ -1179,7 +1222,7 @@ async function leaveBrowserGame() {
       await clientApi.releaseSpectatorGrant(context.sessionId, context.grantId, context.seatId);
       if (state.lastRuntime?.session_id === context.sessionId && state.lastRuntime?.mode === "spectator") {
         state.lastRuntime = null;
-        localStorage.removeItem("fourplay.lastRuntime");
+        if (!window.FourPlayV2) localStorage.removeItem("fourplay.lastRuntime");
       }
     }
     browserPlayer.hidden = true;
@@ -1284,4 +1327,21 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-refresh();
+if (window.FourPlayV2) {
+  document.querySelector(".topbar h1").textContent = "4-Play Arcade";
+  window.FourPlayV2.bindRail(document.querySelector("#games"), (id) => {
+    librarySelection.select(id); updateFeaturedGame();
+  });
+  window.FourPlayV2.bootstrap().then((seat) => {
+    state.seatId = seat.seat_id; state.destinationIp = seat.destination_address;
+    seatInput.value = state.seatId; destinationInput.value = state.destinationIp;
+    destinationWarning.hidden = true;
+    refresh();
+    window.setInterval(() => {
+      if (!document.hidden && !state.browserMediaPeer && !window.FourPlayV2.launching && !state.browserJoinPending) refresh();
+    }, 15000);
+  }).catch((error) => {
+    setText("#primary-title", "This arcade is not ready yet");
+    setText("#primary-detail", error.message);
+  });
+} else refresh();

@@ -12,8 +12,11 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi
 tokio-rusqlite = { version = "0.8", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+hmac = "0.12"
+sha2 = "0.10"
+ipnet = "2"
+tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
-tower = { version = "0.5", features = ["util"] }

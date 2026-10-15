@@ -1,5 +1,7 @@
+mod browser_seats;
 mod store;
 mod thegamesdb;
+pub use browser_seats::with_browser_seats;
 pub use thegamesdb::with_thegamesdb;
 
 use std::{

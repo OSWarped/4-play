@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let app = control_plane_server::app_with_database_tokens_ports_assets_preview_and_webrtc(
         &database_path,
         Duration::from_secs(offline_seconds),
-        seat_api_token,
+        seat_api_token.clone(),
         runtime_host_api_token,
         port_pools,
         asset_root.clone(),
@@ -71,6 +71,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             env::var("FOURPLAY_THEGAMESDB_CACHE").unwrap_or_else(|_| "data/thegamesdb".to_owned()),
         ),
     )?;
+    let app = control_plane_server::with_browser_seats(
+        app,
+        seat_api_token,
+        &env::var("FOURPLAY_BROWSER_SEAT_NETWORKS").unwrap_or_default(),
+        &env::var("FOURPLAY_BROWSER_SEAT_ORIGINS").unwrap_or_default(),
+    )
+    .map_err(std::io::Error::other)?;
 
     println!(
         "4-Play control plane listening on http://{bind_address} database={} host_offline_seconds={offline_seconds} media_ports={}:{} input_ports={}:{} asset_root={} preview_stale_ms={preview_stale_ms} webrtc_test_pattern_publisher={} webrtc_session_publisher_template={}",
