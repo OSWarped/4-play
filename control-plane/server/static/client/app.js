@@ -13,7 +13,10 @@ const reconnectBrowserMediaButton = document.querySelector("#reconnect-browser-m
 const browserReceiverStats = document.querySelector("#browser-receiver-stats");
 const librarySelection = new FourPlayCarousel.GameSelection();
 const libraryArtwork = new FourPlayCarousel.ArtworkLoader(window.FourPlayV2?.artworkEnvironment);
+const libraryLogo = new FourPlayCarousel.ArtworkLoader(window.FourPlayV2?.artworkEnvironment);
+const libraryMarquee = new FourPlayCarousel.ArtworkLoader(window.FourPlayV2?.artworkEnvironment);
 let libraryArtworkKey = null;
+let libraryCardsKey = null;
 let libraryLaunchPending = false;
 
 const state = {
@@ -234,7 +237,7 @@ function renderHome() {
     setText("#primary-title", `Rejoin ${ownDisconnected.displayName}`);
     setText("#primary-detail", window.FourPlayV2 ? "Your player slot is waiting. Rejoin from Active sessions." : `Seat ${state.seatId} has a disconnected player slot waiting.`);
   } else if (openSession) {
-    setText("#primary-title", `Join ${openSession.display_name || openSession.game_id}`);
+    setText("#primary-title", `Join ${sessionTitle(openSession)}`);
     setText("#primary-detail", "An active game has an open player slot.");
   } else if (state.sessions.length) {
     setText("#primary-title", "Spectate active games");
@@ -288,7 +291,7 @@ function findOwnDisconnectedSlot() {
       (candidate) => candidate.seat_id === state.seatId && candidate.state === "disconnected",
     );
     if (slot) {
-      return { session, slot, displayName: session.display_name || session.game_id };
+      return { session, slot, displayName: sessionTitle(session) };
     }
   }
   return null;
@@ -296,7 +299,11 @@ function findOwnDisconnectedSlot() {
 
 function renderGames() {
   librarySelection.update(state.games, gameFilter.value);
-  replaceChildren(document.querySelector("#games"), librarySelection.games.map(renderGame));
+  const key = JSON.stringify(librarySelection.games);
+  if (key !== libraryCardsKey) {
+    libraryCardsKey = key;
+    replaceChildren(document.querySelector("#games"), librarySelection.games.map(renderGame));
+  }
   updateFeaturedGame();
 }
 
@@ -306,10 +313,10 @@ function renderGame(game) {
   element.type = "button";
   element.className = "game-cover";
   element.dataset.gameId = game.id;
-  element.setAttribute("aria-label", `Feature ${game.display_name || game.id}`);
+  element.setAttribute("aria-label", `Feature ${FourPlayCarousel.displayTitle(game)}`);
   element.innerHTML = `
     <span class="cover-kicker">${escapeHtml(metadata.genre || "Arcade")}</span>
-    <span class="cover-name">${escapeHtml(game.display_name || game.id)}</span>
+    <span class="cover-name">${escapeHtml(FourPlayCarousel.displayTitle(game))}</span>
     <span class="cover-footer">${escapeHtml(String(metadata.release_year || "CLASSIC"))} <span>${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))}P</span></span>
   `;
   element.addEventListener("click", () => {
@@ -329,7 +336,7 @@ function updateFeaturedGame(focus = false) {
   const metadata = game?.metadata || {};
   const count = librarySelection.games.length;
   setText("#carousel-status", game ? `${librarySelection.index + 1} / ${count} games` : "No matching games. Try another search.");
-  setText("#featured-title", game?.display_name || game?.id || "No games to show");
+  setText("#featured-title", game ? FourPlayCarousel.displayTitle(game) : "No games to show");
   setText("#featured-genre", metadata.genre || "ARCADE LIBRARY");
   setText("#featured-meta", game ? [metadata.release_year, metadata.manufacturer,
     `${metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"} players`].filter(Boolean).join(" · ") : "");
@@ -349,8 +356,9 @@ function updateFeaturedGame(focus = false) {
       if (focus) card.focus({ preventScroll: true });
       // Scroll the rail only; never pull the page away from gameplay/details.
       const rail = card.parentElement;
-      const left = card.offsetLeft - rail.offsetLeft - (rail.clientWidth - card.offsetWidth) / 2;
-      rail.scrollTo({ left, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      if (window.FourPlayV2?.centerCard) window.FourPlayV2.centerCard(card, behavior);
+      else rail.scrollTo({ left: FourPlayCarousel.centeredLeft(rail, card), behavior });
     }
   }
   const artworkKey = JSON.stringify([game?.id, FourPlayCarousel.artworkPaths(game), state.token]);
@@ -361,13 +369,30 @@ function updateFeaturedGame(focus = false) {
       image.hidden = !url;
       if (url) image.src = url;
       else image.removeAttribute("src");
+      const backdrop = document.querySelector("#library-backdrop");
+      backdrop.hidden = !url;
+      if (url) backdrop.src = url;
+      else backdrop.removeAttribute("src");
     });
     image.onerror = () => { image.hidden = true; };
+    for (const [id, loader, role] of [["#featured-logo", libraryLogo, "logo"], ["#featured-marquee", libraryMarquee, "marquee"]]) {
+      const target = document.querySelector(id);
+      loader.load(game, authHeaders(), (url) => {
+        target.hidden = !url;
+        if (url) target.src = url;
+        else target.removeAttribute("src");
+      }, role);
+      target.onerror = () => { target.hidden = true; };
+    }
   }
 }
 
 function renderSessions() {
   replaceChildren(document.querySelector("#sessions"), state.sessions.map(renderSession));
+}
+
+function sessionTitle(session) {
+  return FourPlayCarousel.displayTitle(state.games.find((game) => game.id === session.game_id) || session);
 }
 
 function renderSession(session) {
@@ -382,7 +407,7 @@ function renderSession(session) {
     .join("");
   element.classList.add("clickable");
   element.innerHTML = `
-    <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
+    <h3>${escapeHtml(sessionTitle(session))}</h3>
     <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>
     ${destinationMismatchBadge(session)}
     <span class="pill">${escapeHtml(String(session.active_spectator_count || 0))} spectators</span>
@@ -412,7 +437,7 @@ function renderGameDetails(game) {
   const metadata = game.metadata || {};
   renderDetails(`
     <div class="item">
-      <h3>${escapeHtml(game.display_name || game.id)}</h3>
+      <h3>${escapeHtml(FourPlayCarousel.displayTitle(game))}</h3>
       <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
       <span class="pill">${escapeHtml(String(metadata.release_year || "unknown year"))}</span>
       <span class="pill">${escapeHtml(metadata.manufacturer || "unknown maker")}</span>
@@ -448,7 +473,7 @@ function renderInlineSession(session) {
     (slot) => slot.state === "disconnected" && slot.seat_id === state.seatId,
   );
   element.innerHTML = `
-    <h4>${escapeHtml(session.display_name || session.game_id)}</h4>
+    <h4>${escapeHtml(sessionTitle(session))}</h4>
     <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>
     ${destinationMismatchBadge(session)}
     <div class="form-actions">
@@ -565,7 +590,7 @@ function renderSessionDetails(session) {
   );
   renderDetails(`
     <div class="item">
-      <h3>${escapeHtml(session.display_name || session.game_id)}</h3>
+      <h3>${escapeHtml(sessionTitle(session))}</h3>
       <p class="muted">Running on ${escapeHtml(session.runtime_host_id || "unknown host")}.</p>
       <div>
         <span class="pill ${sessionStateTone(session.state)}">${escapeHtml(session.state || "active")}</span>

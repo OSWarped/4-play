@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), vm = require("node:vm");
-const { GameSelection, assetUrl, artworkPaths, ArtworkLoader } = require("../control-plane/server/static/client/carousel.js");
+const { GameSelection, assetUrl, artworkPaths, ArtworkLoader, displayTitle, centeredLeft, bindRail } = require("../control-plane/server/static/client/carousel.js");
 const games = [
   { id: "aliens", display_name: "Aliens", metadata: { genre: "Run and gun", release_year: 1990 } },
   { id: "kinst", display_name: "Killer Instinct", metadata: { genre: "Fighting", manufacturer: "Rare" } },
@@ -92,7 +92,9 @@ test("shipped featured view updates selection, roving focus, scroll and empty-st
   };
   const context = vm.createContext({ librarySelection: selection, libraryLaunchPending: false,
     libraryArtworkKey: null, libraryArtwork: { load: (_game, _headers, apply) => apply(null) },
-    FourPlayCarousel: { artworkPaths }, authHeaders: () => ({}),
+    libraryLogo: { load: (_game, _headers, apply) => apply(null) },
+    libraryMarquee: { load: (_game, _headers, apply) => apply(null) },
+    FourPlayCarousel: { artworkPaths, displayTitle, centeredLeft }, authHeaders: () => ({}),
     state: { token: "", sessions: [{ game_id: "kinst" }] },
     setText: (id, value) => { element(id).textContent = value; },
     document: { querySelector: element, querySelectorAll: () => covers },
@@ -113,4 +115,57 @@ test("shipped featured view updates selection, roving focus, scroll and empty-st
   assert.equal(element("#featured-details").disabled, true);
   assert.equal(element("#game-next").disabled, true);
   assert.equal(element("#featured-image").hidden, true);
+});
+
+test("sort titles are displayed and searchable, with trimmed fallbacks", () => {
+  const game = { id: "a", display_name: "Original", metadata: { sort_title: "  Modern title  " } };
+  assert.equal(displayTitle(game), "Modern title");
+  assert.equal(displayTitle({ ...game, metadata: { sort_title: "  " } }), "Original");
+  assert.equal(displayTitle({ id: "fallback" }), "fallback");
+  const selection = new GameSelection(); selection.update([game], "modern");
+  assert.equal(selection.selected.id, "a");
+});
+
+test("logos, marquees and covers have independent image priorities", async () => {
+  const game = { metadata: { artwork_path: "poster.png", screenshot_path: "scene.png", logo_path: "logo.png", marquee_path: "marquee.png" } };
+  assert.deepEqual(artworkPaths(game, "cover"), ["poster.png", "scene.png", "marquee.png", "logo.png"]);
+  assert.deepEqual(artworkPaths(game, "logo"), ["logo.png"]);
+  assert.deepEqual(artworkPaths(game, "marquee"), ["marquee.png"]);
+  const s = fixture(async () => response());
+  await s.loader.load(game, {}, s.apply, "logo");
+  assert.equal(s.requests[0][0], "/api/v1/assets/logo.png");
+});
+
+test("46 variable-width covers stay selectable despite arbitrary 3D bounds and scroll feedback", () => {
+  const listeners = {}, timers = new Map(); let timerId = 0, selected = null;
+  let offset = 120;
+  const cards = Array.from({ length: 46 }, (_, index) => {
+    const width = index % 7 === 0 ? 215 : 224;
+    const card = { offsetLeft: offset, offsetWidth: width, dataset: { gameId: String(index) },
+      getAttribute: () => selected === String(index) ? "true" : "false",
+      getBoundingClientRect() { assert.fail("Transformed geometry must never determine selection"); } };
+    offset += width - 21; return card;
+  });
+  const rail = { offsetLeft: 42, clientWidth: 800, scrollLeft: 0,
+    querySelectorAll: () => cards,
+    addEventListener: (event, handler) => { listeners[event] = handler; },
+    scrollTo({ left }) { this.scrollLeft = left; listeners.scroll(); },
+  };
+  const settle = () => { for (const callback of [...timers.values()]) { timers.clear(); callback(); } };
+  const env = { document: { body: { classList: { contains: () => false } } },
+    clearTimeout: (id) => timers.delete(id), setTimeout: (callback) => { timers.set(++timerId, callback); return timerId; } };
+  const nav = bindRail(rail, (id) => { selected = id; nav.center(cards[Number(id)], "smooth"); }, env);
+  for (const card of cards) {
+    selected = card.dataset.gameId;
+    nav.center(card, "smooth"); settle(); settle();
+    assert.equal(selected, card.dataset.gameId);
+    assert.equal(rail.scrollLeft, card.offsetLeft + card.offsetWidth / 2 - 400);
+  }
+  // A programmatic animation passing other cards cannot replace the requested game.
+  selected = "40"; nav.center(cards[40], "smooth");
+  rail.scrollLeft = centeredLeft(rail, cards[17]); listeners.scroll(); settle();
+  assert.equal(selected, "40");
+  // A real swipe can then select that middle card and settle without bouncing.
+  listeners.pointerdown(); listeners.scroll(); settle(); settle();
+  assert.equal(selected, "17");
 });

@@ -1,5 +1,5 @@
 /* A separate draft: retain V1, reuse the proven media/input lifecycle. */
-body[data-client-version="2"] { background: radial-gradient(ellipse at 50% 5%, #27344b, transparent 55%), #070911; }
+body[data-client-version="2"] { background: radial-gradient(ellipse at 50% 0, #23313b, transparent 60%), #0b0e13; }
 body[data-client-version="2"] #seat-settings,
 body[data-client-version="2"] #runtime-status,
 body[data-client-version="2"] #browser-media-status,
@@ -13,18 +13,27 @@ body[data-client-version="2"] .hero { min-height: 0; padding: 0.7rem 1rem; borde
 body[data-client-version="2"] .hero h2 { font-size: 1.2rem; }
 body[data-client-version="2"] .hero .eyebrow { display: none; }
 body[data-client-version="2"] .layout { grid-template-columns: minmax(0, 1fr); }
-body[data-client-version="2"] .library-panel { background: linear-gradient(#151b2b, #0a0f1c); }
+body[data-client-version="2"] .library-panel { position: relative; isolation: isolate; background: #131a20; border-radius: 1.5rem; border-color: #ffffff15; box-shadow: 0 1.5rem 5rem #0004; }
+body[data-client-version="2"] .library-panel > :not(.library-backdrop) { position: relative; z-index: 1; }
+body[data-client-version="2"] .library-backdrop { display: block; position: absolute; z-index: -1; inset: -5%; width: 110%; height: 110%; object-fit: cover; opacity: 0.13; filter: blur(35px) saturate(0.65); pointer-events: none; }
+body[data-client-version="2"] .library-backdrop[hidden] { display: none; }
 body[data-client-version="2"] .game-carousel { display: flex; flex-direction: column; margin-top: 0; }
-body[data-client-version="2"] .game-rail { order: -2; height: 20rem; align-items: center; perspective: 950px; gap: 0; padding-inline: calc(50% - 7rem); scroll-padding-inline: calc(50% - 7rem); }
-body[data-client-version="2"] .game-cover { flex: 0 0 14rem; min-height: 15rem; max-height: 16rem; overflow: hidden; position: relative; transform: translateZ(var(--flow-depth, 0px)) rotateY(var(--flow-turn, 0deg)); transition: transform 300ms ease, border-color 250ms ease, box-shadow 250ms ease; box-shadow: 0 1.3rem 1.8rem #0008; }
-body[data-client-version="2"] .game-cover[aria-pressed="true"] { border-color: #8fffd1; box-shadow: 0 0 1.3rem #74faca25, 0 1.5rem 2rem #000b; }
-body[data-client-version="2"] .game-cover:not(:last-child) { margin-right: -2rem; }
-body[data-client-version="2"] .cover-art { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: cover; opacity: 0.5; pointer-events: none; }
+/* Native snap uses transformed bounds. Navigation instead snaps stable layout centers. */
+body[data-client-version="2"] .game-rail { --cover-width: clamp(11rem, 18vw, 15rem); order: -2; height: 22rem; align-items: center; perspective: 1100px; gap: 0; padding-inline: calc(50% - var(--cover-width) / 2); scroll-snap-type: none; overflow-y: hidden; overscroll-behavior-x: contain; }
+body[data-client-version="2"] .game-cover { flex: 0 0 var(--cover-width); min-width: 0; height: 17rem; min-height: 0; overflow: hidden; position: relative; transform: translateZ(var(--flow-depth, 0px)) rotateY(var(--flow-turn, 0deg)); transition: transform 320ms cubic-bezier(.2,.7,.2,1), border-color 250ms ease, box-shadow 250ms ease; box-shadow: 0 1.3rem 1.8rem #0008; border-color: #ffffff24; }
+body[data-client-version="2"] .game-cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(#0005, transparent 25%, #0002 45%, #000e); pointer-events: none; }
+body[data-client-version="2"] .game-cover[aria-pressed="true"] { border-color: #9de8cd; box-shadow: 0 0 0 1px #9de8cd55, 0 1.5rem 2rem #000b; }
+body[data-client-version="2"] .game-cover:not(:last-child) { margin-right: -1.3rem; }
+body[data-client-version="2"] .cover-art { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: cover; opacity: 0.9; pointer-events: none; }
+body[data-client-version="2"] .game-cover:not([aria-pressed="true"]) .cover-art { opacity: 0.58; }
 body[data-client-version="2"] .game-cover > :not(.cover-art) { position: relative; z-index: 1; text-shadow: 0 2px 8px #000; }
 body[data-client-version="2"] .carousel-toolbar { order: -1; }
 body[data-client-version="2"] .featured-game { grid-template-columns: minmax(0, 1fr); text-align: center; }
 body[data-client-version="2"] .featured-art { display: none; }
 body[data-client-version="2"] .featured-copy h3 { font-size: clamp(1.6rem, 4vw, 2.6rem); letter-spacing: -0.04em; }
+body[data-client-version="2"] .featured-copy > .eyebrow { display: none; }
+body[data-client-version="2"] .featured-logo { width: min(22rem, 80%); height: 5.5rem; filter: drop-shadow(0 0.5rem 1rem #0008); }
+body[data-client-version="2"] .featured-marquee { width: min(30rem, 100%); height: 4rem; }
 body[data-client-version="2"] .featured-copy .form-actions { justify-content: center; }
 body[data-client-version="2"] #featured-description { max-width: 44rem; margin-inline: auto; }
 body[data-client-version="2"] #featured-start { padding: 0.9rem 2.8rem; background: linear-gradient(120deg, #69e6b7, #a3edec); color: #091b24; font-weight: 800; }
@@ -38,4 +47,9 @@ body[data-client-version="2"].browser-playing .topbar,
 body[data-client-version="2"].browser-playing main > :not(#browser-player) { display: none; }
 body[data-client-version="2"].browser-playing main { padding: 0.5rem; }
 @media (prefers-reduced-motion: reduce) { body[data-client-version="2"] .game-cover { transition: none; } }
-@media (max-width: 600px) { body[data-client-version="2"] .game-rail { height: 17rem; } body[data-client-version="2"] main { padding: 0.7rem; } }
+@media (max-width: 600px) {
+  body[data-client-version="2"] .game-rail { --cover-width: 11rem; height: 18rem; perspective: 1600px; }
+  body[data-client-version="2"] .game-cover { height: 14rem; }
+  body[data-client-version="2"] main { padding: 0.7rem; }
+  body[data-client-version="2"] .featured-logo { height: 4rem; }
+}

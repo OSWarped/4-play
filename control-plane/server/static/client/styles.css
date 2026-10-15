@@ -173,6 +173,11 @@ button:hover,
 
 /* The library is a deliberate, user-driven carousel, never an autoplay banner. */
 .library-panel { min-width: 0; overflow: hidden; padding: clamp(1rem, 2vw, 1.5rem); }
+.library-backdrop { display: none; }
+.featured-logo, .featured-marquee { display: block; object-fit: contain; margin: 0.6rem auto; max-width: 100%; }
+.featured-logo { width: 20rem; height: 5rem; }
+.featured-marquee { width: 30rem; height: 4rem; }
+.featured-logo[hidden], .featured-marquee[hidden], .library-backdrop[hidden] { display: none; }
 .game-carousel { margin-top: 1.2rem; }
 .featured-game { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.4rem; align-items: center; }
 .featured-art {

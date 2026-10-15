@@ -64,9 +64,10 @@
     cards.forEach((card, index) => {
       const offset = coverOffset(index, selection.index);
       card.style.setProperty("--flow-offset", offset);
-      card.style.setProperty("--flow-turn", `${offset === 0 ? 0 : offset < 0 ? 48 : -48}deg`);
+      card.style.setProperty("--flow-turn", `${offset === 0 ? 0 : offset < 0 ? 26 : -26}deg`);
       card.style.setProperty("--flow-depth", `${offset === 0 ? 45 : -Math.abs(offset) * 35}px`);
       card.style.zIndex = String(10 - Math.abs(offset));
+      card.style.setProperty("--flow-distance", Math.abs(offset));
       if (Math.abs(index - selection.index) > 3 || loaders.has(card)) return;
       const image = root.document.createElement("img");
       image.className = "cover-art"; image.alt = ""; image.hidden = true;
@@ -75,24 +76,12 @@
       loaders.set(card, loader);
       loader.load(selection.games[index], api.headers, (url) => {
         image.hidden = !url; if (url) image.src = url; else image.removeAttribute("src");
-      });
+      }, "cover");
       image.onerror = () => { image.hidden = true; };
     });
   };
   api.bindRail = (rail, select) => {
-    let timer;
-    rail.addEventListener("scroll", () => {
-      root.clearTimeout(timer);
-      timer = root.setTimeout(() => {
-        if (root.document.body.classList.contains("browser-playing")) return;
-        const center = rail.getBoundingClientRect().left + rail.clientWidth / 2;
-        const closest = Array.from(rail.querySelectorAll(".game-cover")).reduce((best, card) => {
-          const rect = card.getBoundingClientRect();
-          const distance = Math.abs(rect.left + rect.width / 2 - center);
-          return !best || distance < best.distance ? { card, distance } : best;
-        }, null);
-        if (closest && closest.card.getAttribute("aria-pressed") !== "true") select(closest.card.dataset.gameId);
-      }, 180);
-    }, { passive: true });
+    const navigation = root.FourPlayCarousel.bindRail(rail, select, root);
+    api.centerCard = (card, behavior) => navigation.center(card, behavior);
   };
 })(typeof window === "undefined" ? globalThis : window);
