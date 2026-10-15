@@ -14,7 +14,8 @@ function setup() {
   const status = { textContent: "" }, reconnect = {};
   const inputStatus = { textContent: "" };
   const slots = { contains: () => false, replaceChildren() {}, querySelectorAll: () => [] };
-  const elements = { "#spectator-player-slots": slots, "#spectator-actions": {}, "#spectator-action-status": {} };
+  const elements = { "#spectator-player-slots": slots, "#spectator-actions": {}, "#spectator-action-status": {},
+    "#browse-games": { focus() {} }, "#games": { scrollIntoView() {} } };
   class Peer {
     constructor() { this.listeners = {}; this.connectionState = "new"; this.iceGatheringState = "complete"; peers.push(this); }
     addTransceiver() {}
@@ -47,7 +48,7 @@ function setup() {
     document: { body: { classList: { add: (value) => bodyClasses.add(value), remove: (value) => bodyClasses.delete(value) } }, querySelector: (selector) => elements[selector] || inputStatus },
     window: { RTCPeerConnection: Peer, setInterval: () => 1, clearInterval() {}, location: { origin: "http://server" } },
     FourPlaySpectator: { ...Spectator, SpectatorOverlay: class { start() {} stop() {} setBusy() {} } },
-    clientApi: {}, rememberRuntime() {}, publicPlayerHandoff: () => ({ mode: "player" }), refresh: async () => {},
+    clientApi: {}, rememberRuntime() {}, clearLastRuntimeFor() {}, publicPlayerHandoff: () => ({ mode: "player" }), refresh: async () => {},
     syncSettingsFromInputs() {},
     postJson: async (url, body) => { calls.push({ url, body }); return { sdp_answer: "answer" }; },
   });
@@ -55,7 +56,7 @@ function setup() {
   vm.runInContext(code.slice(code.indexOf("async function startBrowserMedia("), code.indexOf("function renderLastRuntimeHint(")), context);
   const button = { dataset: { browserMediaUrl: "http://server/api/v1/sessions/game-1/webrtc/offer",
     browserMediaRole: "player", browserMediaPlayer: "2", browserMediaButtons: "2" } };
-  return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button, bodyClasses };
+  return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button, bodyClasses, player };
 }
 
 test("disconnect releases controls, reconnect preserves slot and closes old media", async () => {
@@ -149,4 +150,34 @@ test("failed slot reservation keeps the existing spectator peer running", async 
   await s.context.joinBrowserSpectator(2);
   assert.equal(s.state.browserMediaPeer, peer); assert.notEqual(peer.connectionState, "closed");
   assert.equal(s.inputs.length, 0); assert.equal(s.state.browserJoinPending, false);
+});
+
+test("Leave Game releases the player slot rather than keeping a disconnected reservation", async () => {
+  const s = setup(); await s.context.startBrowserMedia(s.button);
+  const released = [];
+  s.context.clientApi = {
+    releasePlayerSlot: async (...args) => { assert.equal(s.peers[0].connectionState, "closed"); released.push(args); },
+    disconnectPlayerSlot: () => assert.fail("Deliberate leave must release, not disconnect"),
+  };
+  await s.context.leaveBrowserGame();
+  assert.deepEqual(released, [["game-1", 2, "seat-1"]]);
+  assert.equal(s.player.hidden, true); assert.equal(s.state.browserExitPending, false);
+  assert.equal(s.state.browserMediaContext, null);
+});
+
+test("spectator Leave releases only its grant and failed player leave remains retryable", async () => {
+  const s = setup(); s.button.dataset.browserMediaRole = "spectator"; s.button.dataset.browserMediaGrant = "viewer-grant";
+  await s.context.startBrowserMedia(s.button);
+  const released = [];
+  s.context.clientApi = { releaseSpectatorGrant: async (...args) => released.push(args) };
+  await s.context.leaveBrowserGame();
+  assert.deepEqual(released, [["game-1", "viewer-grant", "seat-1"]]); assert.equal(s.player.hidden, true);
+  await s.context.startBrowserMedia({ dataset: { ...s.button.dataset, browserMediaRole: "player", browserMediaGrant: undefined } });
+  const context = s.state.browserMediaContext;
+  s.context.clientApi = { releasePlayerSlot: async () => { throw Error("offline"); } };
+  await s.context.leaveBrowserGame();
+  assert.equal(s.state.browserMediaContext, context); assert.equal(s.player.hidden, false);
+  assert.equal(s.state.browserMediaPeer, null); assert.match(s.status.textContent, /offline/);
+  s.context.clientApi.releasePlayerSlot = async () => {};
+  await s.context.leaveBrowserGame(); assert.equal(s.player.hidden, true);
 });

@@ -71,6 +71,9 @@ const clientApi = {
       seat_id: seatId,
     });
   },
+  async releasePlayerSlot(sessionId, playerNumber, seatId) {
+    return postJson(`/api/v1/sessions/${sessionId}/player-slots/${playerNumber}/release`, { seat_id: seatId });
+  },
   async spectate(sessionId, seatId, destinationAddress) {
     return postJson(`/api/v1/sessions/${sessionId}/spectators`, {
       seat_id: seatId,
@@ -647,7 +650,7 @@ async function leavePlayerSlot(session, playerNumber) {
   }
   result.innerHTML = `<p class="pill warn">Leaving player ${escapeHtml(String(playerNumber))}...</p>`;
   try {
-    const updated = await clientApi.disconnectPlayerSlot(session.id, playerNumber, state.seatId);
+    const updated = await clientApi.releasePlayerSlot(session.id, playerNumber, state.seatId);
     clearLastRuntimeFor(session.id, playerNumber);
     const slot = (updated.player_slots || []).find(
       (candidate) => candidate.player_number === playerNumber,
@@ -657,7 +660,7 @@ async function leavePlayerSlot(session, playerNumber) {
         <h3>Player slot left</h3>
         <span class="pill warn">${escapeHtml(slot?.label || `P${playerNumber}`)}</span>
         <span class="pill">${escapeHtml(slot?.state || "disconnected")}</span>
-        <p class="muted">The slot is disconnected for this seat and can be rejoined from the same client.</p>
+        <p class="muted">Your slot is released. If nobody is playing or watching, the game will close automatically.</p>
       </div>
     `;
     await refresh();
@@ -1216,7 +1219,8 @@ async function leaveBrowserGame() {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     if (context?.role === "player" && context.playerNumber > 0) {
-      await clientApi.disconnectPlayerSlot(context.sessionId, context.playerNumber, context.seatId);
+      await clientApi.releasePlayerSlot(context.sessionId, context.playerNumber, context.seatId);
+      if (context.grantId) await clientApi.releaseSpectatorGrant(context.sessionId, context.grantId, context.seatId);
       clearLastRuntimeFor(context.sessionId, context.playerNumber);
     } else if (context?.grantId) {
       await clientApi.releaseSpectatorGrant(context.sessionId, context.grantId, context.seatId);
@@ -1230,6 +1234,7 @@ async function leaveBrowserGame() {
     document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
     await refresh();
   } catch (error) {
+    state.browserMediaContext = context;
     browserPlayer.hidden = false;
     setBrowserMediaState(`Media stopped, but leaving the seat failed: ${error.message}. Use the session's Leave action to retry.`);
   } finally {

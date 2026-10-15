@@ -606,15 +606,7 @@ impl RuntimeHostStore {
                 let transaction = connection.transaction()?;
                 mark_expired_offline(&transaction, cutoff, now)?;
 
-                let seat_busy = transaction.query_row(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM sessions
-                        WHERE seat_id = ?1 AND state NOT IN
-                            ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')
-                    )",
-                    [&request.seat_id],
-                    |row| row.get::<_, bool>(0),
-                )?;
+                let seat_busy = seat_has_claimed_slot(&transaction, &request.seat_id, None, now_unix_ms)?;
                 if seat_busy {
                     return Ok(Err(AllocationRejection::SeatBusy));
                 }
@@ -1005,6 +997,7 @@ impl RuntimeHostStore {
                             format!("spectator {grant_id} released by {seat_id}")
                         ],
                     )?;
+                    stop_if_unattended(&transaction, &session_id, now)?;
                     let stored = transaction.query_row(
                         &session_select_sql("WHERE id = ?1"),
                         [&session_id],
@@ -1337,116 +1330,111 @@ impl RuntimeHostStore {
         )?;
         let stored = self
             .connection
-            .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, SlotReservationRejection>> {
-                let transaction = connection.transaction()?;
-                let current = transaction
-                    .query_row(
-                        "SELECT state, player_slots_json FROM sessions WHERE id = ?1",
-                        [&session_id],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                    )
-                    .optional()?;
-                let Some((state_name, player_slots_json)) = current else {
-                    return Ok(Err(SlotReservationRejection::SessionNotFound));
-                };
-                let state = match parse_session_state(&state_name) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredState)),
-                };
-                if !matches!(state, SessionState::Ready | SessionState::Active) {
-                    return Ok(Err(SlotReservationRejection::Unavailable));
-                }
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<
+                    Result<StoredSession, SlotReservationRejection>,
+                > {
+                    let transaction = connection.transaction()?;
+                    let current = transaction
+                        .query_row(
+                            "SELECT state, player_slots_json FROM sessions WHERE id = ?1",
+                            [&session_id],
+                            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                        )
+                        .optional()?;
+                    let Some((state_name, player_slots_json)) = current else {
+                        return Ok(Err(SlotReservationRejection::SessionNotFound));
+                    };
+                    let state = match parse_session_state(&state_name) {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredState)),
+                    };
+                    if !matches!(state, SessionState::Ready | SessionState::Active) {
+                        return Ok(Err(SlotReservationRejection::Unavailable));
+                    }
 
-                let mut slots: Vec<PlayerSlot> = match serde_json::from_str(&player_slots_json) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
-                };
-                expire_slot_leases(&mut slots, now_unix_ms);
+                    let mut slots: Vec<PlayerSlot> = match serde_json::from_str(&player_slots_json)
+                    {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                    };
+                    expire_slot_leases(&mut slots, now_unix_ms);
 
-                let already_claims_another_slot = slots.iter().any(|slot| {
-                    slot.player_number != player_number
-                        && slot.seat_id.as_deref() == Some(seat_id.as_str())
-                        && !matches!(slot.state, PlayerSlotState::Open)
-                });
-                if already_claims_another_slot {
-                    return Ok(Err(SlotReservationRejection::SeatBusy));
-                }
-
-                let seat_busy_elsewhere = transaction
-                    .prepare(
-                        "SELECT id, player_slots_json FROM sessions
-                         WHERE id != ?1
-                           AND state NOT IN
-                            ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')",
-                    )?
-                    .query_map([&session_id], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .any(|(_, slots_json)| {
-                        serde_json::from_str::<Vec<PlayerSlot>>(&slots_json)
-                            .map(|slots| {
-                                slots.iter().any(|slot| {
-                                    slot.seat_id.as_deref() == Some(seat_id.as_str())
-                                        && !matches!(slot.state, PlayerSlotState::Open)
-                                })
-                            })
-                            .unwrap_or(false)
+                    let already_claims_another_slot = slots.iter().any(|slot| {
+                        slot.player_number != player_number
+                            && slot.seat_id.as_deref() == Some(seat_id.as_str())
+                            && !matches!(slot.state, PlayerSlotState::Open)
                     });
-                if seat_busy_elsewhere {
-                    return Ok(Err(SlotReservationRejection::SeatBusy));
-                }
+                    if already_claims_another_slot {
+                        return Ok(Err(SlotReservationRejection::SeatBusy));
+                    }
 
-                let Some(slot) = slots
-                    .iter_mut()
-                    .find(|slot| slot.player_number == player_number)
-                else {
-                    return Ok(Err(SlotReservationRejection::SlotNotFound));
-                };
-                match slot.state {
-                    PlayerSlotState::Open => {
-                        slot.state = PlayerSlotState::Reserved;
-                        slot.seat_id = Some(seat_id.clone());
-                        slot.lease_expires_unix_ms = Some(now_unix_ms.saturating_add(lease_duration_ms));
+                    let seat_busy_elsewhere = seat_has_claimed_slot(
+                        &transaction,
+                        &seat_id,
+                        Some(&session_id),
+                        now_unix_ms,
+                    )?;
+                    if seat_busy_elsewhere {
+                        return Ok(Err(SlotReservationRejection::SeatBusy));
                     }
-                    PlayerSlotState::Reserved if slot.seat_id.as_deref() == Some(seat_id.as_str()) => {
-                        slot.lease_expires_unix_ms = Some(now_unix_ms.saturating_add(lease_duration_ms));
+
+                    let Some(slot) = slots
+                        .iter_mut()
+                        .find(|slot| slot.player_number == player_number)
+                    else {
+                        return Ok(Err(SlotReservationRejection::SlotNotFound));
+                    };
+                    match slot.state {
+                        PlayerSlotState::Open => {
+                            slot.state = PlayerSlotState::Reserved;
+                            slot.seat_id = Some(seat_id.clone());
+                            slot.lease_expires_unix_ms =
+                                Some(now_unix_ms.saturating_add(lease_duration_ms));
+                        }
+                        PlayerSlotState::Reserved
+                            if slot.seat_id.as_deref() == Some(seat_id.as_str()) =>
+                        {
+                            slot.lease_expires_unix_ms =
+                                Some(now_unix_ms.saturating_add(lease_duration_ms));
+                        }
+                        PlayerSlotState::Occupied | PlayerSlotState::Disconnected
+                            if slot.seat_id.as_deref() == Some(seat_id.as_str()) => {}
+                        _ => return Ok(Err(SlotReservationRejection::Unavailable)),
                     }
-                    PlayerSlotState::Occupied | PlayerSlotState::Disconnected
-                        if slot.seat_id.as_deref() == Some(seat_id.as_str()) => {}
-                    _ => return Ok(Err(SlotReservationRejection::Unavailable)),
-                }
-                let updated_slots = match serde_json::to_string(&slots) {
-                    Ok(value) => value,
-                    Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
-                };
-                transaction.execute(
-                    "UPDATE sessions
+                    let updated_slots = match serde_json::to_string(&slots) {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Err(SlotReservationRejection::InvalidStoredSlots)),
+                    };
+                    transaction.execute(
+                        "UPDATE sessions
                      SET player_slots_json = ?2,
                          grant_expires_unix_ms = max(grant_expires_unix_ms, ?3),
                          updated_unix_ms = ?4
                      WHERE id = ?1",
-                    params![session_id, updated_slots, lease_expires, now],
-                )?;
-                transaction.execute(
-                    "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+                        params![session_id, updated_slots, lease_expires, now],
+                    )?;
+                    transaction.execute(
+                        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
                      VALUES (?1, ?2, ?3, ?4)",
-                    params![
-                        session_id,
-                        state_name,
-                        now,
-                        format!("player {player_number} reserved by {seat_id} until {lease_expires}")
-                    ],
-                )?;
-                let stored = transaction.query_row(
-                    &session_select_sql("WHERE id = ?1"),
-                    [&session_id],
-                    StoredSession::from_row,
-                )?;
-                transaction.commit()?;
-                Ok(Ok(stored))
-            })
+                        params![
+                            session_id,
+                            state_name,
+                            now,
+                            format!(
+                                "player {player_number} reserved by {seat_id} until {lease_expires}"
+                            )
+                        ],
+                    )?;
+                    let stored = transaction.query_row(
+                        &session_select_sql("WHERE id = ?1"),
+                        [&session_id],
+                        StoredSession::from_row,
+                    )?;
+                    transaction.commit()?;
+                    Ok(Ok(stored))
+                },
+            )
             .await
             .map_err(StoreError::database)?
             .map_err(StoreError::from_slot_reservation_rejection)?;
@@ -1500,7 +1488,8 @@ impl RuntimeHostStore {
                         return Ok(Err(SlotReservationRejection::SlotNotFound));
                     };
 
-                    if !matches!(slot.state, PlayerSlotState::Open) {
+                    let released = !matches!(slot.state, PlayerSlotState::Open);
+                    if released {
                         if slot.seat_id.as_deref() != Some(seat_id.as_str()) {
                             return Ok(Err(SlotReservationRejection::Unavailable));
                         }
@@ -1529,6 +1518,9 @@ impl RuntimeHostStore {
                             format!("player {player_number} released by {seat_id}")
                         ],
                     )?;
+                    if released {
+                        stop_if_unattended(&transaction, &session_id, now)?;
+                    }
                     let stored = transaction.query_row(
                         &session_select_sql("WHERE id = ?1"),
                         [&session_id],
@@ -1761,6 +1753,86 @@ fn session_select_sql(suffix: &str) -> String {
                 created_unix_ms, updated_unix_ms, failure_reason
          FROM sessions {suffix}"
     )
+}
+
+// Historical creator identity is not a live seat claim. Deliberately leaving a
+// game must free this seat even while others play or graceful shutdown finishes.
+fn seat_has_claimed_slot(
+    connection: &tokio_rusqlite::rusqlite::Connection,
+    seat_id: &str,
+    exclude: Option<&str>,
+    now: u64,
+) -> tokio_rusqlite::rusqlite::Result<bool> {
+    let mut statement = connection.prepare(
+        "SELECT id, player_slots_json FROM sessions WHERE state NOT IN
+         ('stopped', 'allocation_failed', 'launch_failed', 'runtime_lost', 'terminated')",
+    )?;
+    let sessions = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for session in sessions {
+        let (id, json) = session?;
+        if exclude == Some(id.as_str()) {
+            continue;
+        }
+        let mut slots: Vec<PlayerSlot> = serde_json::from_str(&json).map_err(|error| {
+            tokio_rusqlite::rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+        })?;
+        expire_slot_leases(&mut slots, now);
+        if slots.iter().any(|slot| {
+            slot.seat_id.as_deref() == Some(seat_id) && slot.state != PlayerSlotState::Open
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+// Runs inside the same leave transaction as the participant removal, so a
+// concurrent join cannot be missed between counting and requesting shutdown.
+fn stop_if_unattended(
+    connection: &tokio_rusqlite::rusqlite::Connection,
+    session_id: &str,
+    now: i64,
+) -> tokio_rusqlite::rusqlite::Result<()> {
+    let (state, json): (String, String) = connection.query_row(
+        "SELECT state, player_slots_json FROM sessions WHERE id = ?1",
+        [session_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if !matches!(
+        state.as_str(),
+        "allocating" | "starting" | "ready" | "active" | "unhealthy"
+    ) {
+        return Ok(());
+    }
+    let mut slots: Vec<PlayerSlot> = serde_json::from_str(&json).map_err(|error| {
+        tokio_rusqlite::rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+    })?;
+    expire_slot_leases(&mut slots, now as u64);
+    // Protect an unexpired reservation while a join is being completed.
+    if slots.iter().any(|slot| {
+        matches!(
+            slot.state,
+            PlayerSlotState::Occupied | PlayerSlotState::Reserved
+        )
+    }) {
+        return Ok(());
+    }
+    let watching: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM spectator_grants WHERE session_id = ?1 AND expires_unix_ms > ?2)",
+        params![session_id, now], |row| row.get(0),
+    )?;
+    if watching {
+        return Ok(());
+    }
+    connection.execute("UPDATE sessions SET state = 'stopping', updated_unix_ms = ?2, failure_reason = NULL WHERE id = ?1", params![session_id, now])?;
+    connection.execute(
+        "INSERT INTO session_events (session_id, state, occurred_unix_ms, detail)
+        VALUES (?1, 'stopping', ?2, 'last participant left; graceful stop requested')",
+        params![session_id, now],
+    )?;
+    Ok(())
 }
 
 fn initial_player_slots(

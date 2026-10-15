@@ -19,7 +19,11 @@ spectator-to-player lifecycle rather than creating a second media stack.
    open media automatically too. Spectators can join an open slot using the
    existing overlay; touch controls appear only after player authorization.
 5. Leaving releases input and the owned slot or spectator grant, then returns to
-   browsing. Existing session lifecycle policy still decides when MAME stops.
+   browsing. The last deliberate player/spectator leave atomically requests
+   graceful session shutdown; another connected player, live spectator grant,
+   or pending unexpired player reservation keeps the game alive. A departed
+   seat can start another game immediately; historical creator identity is not
+   a seat lock. Temporary disconnects retain the existing reconnect grace.
    Browsing refreshes every 15 s while visible and not playing/launching.
 
 Some browsers may still require a Play / resume gesture for audio autoplay;

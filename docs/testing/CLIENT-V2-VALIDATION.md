@@ -43,6 +43,16 @@ To disable automatic enrollment/access, remove either setting and restart.
    the seat identity. Cookies are not copied to other browsers/devices.
 7. Recheck `/client` and `/admin` for regressions. V2 cookies alone must not
    unlock existing APIs or Admin operations.
+8. Alone in a game, click Leave Game: the session should enter `stopping`, then
+   disappear when the host finishes graceful runtime/media cleanup. Immediately
+   starting another game from the released seat must work. Repeat with two
+   players and with a spectator: the game stays running for whoever remains,
+   then stops when the final participant leaves. A pending join reservation is
+   protected. Network/media disconnects alone retain reconnect grace.
+
+After updating this fix, reload all browser clients. Sessions stranded by the
+old disconnect-on-leave behavior are not bulk-stopped automatically; stop a known
+orphan once through Admin, or rejoin and deliberately leave with the updated UI.
 
 First iOS, LAN, and visual acceptance remain manual. Do not claim native-device
 performance from desktop previews or simulated peers.

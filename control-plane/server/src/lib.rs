@@ -2033,6 +2033,276 @@ mod tests {
     use tokio::net::TcpListener;
     use tower::ServiceExt;
 
+    async fn active_leave_fixture() -> (Router, String) {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (status, session) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(status, 201);
+        let id = session["id"].as_str().unwrap().to_owned();
+        for state in ["starting", "ready", "active"] {
+            let (status, _) = request_json(
+                service.clone(),
+                Method::PUT,
+                &format!("/api/v1/runtime-hosts/reference-linux/sessions/{id}/state"),
+                Some(json!({"state":state})),
+            )
+            .await;
+            assert_eq!(status, 200);
+        }
+        (service, id)
+    }
+
+    #[tokio::test]
+    async fn last_explicit_player_leave_requests_shutdown_and_frees_seat_immediately() {
+        let (service, id) = active_leave_fixture().await;
+        let path = format!("/api/v1/sessions/{id}/player-slots/1/release");
+        let (wrong, _) = request_json(
+            service.clone(),
+            Method::POST,
+            &path,
+            Some(json!({"seat_id":"intruder"})),
+        )
+        .await;
+        assert_eq!(wrong, 409);
+        let (status, left) = request_json(
+            service.clone(),
+            Method::POST,
+            &path,
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(left["state"], "stopping");
+        assert_eq!(left["player_slots"][0]["state"], "open");
+        let (status, next) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(status, 201);
+        assert_ne!(next["id"], id);
+        assert_ne!(
+            next["connection_grant"]["input_udp_port"],
+            left["connection_grant"]["input_udp_port"]
+        );
+        let (_, assignments) = request_json(
+            service.clone(),
+            Method::GET,
+            "/api/v1/runtime-hosts/reference-linux/sessions",
+            None,
+        )
+        .await;
+        assert!(
+            assignments["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|session| session["session_id"] == id && session["state"] == "stopping")
+        );
+        let (status, stopped) = request_json(
+            service,
+            Method::PUT,
+            &format!("/api/v1/runtime-hosts/reference-linux/sessions/{id}/state"),
+            Some(json!({"state":"stopped"})),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(stopped["state"], "stopped");
+    }
+
+    #[tokio::test]
+    async fn leaving_creator_keeps_other_player_running_without_locking_the_departed_seat() {
+        let (service, id) = active_leave_fixture().await;
+        for action in ["reserve", "connect"] {
+            let (status, _) = request_json(
+                service.clone(),
+                Method::POST,
+                &format!("/api/v1/sessions/{id}/player-slots/2/{action}"),
+                Some(json!({"seat_id":"seat-two"})),
+            )
+            .await;
+            assert_eq!(status, 200);
+        }
+        // A joined player cannot also allocate another game while still playing.
+        let (busy, _) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-two")),
+        )
+        .await;
+        assert_eq!(busy, 409);
+        let (_, left) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/release"),
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(left["state"], "active");
+        assert_eq!(left["player_slots"][1]["state"], "occupied");
+        let (status, _) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("seat-one")),
+        )
+        .await;
+        assert_eq!(status, 201);
+        let (_, final_leave) = request_json(
+            service,
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/2/release"),
+            Some(json!({"seat_id":"seat-two"})),
+        )
+        .await;
+        assert_eq!(final_leave["state"], "stopping");
+    }
+
+    #[tokio::test]
+    async fn spectators_keep_game_alive_until_the_last_spectator_leaves() {
+        let (service, id) = active_leave_fixture().await;
+        let mut grants = Vec::new();
+        for seat in ["viewer-one", "viewer-two"] {
+            let (status, grant) = request_json(
+                service.clone(),
+                Method::POST,
+                &format!("/api/v1/sessions/{id}/spectators"),
+                Some(json!({"seat_id":seat,"destination_address":"192.0.2.25"})),
+            )
+            .await;
+            assert_eq!(status, 201);
+            grants.push(grant["id"].as_str().unwrap().to_owned());
+        }
+        let (_, left) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/release"),
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(left["state"], "active");
+        for (index, seat) in ["viewer-one", "viewer-two"].iter().enumerate() {
+            let path = format!("/api/v1/sessions/{id}/spectators/{}", grants[index]);
+            let (wrong, _) = request_json(
+                service.clone(),
+                Method::DELETE,
+                &path,
+                Some(json!({"seat_id":"wrong-viewer"})),
+            )
+            .await;
+            assert_eq!(wrong, 404);
+            let (status, left) = request_json(
+                service.clone(),
+                Method::DELETE,
+                &path,
+                Some(json!({"seat_id":seat})),
+            )
+            .await;
+            assert_eq!(status, 200);
+            assert_eq!(
+                left["state"],
+                if index == 0 { "active" } else { "stopping" }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn temporary_disconnect_retains_grace_but_explicit_leave_does_not() {
+        let (service, id) = active_leave_fixture().await;
+        let (_, disconnected) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/disconnect"),
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(disconnected["state"], "active");
+        assert_eq!(disconnected["player_slots"][0]["state"], "disconnected");
+        // Another seat releasing an already-open slot must not terminate the grace session.
+        let (_, noop) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/2/release"),
+            Some(json!({"seat_id":"intruder"})),
+        )
+        .await;
+        assert_eq!(noop["state"], "active");
+        let (_, left) = request_json(
+            service,
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/release"),
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(left["state"], "stopping");
+    }
+
+    #[tokio::test]
+    async fn pending_join_is_protected_and_simultaneous_final_leaves_cannot_miss_shutdown() {
+        let (service, id) = active_leave_fixture().await;
+        let (_, reserved) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/2/reserve"),
+            Some(json!({"seat_id":"seat-two"})),
+        )
+        .await;
+        assert_eq!(reserved["player_slots"][1]["state"], "reserved");
+        let (_, left) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/player-slots/1/release"),
+            Some(json!({"seat_id":"seat-one"})),
+        )
+        .await;
+        assert_eq!(left["state"], "active");
+        let (_, viewer) = request_json(
+            service.clone(),
+            Method::POST,
+            &format!("/api/v1/sessions/{id}/spectators"),
+            Some(json!({"seat_id":"viewer","destination_address":"192.0.2.25"})),
+        )
+        .await;
+        let release = format!("/api/v1/sessions/{id}/player-slots/2/release");
+        let view = format!(
+            "/api/v1/sessions/{id}/spectators/{}",
+            viewer["id"].as_str().unwrap()
+        );
+        let (player, spectator) = tokio::join!(
+            request_json(
+                service.clone(),
+                Method::POST,
+                &release,
+                Some(json!({"seat_id":"seat-two"}))
+            ),
+            request_json(
+                service.clone(),
+                Method::DELETE,
+                &view,
+                Some(json!({"seat_id":"viewer"}))
+            ),
+        );
+        assert_eq!(player.0, 200);
+        assert_eq!(spectator.0, 200);
+        let (_, final_state) = request_json(
+            service,
+            Method::GET,
+            &format!("/api/v1/sessions/{id}"),
+            None,
+        )
+        .await;
+        assert_eq!(final_state["state"], "stopping");
+    }
+
     fn registration() -> Value {
         json!({
             "display_name": "Reference Linux Host",
