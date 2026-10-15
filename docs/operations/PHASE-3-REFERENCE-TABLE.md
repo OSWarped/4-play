@@ -103,13 +103,18 @@ expanded catalog:
 FOURPLAY_STARTUP_MEDIA_TIMEOUT_SECONDS=30
 ```
 
-The reference MAME UI config should also skip startup warnings for headless
-cabinet operation:
+The reference MAME UI config should also skip previously acknowledged startup
+warnings for headless cabinet operation:
 
 ```bash
 sudo sed -i 's/^skip_warnings .*/skip_warnings             1/' /opt/4play/config/mame/ui.ini
 sudo sed -i 's/^skip_gameinfo .*/skip_gameinfo             1/' /opt/4play/config/mame/mame.ini
 ```
+
+These settings alone do **not** acknowledge first-launch emulation warnings.
+Fresh session configuration directories need the opt-in custom MAME
+[headless warning acknowledgment patch](../../deploy/mame/README.md).
+It preserves severe/ROM-loader warning blocks and logs non-critical warnings.
 
 ## Windows seat startup target
 

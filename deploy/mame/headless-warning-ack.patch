@@ -1,0 +1,33 @@
+diff --git a/src/frontend/mame/ui/ui.cpp b/src/frontend/mame/ui/ui.cpp
+--- a/src/frontend/mame/ui/ui.cpp
++++ b/src/frontend/mame/ui/ui.cpp
+@@ -50,5 +50,6 @@
+ #include "../osd/modules/lib/osdobj_common.h"
+ 
++#include <cstdlib>
+ #include <functional>
+ #include <type_traits>
+ 
+@@ -699,6 +700,22 @@ void mame_ui_manager::display_startup_screens(bool first_time)
+ 		case 1:
+ 			warning_text = machine_info().warnings_string();
+ 			m_has_warnings = !warning_text.empty();
++			// Explicit 4-Play raw-streaming opt-in, not a general warning bypass.
++			// Never acknowledge severe warnings or ROM-loading warnings/errors.
++			if (m_has_warnings && show_warnings
++					&& !machine_info().has_severe_warnings()
++					&& !machine().rom_load().warnings()
++					&& !machine().rom_load().knownbad()
++					&& machine().options().raw_video_write()[0]
++					&& machine().options().raw_audio_write()[0])
++			{
++				char const *const acknowledge = std::getenv("FOURPLAY_MAME_ACK_WARNINGS");
++				if (acknowledge && !std::strcmp(acknowledge, "1"))
++				{
++					osd_printf_warning("4-Play acknowledged non-critical startup warning: %s\n", warning_text.c_str());
++					show_warnings = false;
++				}
++			}
+ 			if (show_warnings)
+ 			{
+ 				bool need_warning = m_has_warnings;

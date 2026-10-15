@@ -47,10 +47,9 @@ impl MameProcess {
             runtime_control_script(&stop_request_path),
         )?;
 
-        let mut command = Command::new(&config.binary);
+        let mut command = headless_command(&config.binary);
 
         command
-            .env("SDL_VIDEODRIVER", "offscreen")
             .arg("-inipath")
             .arg(&config.ini_path)
             .arg("-cfg_directory")
@@ -155,6 +154,14 @@ impl MameProcess {
     }
 }
 
+fn headless_command(binary: &Path) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .env("SDL_VIDEODRIVER", "offscreen")
+        .env("FOURPLAY_MAME_ACK_WARNINGS", "1");
+    command
+}
+
 fn runtime_control_script(stop_request_path: &Path) -> String {
     format!(
         r#"local stop_request_path = [[{}]]
@@ -242,8 +249,26 @@ fn validate_path(path: &Path, label: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{controller_profile, runtime_control_script};
+    use super::{controller_profile, headless_command, runtime_control_script};
     use std::path::Path;
+
+    #[test]
+    fn headless_launch_explicitly_opts_in_to_noncritical_warning_acknowledgment() {
+        let command = headless_command(Path::new("mame"));
+        let environment: Vec<_> = command.get_envs().collect();
+        assert!(
+            environment
+                .iter()
+                .any(|(key, value)| *key == "FOURPLAY_MAME_ACK_WARNINGS"
+                    && *value == Some(std::ffi::OsStr::new("1")))
+        );
+        assert!(
+            environment
+                .iter()
+                .any(|(key, value)| *key == "SDL_VIDEODRIVER"
+                    && *value == Some(std::ffi::OsStr::new("offscreen")))
+        );
+    }
 
     #[test]
     fn controller_profile_maps_assigned_devices_to_players() {
