@@ -77,8 +77,11 @@ Source: `C:\Users\blake\Downloads\Fighters`.
    after the host's next successful catalog refresh. Admin refreshes again after
    a short delay; V2 browsing also refreshes automatically.
 
-`aof.zip` plus this folder's `neogeo.zip` passed an isolated real-MAME audit.
-That audit did **not** install anything into the live library. The folder also
+`aof.zip` plus this folder's `neogeo.zip` passed an isolated real-MAME audit
+and the complete Linux HTTP upload, audit, sandbox installation and automatic
+host-agent catalog publication test on 2026-10-15. All 73 control-plane tests,
+14 host-agent tests and 7 importer unit tests also passed on Linux. These tests
+did **not** install anything into the live library. The folder also
 contains `kinst/kinst.chd` and `kinst2/kinst2.chd`; select their game ZIPs and
 CHDs together (folder selection preserves folder hints for ambiguous disk names).
 
