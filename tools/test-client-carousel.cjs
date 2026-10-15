@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), vm = require("node:vm");
-const { GameSelection, assetUrl, artworkPaths, ArtworkLoader, displayTitle, centeredLeft, bindRail } = require("../control-plane/server/static/client/carousel.js");
+const { GameSelection, assetUrl, artworkPaths, ArtworkLoader, displayTitle, centeredLeft, bindRail, loadBrand } = require("../control-plane/server/static/client/carousel.js");
 const games = [
   { id: "aliens", display_name: "Aliens", metadata: { genre: "Run and gun", release_year: 1990 } },
   { id: "kinst", display_name: "Killer Instinct", metadata: { genre: "Fighting", manufacturer: "Rare" } },
@@ -94,7 +94,7 @@ test("shipped featured view updates selection, roving focus, scroll and empty-st
     libraryArtworkKey: null, libraryArtwork: { load: (_game, _headers, apply) => apply(null) },
     libraryLogo: { load: (_game, _headers, apply) => apply(null) },
     libraryMarquee: { load: (_game, _headers, apply) => apply(null) },
-    FourPlayCarousel: { artworkPaths, displayTitle, centeredLeft }, authHeaders: () => ({}),
+    FourPlayCarousel: { artworkPaths, displayTitle, centeredLeft, loadBrand }, authHeaders: () => ({}),
     state: { token: "", sessions: [{ game_id: "kinst" }] },
     setText: (id, value) => { element(id).textContent = value; },
     document: { querySelector: element, querySelectorAll: () => covers },
@@ -128,12 +128,30 @@ test("sort titles are displayed and searchable, with trimmed fallbacks", () => {
 
 test("logos, marquees and covers have independent image priorities", async () => {
   const game = { metadata: { artwork_path: "poster.png", screenshot_path: "scene.png", logo_path: "logo.png", marquee_path: "marquee.png" } };
-  assert.deepEqual(artworkPaths(game, "cover"), ["poster.png", "scene.png", "marquee.png", "logo.png"]);
+  assert.deepEqual(artworkPaths(game, "cover"), ["scene.png", "poster.png", "marquee.png", "logo.png"]);
   assert.deepEqual(artworkPaths(game, "logo"), ["logo.png"]);
   assert.deepEqual(artworkPaths(game, "marquee"), ["marquee.png"]);
   const s = fixture(async () => response());
   await s.loader.load(game, {}, s.apply, "logo");
   assert.equal(s.requests[0][0], "/api/v1/assets/logo.png");
+});
+
+test("a decoded logo replaces marquee/title, and failed or missing logos restore fallbacks", () => {
+  const node = () => ({ hidden: false, removeAttribute() { delete this.src; } });
+  const logo = node(), marquee = node(), title = node();
+  const loader = role => ({ load(_game, _headers, apply) { apply(null); apply(`blob:${role}`); } });
+  loadBrand({ display_name: "Original", metadata: { sort_title: "Preferred" } }, {}, loader("logo"), loader("marquee"), logo, marquee, title);
+  assert.equal(title.hidden, false); // A URL alone is not proof the image decoded.
+  marquee.currentSrc = "blob:marquee"; marquee.onload();
+  assert.equal(marquee.hidden, false);
+  logo.currentSrc = "blob:logo"; logo.onload();
+  assert.equal(logo.hidden, false); assert.equal(logo.alt, "Preferred");
+  assert.equal(marquee.hidden, true); assert.equal(title.hidden, true);
+  logo.onerror();
+  assert.equal(logo.hidden, true); assert.equal(marquee.hidden, false); assert.equal(title.hidden, false);
+  const absent = { load(_game, _headers, apply) { apply(null); } };
+  loadBrand({}, {}, absent, absent, logo, marquee, title);
+  assert.equal(logo.hidden, true); assert.equal(marquee.hidden, true); assert.equal(title.hidden, false);
 });
 
 test("46 variable-width covers stay selectable despite arbitrary 3D bounds and scroll feedback", () => {

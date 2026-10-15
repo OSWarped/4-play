@@ -375,15 +375,9 @@ function updateFeaturedGame(focus = false) {
       else backdrop.removeAttribute("src");
     });
     image.onerror = () => { image.hidden = true; };
-    for (const [id, loader, role] of [["#featured-logo", libraryLogo, "logo"], ["#featured-marquee", libraryMarquee, "marquee"]]) {
-      const target = document.querySelector(id);
-      loader.load(game, authHeaders(), (url) => {
-        target.hidden = !url;
-        if (url) target.src = url;
-        else target.removeAttribute("src");
-      }, role);
-      target.onerror = () => { target.hidden = true; };
-    }
+    FourPlayCarousel.loadBrand(game, authHeaders(), libraryLogo, libraryMarquee,
+      document.querySelector("#featured-logo"), document.querySelector("#featured-marquee"),
+      document.querySelector("#featured-title"));
   }
 }
 

@@ -19,12 +19,12 @@ body[data-client-version="2"] .library-backdrop { display: block; position: abso
 body[data-client-version="2"] .library-backdrop[hidden] { display: none; }
 body[data-client-version="2"] .game-carousel { display: flex; flex-direction: column; margin-top: 0; }
 /* Native snap uses transformed bounds. Navigation instead snaps stable layout centers. */
-body[data-client-version="2"] .game-rail { --cover-width: clamp(11rem, 18vw, 15rem); order: -2; height: 22rem; align-items: center; perspective: 1100px; gap: 0; padding-inline: calc(50% - var(--cover-width) / 2); scroll-snap-type: none; overflow-y: hidden; overscroll-behavior-x: contain; }
-body[data-client-version="2"] .game-cover { flex: 0 0 var(--cover-width); min-width: 0; height: 17rem; min-height: 0; overflow: hidden; position: relative; transform: translateZ(var(--flow-depth, 0px)) rotateY(var(--flow-turn, 0deg)); transition: transform 320ms cubic-bezier(.2,.7,.2,1), border-color 250ms ease, box-shadow 250ms ease; box-shadow: 0 1.3rem 1.8rem #0008; border-color: #ffffff24; }
+body[data-client-version="2"] .game-rail { --cover-width: clamp(16rem, 25vw, 22rem); order: -2; height: 25rem; align-items: center; perspective: 1300px; gap: 0; padding-inline: calc(50% - var(--cover-width) / 2); scroll-snap-type: none; overflow-y: hidden; overscroll-behavior-x: contain; }
+body[data-client-version="2"] .game-cover { flex: 0 0 var(--cover-width); min-width: 0; height: 20rem; min-height: 0; overflow: hidden; position: relative; transform: translateZ(var(--flow-depth, 0px)) rotateY(var(--flow-turn, 0deg)); transition: transform 320ms cubic-bezier(.2,.7,.2,1), border-color 250ms ease, box-shadow 250ms ease; box-shadow: 0 1.3rem 1.8rem #0008; border-color: #ffffff24; }
 body[data-client-version="2"] .game-cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(#0005, transparent 25%, #0002 45%, #000e); pointer-events: none; }
 body[data-client-version="2"] .game-cover[aria-pressed="true"] { border-color: #9de8cd; box-shadow: 0 0 0 1px #9de8cd55, 0 1.5rem 2rem #000b; }
 body[data-client-version="2"] .game-cover:not(:last-child) { margin-right: -1.3rem; }
-body[data-client-version="2"] .cover-art { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: cover; opacity: 0.9; pointer-events: none; }
+body[data-client-version="2"] .cover-art { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: contain; background: #080d12; opacity: 0.9; pointer-events: none; }
 body[data-client-version="2"] .game-cover:not([aria-pressed="true"]) .cover-art { opacity: 0.58; }
 body[data-client-version="2"] .game-cover > :not(.cover-art) { position: relative; z-index: 1; text-shadow: 0 2px 8px #000; }
 body[data-client-version="2"] .carousel-toolbar { order: -1; }
@@ -48,8 +48,8 @@ body[data-client-version="2"].browser-playing main > :not(#browser-player) { dis
 body[data-client-version="2"].browser-playing main { padding: 0.5rem; }
 @media (prefers-reduced-motion: reduce) { body[data-client-version="2"] .game-cover { transition: none; } }
 @media (max-width: 600px) {
-  body[data-client-version="2"] .game-rail { --cover-width: 11rem; height: 18rem; perspective: 1600px; }
-  body[data-client-version="2"] .game-cover { height: 14rem; }
+  body[data-client-version="2"] .game-rail { --cover-width: min(17rem, 70vw); height: 21rem; perspective: 1600px; }
+  body[data-client-version="2"] .game-cover { height: 17rem; }
   body[data-client-version="2"] main { padding: 0.7rem; }
   body[data-client-version="2"] .featured-logo { height: 4rem; }
 }

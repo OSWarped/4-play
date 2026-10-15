@@ -34,9 +34,40 @@
   function artworkPaths(game, role = "scene") {
     const metadata = game?.metadata || {};
     const paths = role === "logo" ? [metadata.logo_path] : role === "marquee" ? [metadata.marquee_path]
-      : role === "cover" ? [metadata.artwork_path, metadata.screenshot_path, metadata.marquee_path, metadata.logo_path]
+      : role === "cover" ? [metadata.screenshot_path, metadata.artwork_path, metadata.marquee_path, metadata.logo_path]
       : [metadata.screenshot_path, metadata.artwork_path, metadata.marquee_path, metadata.logo_path];
     return [...new Set(paths.filter((path) => typeof path === "string" && path))];
+  }
+
+  function loadBrand(game, headers, logoLoader, marqueeLoader, logo, marquee, title) {
+    let logoReady = false, marqueeReady = false;
+    const update = () => {
+      logo.hidden = !logoReady;
+      marquee.hidden = logoReady || !marqueeReady;
+      title.hidden = logoReady;
+    };
+    for (const [node, loader, role] of [[logo, logoLoader, "logo"], [marquee, marqueeLoader, "marquee"]]) {
+      node.onload = node.onerror = null;
+      node.hidden = true;
+      node.removeAttribute("src");
+      node.alt = displayTitle(game);
+      loader.load(game, headers, (url) => {
+        if (!url) { update(); return; }
+        node.onload = () => {
+          if (node.currentSrc !== url) return;
+          if (role === "logo") logoReady = true;
+          else marqueeReady = true;
+          update();
+        };
+        node.onerror = () => {
+          if (role === "logo") logoReady = false;
+          else marqueeReady = false;
+          update();
+        };
+        node.src = url;
+      }, role);
+    }
+    update();
   }
 
   // .game-rail is positioned: card offsets are in its untransformed scroll space.
@@ -119,7 +150,7 @@
     }
   }
 
-  const api = { GameSelection, displayTitle, artworkPaths, assetUrl, ArtworkLoader, cardCenter, centeredLeft, bindRail };
+  const api = { GameSelection, displayTitle, artworkPaths, loadBrand, assetUrl, ArtworkLoader, cardCenter, centeredLeft, bindRail };
   root.FourPlayCarousel = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

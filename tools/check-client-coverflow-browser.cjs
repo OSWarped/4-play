@@ -84,7 +84,8 @@ async function main() {
     }
     await evaluate(`document.querySelectorAll('.game-cover')[0].click()`); await pause(700);
     await assertCentered();
-    assert.equal(await evaluate(`document.querySelector('#featured-logo').hidden || document.querySelector('#featured-marquee').hidden`), false);
+    assert.deepEqual(await evaluate(`['#featured-logo','#featured-marquee','#featured-title'].map(id=>document.querySelector(id).hidden)`), [false, true, true]);
+    assert.ok(await evaluate(`document.querySelector('.game-cover').offsetWidth`)>300);
     const screenshot = async name => {
       fs.mkdirSync('tmp', { recursive: true });
       fs.writeFileSync(`tmp/${name}.png`, Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
@@ -103,6 +104,7 @@ async function main() {
       await assertCentered();
       assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
       assert.equal(await evaluate(`document.querySelector('#featured-logo').hidden && document.querySelector('#featured-marquee').hidden`), true);
+      assert.equal(await evaluate(`document.querySelector('#featured-title').hidden`), false);
       await screenshot(`client-modern-${name}`);
     }
     assert.deepEqual(errors, []);
