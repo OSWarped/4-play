@@ -123,6 +123,12 @@ button:hover,
   display: none;
 }
 
+.seat-settings { min-width: 0; }
+.seat-settings summary { cursor: pointer; border: 1px solid var(--border); border-radius: 0.85rem; padding: 0.7rem 1rem; background: var(--panel-2); }
+.seat-settings[open] .seat-panel { margin-top: 1rem; }
+.player-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.browser-player { scroll-margin-top: 1rem; }
+
 .eyebrow,
 .label {
   color: var(--accent);
@@ -407,4 +413,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .layout {
     grid-template-columns: minmax(0, 1fr);
   }
+  .topbar { position: static; }
+  .topbar h1 { font-size: 1.4rem; }
+  .seat-settings summary { font-size: 0.9rem; }
+  .browser-player .player-toolbar { gap: 0.4rem; }
+  .browser-player .player-toolbar h2 { font-size: 1.1rem; }
+  .browser-player .player-toolbar .eyebrow { display: none; }
+  .player-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .player-controls button { font-size: 0.85rem; padding: 0.6rem; }
+  body.browser-playing .topbar,
+  body.browser-playing main > :not(#browser-player) { display: none; }
+  body.browser-playing main { padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem max(0.5rem, env(safe-area-inset-bottom)); }
+  .browser-player video { min-height: 0; aspect-ratio: 4 / 3; max-height: 65vh; max-height: 65svh; object-fit: contain; }
+  .browser-player #browser-input-state, .browser-player #browser-receiver-stats { font-size: 0.75rem; overflow-wrap: anywhere; margin-bottom: 0; }
+  .spectator-actions { max-height: 80%; overflow-y: auto; padding: 0.65rem; }
+  .spectator-actions .form-actions { flex-wrap: wrap; gap: 0.35rem; }
+  .spectator-actions button { padding: 0.55rem; font-size: 0.85rem; }
 }

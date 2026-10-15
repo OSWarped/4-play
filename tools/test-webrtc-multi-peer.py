@@ -35,7 +35,7 @@ def wait_for(predicate, label, timeout=10):
 
 
 class Client:
-    def __init__(self, publisher, authorization, viewer_key=None):
+    def __init__(self, publisher, authorization, viewer_key=None, video_payload=96, audio_payload=111):
         self.pipeline = Gst.Pipeline.new(None)
         self.peer = Gst.ElementFactory.make("webrtcbin", None)
         self.peer.set_property("bundle-policy", GstWebRTC.WebRTCBundlePolicy.MAX_BUNDLE)
@@ -48,8 +48,8 @@ class Client:
         self.handlers = []
         self.handlers.append((self.peer, self.peer.connect("pad-added", self.pad_added)))
         self.pipeline.set_state(Gst.State.PLAYING)
-        for caps in ["application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000",
-                     "application/x-rtp,media=audio,encoding-name=OPUS,payload=111,clock-rate=48000"]:
+        for caps in [f"application/x-rtp,media=video,encoding-name=VP8,payload={video_payload},clock-rate=90000",
+                     f"application/x-rtp,media=audio,encoding-name=OPUS,payload={audio_payload},clock-rate=48000"]:
             self.peer.emit("add-transceiver", GstWebRTC.WebRTCRTPTransceiverDirection.RECVONLY, Gst.Caps.from_string(caps))
         # The spectator deliberately requests an input channel; the server must reject it.
         self.channel = self.peer.emit("create-data-channel", "4play-input", Gst.Structure.new_from_string(
@@ -208,7 +208,9 @@ def main():
                                        str(uuid.uuid4()), time.time_ns() // 1_000_000 + 60000)
             auth2 = replace(auth1, player=2, peer_id=str(uuid.uuid4()))
             for auth in [auth1, auth2, None]:
-                clients.append(Client(publisher, auth, "spectator-grant" if auth is None else None))
+                clients.append(Client(publisher, auth, "spectator-grant" if auth is None else None,
+                                      video_payload=100 if auth is auth1 else 96,
+                                      audio_payload=109 if auth is auth1 else 111))
             wait_for(lambda: all(c.counts["video"] > 10 and c.counts["audio"] > 10 for c in clients), "all three peers decode video/audio")
             wait_for(lambda: clients[0].channel_open and clients[1].channel_open, "player input channels")
             wait_for(lambda: clients[2].channel_closed, "spectator input rejected")

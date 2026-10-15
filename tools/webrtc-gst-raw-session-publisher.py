@@ -32,6 +32,7 @@ from webrtc_browser_input import BrowserInputRelay, InputAuthorization
 from webrtc_peer_pool import PeerPool, PeerCapacityError
 from webrtc_client_address import browser_host_for_request
 from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_ice_udp_ports, validate_answer_candidates
+from webrtc_offer_codecs import offered_payloads
 
 import gi
 
@@ -50,8 +51,8 @@ appsrc name=video_source is-live=true format=time block=false max-buffers=2 max-
   ! videoconvert
   ! video/x-raw,format=I420
   ! vp8enc deadline=1 cpu-used=8 target-bitrate={video_bitrate_bps} keyframe-max-dist={keyframe_distance}
-  ! rtpvp8pay pt=96
-  ! application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000
+  ! rtpvp8pay name=video_payloader pt=96
+  ! capsfilter name=video_rtp_caps caps="application/x-rtp,media=video,encoding-name=VP8,payload=96,clock-rate=90000"
   ! webrtc.
 appsrc name=audio_source is-live=true format=time block=false max-buffers=4 max-bytes=0 max-time=0 leaky-type=downstream
   caps="audio/x-raw,format=S16LE,rate=48000,channels=2,layout=interleaved"
@@ -59,8 +60,8 @@ appsrc name=audio_source is-live=true format=time block=false max-buffers=4 max-
   ! audioconvert
   ! audioresample
   ! opusenc audio-type=restricted-lowdelay bitrate={audio_bitrate_bps}
-  ! rtpopuspay pt=111
-  ! application/x-rtp,media=audio,encoding-name=OPUS,payload=111,clock-rate=48000
+  ! rtpopuspay name=audio_payloader pt=111
+  ! capsfilter name=audio_rtp_caps caps="application/x-rtp,media=audio,encoding-name=OPUS,payload=111,clock-rate=48000"
   ! webrtc.
 """
 
@@ -436,6 +437,14 @@ class RawSessionPublisher:
         try:
             if self.closed:
                 raise RuntimeError("browser peer closed")
+            payloads = offered_payloads(offer_text)
+            for kind, payload in payloads.items():
+                codec = "VP8" if kind == "video" else "OPUS"
+                clock = 90000 if kind == "video" else 48000
+                self.pipeline.get_by_name(f"{kind}_payloader").set_property("pt", payload)
+                self.pipeline.get_by_name(f"{kind}_rtp_caps").set_property("caps", Gst.Caps.from_string(
+                    f"application/x-rtp,media={kind},encoding-name={codec},payload={payload},clock-rate={clock}"))
+            print(f"Negotiated offered RTP payloads: {payloads}", file=sys.stderr, flush=True)
             self.start_pipeline()
             result, sdp_message = GstSdp.SDPMessage.new_from_text(offer_text)
             if result != GstSdp.SDPResult.OK:

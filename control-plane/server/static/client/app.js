@@ -86,6 +86,7 @@ tokenInput.value = state.token;
 seatInput.value = state.seatId;
 destinationInput.value = state.destinationIp;
 renderDestinationWarning();
+document.querySelector("#seat-settings").open = !state.token;
 
 saveSettingsButton.addEventListener("click", () => {
   state.token = tokenInput.value.trim();
@@ -95,6 +96,7 @@ saveSettingsButton.addEventListener("click", () => {
   localStorage.setItem("fourplay.seatId", state.seatId);
   localStorage.setItem("fourplay.destinationIp", state.destinationIp);
   renderDestinationWarning();
+  document.querySelector("#seat-settings").open = false;
   refresh();
 });
 
@@ -148,6 +150,7 @@ stopBrowserMediaButton.addEventListener("click", leaveBrowserGame);
 reconnectBrowserMediaButton.addEventListener("click", () => {
   if (state.browserMediaRetry) startBrowserMedia({ dataset: { ...state.browserMediaRetry } });
 });
+document.querySelector("#resume-browser-media").addEventListener("click", resumeBrowserMedia);
 FourPlayBrowserInput.bindEscape(browserPlayer, leaveBrowserGame, () => state.browserInput?.release());
 document.querySelector("#fullscreen-browser-media").addEventListener("click", async () => {
   try {
@@ -868,20 +871,21 @@ async function startBrowserMedia(button) {
     grantId: button.dataset.browserMediaGrant,
   } : null;
   browserPlayer.hidden = false;
+  document.body?.classList.add("browser-playing");
   browserPlayer.scrollIntoView({ behavior: "smooth", block: "start" });
   setBrowserMediaState("Creating browser media peer...");
 
   const peer = new RTCPeerConnection({ iceServers: [] });
-  const stream = new MediaStream();
+  let stream = new MediaStream();
   state.browserMediaPeer = peer;
   state.browserMediaStream = stream;
-  browserMediaVideo.srcObject = stream;
+  browserMediaVideo.playsInline = true;
   if (state.browserMediaContext?.role === "spectator") startSpectatorOverlay();
   browserReceiverStats.textContent = "Waiting for receiver statistics...";
   state.browserMediaMonitor = new FourPlayBrowserMediaMonitor(peer, (stats) => {
     if (state.browserMediaPeer !== peer) return;
     browserReceiverStats.textContent = stats ?
-      `${stats.stalled ? "Video stalled — reconnect media if it does not recover. " : ""}${stats.fps.toFixed(1)} fps · ${stats.decodeCounter ? stats.frames : "unknown"} decoded · ${stats.dropped} dropped · ${stats.lost} lost packets · jitter ${stats.jitterMs.toFixed(1)} ms · RTT ${stats.rttMs === null ? "unknown" : stats.rttMs.toFixed(1) + " ms"}` :
+      `${stats.stalled ? "Video stalled — try Play / resume, then reconnect media if needed. " : ""}${stats.fps.toFixed(1)} fps · ${stats.decodeCounter ? stats.frames : "unknown"} decoded · ${stats.dropped} dropped · ${stats.lost} lost packets · jitter ${stats.jitterMs.toFixed(1)} ms · RTT ${stats.rttMs === null ? "unknown" : stats.rttMs.toFixed(1) + " ms"} · surface ${browserMediaVideo.videoWidth || 0}×${browserMediaVideo.videoHeight || 0} · ${browserMediaVideo.paused ? "paused" : "playing"}` :
       "Receiver statistics unavailable in this browser.";
   });
   state.browserMediaMonitor.start();
@@ -912,6 +916,11 @@ async function startBrowserMedia(button) {
   peer.addEventListener("track", (event) => {
     if (state.browserMediaPeer !== peer) return;
     stream.addTrack(event.track);
+    // Attach a populated composite, including when video follows audio. Some
+    // WebKit versions do not refresh an initially empty/audio-only attachment.
+    stream = new MediaStream(stream.getTracks());
+    state.browserMediaStream = stream;
+    browserMediaVideo.srcObject = stream;
     setBrowserMediaState(`Attached remote ${event.track.kind} track.`);
     browserMediaVideo.play().catch((error) => {
       if (state.browserMediaPeer !== peer || error.name === "AbortError") return;
@@ -995,6 +1004,7 @@ async function startBrowserMedia(button) {
 }
 
 function stopBrowserMedia() {
+  document.body?.classList.remove("browser-playing");
   stopSpectatorOverlay();
   state.browserMediaMonitor?.stop();
   state.browserMediaMonitor = null;
@@ -1015,6 +1025,17 @@ function stopBrowserMedia() {
   }
   setBrowserMediaState("Browser-native media stopped.");
   state.browserMediaContext = null;
+}
+
+async function resumeBrowserMedia() {
+  const peer = state.browserMediaPeer;
+  if (!peer || !browserMediaVideo.srcObject) return;
+  try {
+    await browserMediaVideo.play();
+    if (state.browserMediaPeer === peer) browserMediaVideo.focus();
+  } catch (error) {
+    if (state.browserMediaPeer === peer) setBrowserMediaState(`Playback could not start: ${error.message}`);
+  }
 }
 
 function stopSpectatorOverlay() {

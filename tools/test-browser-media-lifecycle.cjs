@@ -7,6 +7,7 @@ const Spectator = require("../control-plane/server/static/client/spectator.js");
 
 function setup() {
   const peers = [], inputs = [], monitors = [], calls = [];
+  const bodyClasses = new Set();
   const state = { seatId: "seat-1", browserExitPending: false, browserMediaNegotiating: false, sessions: [] };
   const video = { focus() {}, pause() {}, srcObject: null, play: async () => {} };
   const player = { hidden: true, scrollIntoView() {} };
@@ -39,10 +40,10 @@ function setup() {
   }
   const context = vm.createContext({
     state, URL, RTCPeerConnection: Peer, FourPlayBrowserInput: Input, FourPlayBrowserMediaMonitor: Monitor,
-    MediaStream: class { constructor() { this.tracks = []; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } },
+    MediaStream: class { constructor(tracks = []) { this.tracks = [...tracks]; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } },
     browserPlayer: player, browserMediaVideo: video, browserMediaState: status,
     reconnectBrowserMediaButton: reconnect, browserReceiverStats: { textContent: "" },
-    document: { querySelector: (selector) => elements[selector] || inputStatus },
+    document: { body: { classList: { add: (value) => bodyClasses.add(value), remove: (value) => bodyClasses.delete(value) } }, querySelector: (selector) => elements[selector] || inputStatus },
     window: { RTCPeerConnection: Peer, setInterval: () => 1, clearInterval() {}, location: { origin: "http://server" } },
     FourPlaySpectator: { ...Spectator, SpectatorOverlay: class { start() {} stop() {} setBusy() {} } },
     clientApi: {}, rememberRuntime() {}, publicPlayerHandoff: () => ({ mode: "player" }), refresh: async () => {},
@@ -53,7 +54,7 @@ function setup() {
   vm.runInContext(code.slice(code.indexOf("async function startBrowserMedia("), code.indexOf("function renderLastRuntimeHint(")), context);
   const button = { dataset: { browserMediaUrl: "http://server/api/v1/sessions/game-1/webrtc/offer",
     browserMediaRole: "player", browserMediaPlayer: "2" } };
-  return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button };
+  return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button, bodyClasses };
 }
 
 test("disconnect releases controls, reconnect preserves slot and closes old media", async () => {
@@ -69,8 +70,27 @@ test("disconnect releases controls, reconnect preserves slot and closes old medi
   assert.equal(s.calls.length, 2); // Only signaling; no disconnect/re-reserve request.
   const before = s.status.textContent;
   peer.listeners.track({ track: { kind: "video" } }); peer.listeners.connectionstatechange();
-  assert.equal(s.video.srcObject.getTracks().length, 0);
+  assert.equal(s.video.srcObject, null);
   assert.equal(s.status.textContent, before);
+});
+
+test("audio-first delivery refreshes the video surface with both tracks and supports gesture resume", async () => {
+  const s = setup(); await s.context.startBrowserMedia(s.button);
+  assert.equal(s.video.srcObject, null);
+  assert.equal(s.video.playsInline, true);
+  assert.equal(s.bodyClasses.has("browser-playing"), true);
+  const audio = { kind: "audio", stop() { this.stopped = true; } };
+  const video = { kind: "video", stop() { this.stopped = true; } };
+  s.peers[0].listeners.track({ track: audio });
+  const first = s.video.srcObject;
+  s.peers[0].listeners.track({ track: video });
+  assert.notEqual(s.video.srcObject, first);
+  assert.deepEqual(s.video.srcObject.getTracks(), [audio, video]);
+  let played = 0; s.video.play = async () => { played++; };
+  await s.context.resumeBrowserMedia(); assert.equal(played, 1);
+  s.context.stopBrowserMedia(); assert.equal(audio.stopped, true); assert.equal(video.stopped, true);
+  assert.equal(s.bodyClasses.has("browser-playing"), false);
+  await s.context.resumeBrowserMedia(); assert.equal(played, 1);
 });
 
 test("failed offer keeps leave/retry context but releases media and input", async () => {
