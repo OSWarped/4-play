@@ -86,6 +86,12 @@ This checks both positive streams, missing/wrong/disabled approval, deliberately
 corrupted and incomplete **private copies**, and an unapproved Contra opt-in.
 Original installed ROMs and live sessions are not modified.
 
+On 2026-10-15 both games passed this positive/negative regression suite and
+deployed-runtime loopback smoke tests: active status, encoded UDP media, and
+graceful exit. All 11 Linux runtime unit tests passed, and Clippy passed with
+the existing lint allowances noted above. Gameplay accuracy still requires
+manual play testing.
+
 Deploy the rebuilt MAME and `session-runtime` binaries together. The host agent
 launches them for new sessions; no service restart is required when paths are
 unchanged. Already running games continue with their old process image.
