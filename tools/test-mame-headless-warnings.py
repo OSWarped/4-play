@@ -13,7 +13,7 @@ import tempfile
 import time
 
 
-def probe(mame, ini, game, acknowledge, seconds, raw_audio=True):
+def probe(mame, ini, game, acknowledge, seconds, raw_audio=True, approval="", rompath=None):
     with tempfile.TemporaryDirectory(prefix='4play-warning-probe-') as directory:
         root = Path(directory)
         paths = [root / 'video.raw', root / 'audio.pcm']
@@ -23,10 +23,13 @@ def probe(mame, ini, game, acknowledge, seconds, raw_audio=True):
             readers.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
         env = os.environ.copy()
         env.update(SDL_VIDEODRIVER='offscreen', FOURPLAY_MAME_ACK_WARNINGS=acknowledge)
+        env['FOURPLAY_MAME_ACK_UNDUMPED'] = approval
         command = [mame, '-inipath', ini, '-skip_gameinfo', '-sound', 'none', '-noautosave',
                    '-rawvideowrite', str(paths[0])]
         if raw_audio:
             command.extend(['-rawaudiowrite', str(paths[1])])
+        if rompath:
+            command.extend(['-rompath', str(rompath)])
         for option in ['cfg_directory', 'nvram_directory', 'state_directory', 'snapshot_directory', 'diff_directory']:
             target = root / option
             target.mkdir()

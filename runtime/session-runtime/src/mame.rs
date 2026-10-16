@@ -47,7 +47,7 @@ impl MameProcess {
             runtime_control_script(&stop_request_path),
         )?;
 
-        let mut command = headless_command(&config.binary);
+        let mut command = headless_command(&config.binary, &config.rom);
 
         command
             .arg("-inipath")
@@ -154,11 +154,20 @@ impl MameProcess {
     }
 }
 
-fn headless_command(binary: &Path) -> Command {
+fn headless_command(binary: &Path, rom: &str) -> Command {
     let mut command = Command::new(binary);
     command
         .env("SDL_VIDEODRIVER", "offscreen")
-        .env("FOURPLAY_MAME_ACK_WARNINGS", "1");
+        .env("FOURPLAY_MAME_ACK_WARNINGS", "1")
+        // Explicit game identity, not a general BAD_DUMP/NO_DUMP bypass. Set
+        // an empty value for all others so inherited environment cannot opt in.
+        .env(
+            "FOURPLAY_MAME_ACK_UNDUMPED",
+            match rom {
+                "rthunder" | "rampage" => rom,
+                _ => "",
+            },
+        );
     command
 }
 
@@ -254,7 +263,7 @@ mod tests {
 
     #[test]
     fn headless_launch_explicitly_opts_in_to_noncritical_warning_acknowledgment() {
-        let command = headless_command(Path::new("mame"));
+        let command = headless_command(Path::new("mame"), "tmnt");
         let environment: Vec<_> = command.get_envs().collect();
         assert!(
             environment
@@ -268,6 +277,24 @@ mod tests {
                 .any(|(key, value)| *key == "SDL_VIDEODRIVER"
                     && *value == Some(std::ffi::OsStr::new("offscreen")))
         );
+    }
+
+    #[test]
+    fn undumped_acknowledgment_is_scoped_to_two_approved_roms() {
+        for rom in ["rthunder", "rampage", "contra", "rthunder1", "tmnt", "*"] {
+            let command = headless_command(Path::new("mame"), rom);
+            let expected = if matches!(rom, "rthunder" | "rampage") {
+                rom
+            } else {
+                ""
+            };
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(key, value)| key == "FOURPLAY_MAME_ACK_UNDUMPED"
+                        && value == Some(std::ffi::OsStr::new(expected)))
+            );
+        }
     }
 
     #[test]

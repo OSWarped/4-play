@@ -1,0 +1,48 @@
+diff --git a/src/frontend/mame/ui/ui.cpp b/src/frontend/mame/ui/ui.cpp
+--- a/src/frontend/mame/ui/ui.cpp
++++ b/src/frontend/mame/ui/ui.cpp
+@@ -43,3 +43,4 @@
+ #include "romload.h"
++#include "hash.h"
+ #include "screen.h"
+ #include "speaker.h"
+@@ -630,1 +631,27 @@
++static bool fourplay_approved_undumped(running_machine &machine)
++{
++	char const *const name = machine.system().name;
++	char const *const approval = std::getenv("FOURPLAY_MAME_ACK_UNDUMPED");
++	char const *const expected = !std::strcmp(name, "rthunder") ? "hd637a01x0p.e3"
++			: !std::strcmp(name, "rampage") ? "e36a31axnaxqd.u15.bin" : nullptr;
++	if (!expected || !approval || std::strcmp(approval, name) || machine.rom_load().knownbad() != 1)
++		return false;
++	unsigned approved = 0;
++	for (device_t &device : device_enumerator(machine.root_device()))
++		for (rom_entry const *region = rom_first_region(device); region; region = rom_next_region(region))
++			for (rom_entry const *file = rom_first_file(region); file; file = rom_next_file(file))
++			{
++				util::hash_collection const hashes(file->hashdata());
++				if (hashes.flag(util::hash_collection::FLAG_BAD_DUMP))
++					return false;
++				if (hashes.flag(util::hash_collection::FLAG_NO_DUMP))
++				{
++					if (file->name() != expected || file->get_length() != (!std::strcmp(name, "rthunder") ? 4096U : 1U))
++						return false;
++					++approved;
++				}
++			}
++	return approved == 1;
++}
++
+ void mame_ui_manager::display_startup_screens(bool first_time)
+@@ -704,9 +731,9 @@
+ 			// Explicit 4-Play raw-streaming opt-in, not a general warning bypass.
+-			// Never acknowledge severe warnings or ROM-loading warnings/errors.
++			// Severe/checksum/length warnings remain blocked; only approved NO_DUMP is allowed.
+ 			if (m_has_warnings && show_warnings
+ 					&& !machine_info().has_severe_warnings()
+ 					&& !machine().rom_load().warnings()
+-					&& !machine().rom_load().knownbad()
++					&& (!machine().rom_load().knownbad() || fourplay_approved_undumped(machine()))
+ 					&& machine().options().raw_video_write()[0]
+ 					&& machine().options().raw_audio_write()[0])
+ 			{
