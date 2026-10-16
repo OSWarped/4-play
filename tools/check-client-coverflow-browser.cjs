@@ -15,8 +15,9 @@ const games = Array.from({ length: 46 }, (_, index) => ({
       logo_path: 'fixture/logo.svg', marquee_path: 'fixture/marquee.svg' }) },
 }));
 async function main() {
-  const grid = process.argv.includes('--v3');
-  const browser = process.argv.slice(2).find(value => value !== '--v3') || process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  const minimal = process.argv.includes('--v4');
+  const grid = minimal || process.argv.includes('--v3');
+  const browser = process.argv.slice(2).find(value => !['--v3','--v4'].includes(value)) || process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   assert.ok(fs.existsSync(browser), 'Pass the Chrome/Edge executable path');
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -31,8 +32,8 @@ async function main() {
       response.end(JSON.stringify(url.pathname.endsWith('/bootstrap') ? { seat_id: 'fixture', destination_address: '127.0.0.1' }
         : url.pathname.endsWith('/games') ? { games } : url.pathname.endsWith('/active-sessions') ? { sessions: [] } : {})); return;
     }
-    let file = ['/client-v2', '/client-v3'].includes(url.pathname) ? 'client/index.html' : url.pathname.slice(1);
-    if (!/^(client|client-v2|client-v3)\/[a-z-]+\.(js|css|html)$/.test(file)) { response.writeHead(404).end(); return; }
+    let file = ['/client-v2', '/client-v3', '/client-v4'].includes(url.pathname) ? 'client/index.html' : url.pathname.slice(1);
+    if (!/^(client|client-v2|client-v3|client-v4)\/[a-z-]+\.(js|css|html)$/.test(file)) { response.writeHead(404).end(); return; }
     let content = fs.readFileSync(path.join(base, file), 'utf8');
     if (file === 'client/index.html') content = content.replace('<body>', '<body data-client-version="2">')
       .replace('</head>', '<link rel="stylesheet" href="/client-v2/styles.css" /></head>')
@@ -40,6 +41,9 @@ async function main() {
     if (grid && file === 'client/index.html') content = content.replace('data-client-version="2"', 'data-client-version="2" data-client-layout="grid"')
       .replace('</head>', '<link rel="stylesheet" href="/client-v3/styles.css" /></head>')
       .replace('<script src="/client/app.js"', '<script src="/client-v3/experience.js" defer></script><script src="/client/app.js"');
+    if (minimal && file === 'client/index.html') content = content.replace('data-client-layout="grid"', 'data-client-layout="grid" data-client-skin="minimal"')
+      .replace('</head>', '<link rel="stylesheet" href="/client-v4/styles.css" /></head>')
+      .replace('<script src="/client/app.js"', '<script src="/client-v4/experience.js" defer></script><script src="/client/app.js"');
     response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
     response.end(content);
   });
@@ -76,9 +80,62 @@ async function main() {
     };
     await send('Runtime.enable'); await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
-    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/client-v${grid ? 3 : 2}` });
+    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/client-v${minimal ? 4 : grid ? 3 : 2}` });
     for (let n = 0; n < 100; n++) { if (await evaluate(`document.querySelectorAll('.game-cover').length === 46`)) break; await pause(100); }
     assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 46);
+    if (minimal) {
+      const capture = async name => {
+        fs.mkdirSync('tmp', { recursive: true });
+        fs.writeFileSync(`tmp/client-v4-${name}.png`, Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+      };
+      assert.equal(await evaluate(`[...document.querySelectorAll('h1,h2')].filter(node=>node.getClientRects().length).length`), 0);
+      assert.ok(await evaluate(`document.querySelector('.game-cover').getBoundingClientRect().top`)<150);
+      assert.equal(await evaluate(`document.querySelector('dialog').open`), false);
+      await pause(350); await capture('desktop');
+      await evaluate(`document.querySelectorAll('.game-cover')[0].click()`); await pause(400);
+      assert.equal(await evaluate(`document.querySelector('dialog').open`), true);
+      assert.equal(await evaluate(`document.querySelector('dialog').getAttribute('aria-label')`), 'Aliens');
+      assert.equal(await evaluate(`document.querySelector('#details #start-game').textContent`), 'Start game');
+      await capture('details-desktop');
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await pause(100);
+      assert.equal(await evaluate(`document.querySelector('dialog').open`), false);
+      assert.equal(await evaluate(`document.activeElement === document.querySelector('.game-cover')`), true);
+      await evaluate(`{const select=document.querySelector('#v4-genre');select.value='Fighting';select.dispatchEvent(new Event('change'));}`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 23);
+      await evaluate(`document.querySelector('#v4-genre').value='';document.querySelector('.v4-filter-body button').click()`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 46);
+      await evaluate(`document.querySelector('.v4-toolbar > button').click()`);
+      assert.equal(await evaluate(`document.querySelector('.v4-empty').hidden`), false);
+      await evaluate(`document.querySelector('.v4-empty button').click()`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 46);
+      const previousY = await evaluate(`window.scrollTo(0,700);window.scrollY`);
+      await evaluate(`document.querySelectorAll('.game-cover')[12].click();document.querySelector('.v4-close').click()`); await pause(100);
+      assert.ok(Math.abs(await evaluate(`window.scrollY`)-previousY)<2);
+      await evaluate(`FourPlayV4.showConnectionError('Fixture connection error')`);
+      assert.equal(await evaluate(`document.querySelector('.v4-connection').hidden`), false);
+      await evaluate(`FourPlayV4.showConnectionError('');window.scrollTo(0,0)`);
+      await evaluate(`state.sessions=[{id:'fixture-session',game_id:'game-0',state:'active',player_slots:[{player_number:2,state:'open',label:'P2'}]}];document.querySelector('.game-cover').click()`);
+      assert.equal(await evaluate(`Boolean(document.querySelector('[data-inline-join]') && document.querySelector('[data-inline-spectate]'))`), true);
+      await evaluate(`document.querySelector('.v4-close').click()`);
+      for (const [width,height,name] of [[430,932,'phone'],[932,430,'landscape']]) {
+        await send('Emulation.setDeviceMetricsOverride', { width,height,deviceScaleFactor:1,mobile:true });
+        await evaluate(`window.scrollTo(0,0)`); await pause(300);
+        assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+        await capture(name);
+        await evaluate(`document.querySelectorAll('.game-cover')[1].click()`); await pause(200);
+        assert.equal(await evaluate(`document.querySelector('dialog').open`), true);
+        await capture(`details-${name}`);
+        await evaluate(`document.querySelector('.v4-close').click()`);
+      }
+      await evaluate(`document.querySelector('.game-cover').click();FourPlayV4.closeForPlay();document.body.classList.add('browser-playing')`);
+      assert.equal(await evaluate(`document.querySelector('dialog').open`), false);
+      assert.equal(await evaluate(`getComputedStyle(document.querySelector('.layout')).display`), 'none');
+      assert.deepEqual(errors, []);
+      console.log('PASS: V4 header-free gallery, desktop drawer/mobile sheet, filters, Escape, start/join/watch actions and gameplay handoff.');
+      return;
+    }
     if (grid) {
       assert.equal(await evaluate(`getComputedStyle(document.querySelector('#games')).display`), 'grid');
       assert.equal(await evaluate(`getComputedStyle(document.querySelector('.v3-play-dock')).position`), 'fixed');

@@ -213,10 +213,12 @@ async function refresh() {
     state.games = games.games || [];
     state.sessions = sessions.sessions || [];
     state.browserMediaStatus = browserMediaStatus;
+    window.FourPlayV4?.showConnectionError("");
     renderHome();
     renderGames();
     renderSessions();
   } catch (error) {
+    window.FourPlayV4?.showConnectionError(String(error));
     setText("#primary-title", "Cannot reach 4-Play");
     setText("#primary-detail", String(error));
     renderDetails(`
@@ -298,6 +300,7 @@ function findOwnDisconnectedSlot() {
 }
 
 function renderGames() {
+  window.FourPlayV4?.setCatalog(state.games, state.sessions);
   window.FourPlayV3?.updateFilters(state.games);
   librarySelection.update(window.FourPlayV3?.filterGames(state.games, state.sessions) || state.games, gameFilter.value);
   const key = JSON.stringify(librarySelection.games);
@@ -374,7 +377,7 @@ function updateFeaturedGame(focus = false) {
       backdrop.hidden = !url;
       if (url) backdrop.src = url;
       else backdrop.removeAttribute("src");
-    });
+    }, window.FourPlayV4 ? "photo" : "scene");
     image.onerror = () => { image.hidden = true; };
     FourPlayCarousel.loadBrand(game, authHeaders(), libraryLogo, libraryMarquee,
       document.querySelector("#featured-logo"), document.querySelector("#featured-marquee"),
@@ -430,24 +433,33 @@ function destinationMismatchBadge(session) {
 function renderGameDetails(game) {
   const running = state.sessions.filter((session) => session.game_id === game.id);
   const metadata = game.metadata || {};
+  const compact = Boolean(window.FourPlayV4);
   renderDetails(`
     <div class="item">
+      ${compact ? "" : `
       <h3>${escapeHtml(FourPlayCarousel.displayTitle(game))}</h3>
       <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
       <span class="pill">${escapeHtml(String(metadata.release_year || "unknown year"))}</span>
       <span class="pill">${escapeHtml(metadata.manufacturer || "unknown maker")}</span>
       <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
-      <p><strong>Controls:</strong> ${escapeHtml(metadata.control_notes || "No control notes yet.")}</p>
+      `}
+      ${!compact || metadata.control_notes ? `<p><strong>Controls:</strong> ${escapeHtml(metadata.control_notes || "No control notes yet.")}</p>` : ""}
       <div class="form-actions">
-        <button type="button" id="start-game">Start game</button>
-        ${running.length ? `<button type="button" data-client-action="running">Show running sessions</button>` : ""}
+        <button type="button" id="start-game">${compact && running.length ? "Start new game" : "Start game"}</button>
+        ${running.length && !compact ? `<button type="button" data-client-action="running">Show running sessions</button>` : ""}
       </div>
-      <p class="muted">Start now requests a real session and prepares the local runtime commands for media and input.</p>
+      ${compact ? "" : `<p class="muted">Start now requests a real session and prepares the local runtime commands for media and input.</p>`}
       <div id="running-game-sessions" class="stack compact" hidden></div>
       <div id="client-action-result"></div>
     </div>
   `);
   document.querySelector("#start-game").addEventListener("click", () => startGame(game));
+  if (compact && running.length) {
+    renderRunningGameSessions(running);
+    const start = document.querySelector("#start-game");
+    start.classList.add("v4-secondary");
+    document.querySelector("#running-game-sessions").after(start.parentElement);
+  }
   const runningButton = document.querySelector("[data-client-action='running']");
   if (runningButton) {
     runningButton.addEventListener("click", () => renderRunningGameSessions(running));
@@ -927,6 +939,7 @@ async function startBrowserMedia(button) {
     return;
   }
   stopBrowserMedia();
+  window.FourPlayV4?.closeForPlay();
   state.browserMediaRetry = { ...button.dataset };
   state.browserMediaNegotiating = true;
   reconnectBrowserMediaButton.disabled = true;
@@ -1250,9 +1263,12 @@ async function leaveBrowserGame() {
       }
     }
     browserPlayer.hidden = true;
-    document.querySelector("#browse-games").focus();
-    document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!window.FourPlayV4) {
+      document.querySelector("#browse-games").focus();
+      document.querySelector("#games").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
     await refresh();
+    window.FourPlayV4?.restoreBrowse();
   } catch (error) {
     state.browserMediaContext = context;
     browserPlayer.hidden = false;
@@ -1366,6 +1382,7 @@ if (window.FourPlayV2) {
       if (!document.hidden && !state.browserMediaPeer && !window.FourPlayV2.launching && !state.browserJoinPending) refresh();
     }, 15000);
   }).catch((error) => {
+    window.FourPlayV4?.showConnectionError(error.message);
     setText("#primary-title", "This arcade is not ready yet");
     setText("#primary-detail", error.message);
   });

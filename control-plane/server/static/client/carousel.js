@@ -33,7 +33,8 @@
 
   function artworkPaths(game, role = "scene") {
     const metadata = game?.metadata || {};
-    const paths = role === "logo" ? [metadata.logo_path] : role === "marquee" ? [metadata.marquee_path]
+    const paths = role === "photo" ? [metadata.screenshot_path, metadata.artwork_path]
+      : role === "logo" ? [metadata.logo_path] : role === "marquee" ? [metadata.marquee_path]
       : role === "cover" ? [metadata.screenshot_path, metadata.artwork_path, metadata.marquee_path, metadata.logo_path]
       : [metadata.screenshot_path, metadata.artwork_path, metadata.marquee_path, metadata.logo_path];
     return [...new Set(paths.filter((path) => typeof path === "string" && path))];

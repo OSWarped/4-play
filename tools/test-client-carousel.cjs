@@ -131,6 +131,7 @@ test("logos, marquees and covers have independent image priorities", async () =>
   assert.deepEqual(artworkPaths(game, "cover"), ["scene.png", "poster.png", "marquee.png", "logo.png"]);
   assert.deepEqual(artworkPaths(game, "logo"), ["logo.png"]);
   assert.deepEqual(artworkPaths(game, "marquee"), ["marquee.png"]);
+  assert.deepEqual(artworkPaths(game, "photo"), ["scene.png", "poster.png"]);
   const s = fixture(async () => response());
   await s.loader.load(game, {}, s.apply, "logo");
   assert.equal(s.requests[0][0], "/api/v1/assets/logo.png");
