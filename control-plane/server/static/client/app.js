@@ -298,7 +298,8 @@ function findOwnDisconnectedSlot() {
 }
 
 function renderGames() {
-  librarySelection.update(state.games, gameFilter.value);
+  window.FourPlayV3?.updateFilters(state.games);
+  librarySelection.update(window.FourPlayV3?.filterGames(state.games, state.sessions) || state.games, gameFilter.value);
   const key = JSON.stringify(librarySelection.games);
   if (key !== libraryCardsKey) {
     libraryCardsKey = key;

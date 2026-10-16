@@ -79,6 +79,10 @@ pub fn with_browser_seats(
             .route("/client-v2/", get(index))
             .route("/client-v2/experience.js", get(script))
             .route("/client-v2/styles.css", get(styles))
+            .route("/client-v3", get(grid_index))
+            .route("/client-v3/", get(grid_index))
+            .route("/client-v3/experience.js", get(grid_script))
+            .route("/client-v3/styles.css", get(grid_styles))
             .route("/client-v2/bootstrap", post(bootstrap))
             .route(
                 "/client-v2/api/{*path}",
@@ -89,11 +93,39 @@ pub fn with_browser_seats(
 }
 
 async fn index() -> Response {
-    let html = include_str!("../static/client/index.html")
+    protected_response(
+        (
+            [("content-type", "text/html; charset=utf-8")],
+            browser_html(),
+        )
+            .into_response(),
+    )
+}
+fn browser_html() -> String {
+    include_str!("../static/client/index.html")
         .replace("<body>", "<body data-client-version=\"2\">")
         .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v2/styles.css\" /></head>")
-        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v2/experience.js\" defer></script>\n<script src=\"/client/app.js\"");
+        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v2/experience.js\" defer></script>\n<script src=\"/client/app.js\"")
+}
+async fn grid_index() -> Response {
+    let html = browser_html()
+        .replace("data-client-version=\"2\"", "data-client-version=\"2\" data-client-layout=\"grid\"")
+        .replace("<title>4-Play Seat Client</title>", "<title>4-Play Arcade | V3</title>")
+        .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v3/styles.css\" /></head>")
+        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v3/experience.js\" defer></script>\n<script src=\"/client/app.js\"");
     protected_response(([("content-type", "text/html; charset=utf-8")], html).into_response())
+}
+async fn grid_script() -> Response {
+    super::static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client-v3/experience.js"),
+    )
+}
+async fn grid_styles() -> Response {
+    super::static_response(
+        "text/css; charset=utf-8",
+        include_str!("../static/client-v3/styles.css"),
+    )
 }
 async fn script() -> Response {
     super::static_response(
@@ -561,6 +593,10 @@ mod tests {
             "/client-v2/",
             "/client-v2/experience.js",
             "/client-v2/styles.css",
+            "/client-v3",
+            "/client-v3/",
+            "/client-v3/experience.js",
+            "/client-v3/styles.css",
         ] {
             let response = app
                 .clone()
@@ -575,6 +611,17 @@ mod tests {
                 assert!(text.contains("data-client-version=\"2\""));
                 assert!(
                     text.find("/client-v2/experience.js").unwrap()
+                        < text.find("/client/app.js").unwrap()
+                );
+            }
+            if path.ends_with("v3") || path.ends_with("v3/") {
+                assert!(text.contains("data-client-layout=\"grid\""));
+                assert!(
+                    text.find("/client-v2/experience.js").unwrap()
+                        < text.find("/client-v3/experience.js").unwrap()
+                );
+                assert!(
+                    text.find("/client-v3/experience.js").unwrap()
                         < text.find("/client/app.js").unwrap()
                 );
             }

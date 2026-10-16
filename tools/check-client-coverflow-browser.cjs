@@ -15,7 +15,8 @@ const games = Array.from({ length: 46 }, (_, index) => ({
       logo_path: 'fixture/logo.svg', marquee_path: 'fixture/marquee.svg' }) },
 }));
 async function main() {
-  const browser = process.argv[2] || process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  const grid = process.argv.includes('--v3');
+  const browser = process.argv.slice(2).find(value => value !== '--v3') || process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   assert.ok(fs.existsSync(browser), 'Pass the Chrome/Edge executable path');
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -30,12 +31,15 @@ async function main() {
       response.end(JSON.stringify(url.pathname.endsWith('/bootstrap') ? { seat_id: 'fixture', destination_address: '127.0.0.1' }
         : url.pathname.endsWith('/games') ? { games } : url.pathname.endsWith('/active-sessions') ? { sessions: [] } : {})); return;
     }
-    let file = url.pathname === '/client-v2' ? 'client/index.html' : url.pathname.slice(1);
-    if (!/^(client|client-v2)\/[a-z-]+\.(js|css|html)$/.test(file)) { response.writeHead(404).end(); return; }
+    let file = ['/client-v2', '/client-v3'].includes(url.pathname) ? 'client/index.html' : url.pathname.slice(1);
+    if (!/^(client|client-v2|client-v3)\/[a-z-]+\.(js|css|html)$/.test(file)) { response.writeHead(404).end(); return; }
     let content = fs.readFileSync(path.join(base, file), 'utf8');
     if (file === 'client/index.html') content = content.replace('<body>', '<body data-client-version="2">')
       .replace('</head>', '<link rel="stylesheet" href="/client-v2/styles.css" /></head>')
       .replace('<script src="/client/app.js"', '<script src="/client-v2/experience.js" defer></script><script src="/client/app.js"');
+    if (grid && file === 'client/index.html') content = content.replace('data-client-version="2"', 'data-client-version="2" data-client-layout="grid"')
+      .replace('</head>', '<link rel="stylesheet" href="/client-v3/styles.css" /></head>')
+      .replace('<script src="/client/app.js"', '<script src="/client-v3/experience.js" defer></script><script src="/client/app.js"');
     response.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
     response.end(content);
   });
@@ -72,9 +76,36 @@ async function main() {
     };
     await send('Runtime.enable'); await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
-    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/client-v2` });
+    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/client-v${grid ? 3 : 2}` });
     for (let n = 0; n < 100; n++) { if (await evaluate(`document.querySelectorAll('.game-cover').length === 46`)) break; await pause(100); }
     assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 46);
+    if (grid) {
+      assert.equal(await evaluate(`getComputedStyle(document.querySelector('#games')).display`), 'grid');
+      assert.equal(await evaluate(`getComputedStyle(document.querySelector('.v3-play-dock')).position`), 'fixed');
+      await evaluate(`document.querySelectorAll('.game-cover')[12].click()`); await pause(500);
+      assert.equal(await evaluate(`document.querySelector('#featured-title').textContent`), games[12].metadata.sort_title);
+      await evaluate(`{const select=document.querySelector('.v3-filters select');select.value='Fighting';select.dispatchEvent(new Event('change'));}`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 23);
+      await evaluate(`document.querySelector('.v3-filters button').click()`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 0);
+      assert.equal(await evaluate(`document.querySelector('#featured-start').disabled`), true);
+      await evaluate(`document.querySelectorAll('.v3-filters button')[1].click()`);
+      assert.equal(await evaluate(`document.querySelectorAll('.game-cover').length`), 46);
+      const columns = await evaluate(`(()=>{const cards=[...document.querySelectorAll('.game-cover')];cards[0].focus();const columns=cards.filter(card=>card.offsetTop===cards[0].offsetTop).length;cards[0].dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));return columns;})()`);
+      assert.equal(await evaluate(`document.querySelector('.game-cover[aria-pressed=true]').dataset.gameId`), `game-${columns}`);
+      for (const [width,height,name] of [[1440,1100,'desktop'],[430,932,'phone'],[932,430,'landscape']]) {
+        await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await evaluate(`window.scrollTo(0,0)`); await pause(300);
+        assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+        fs.mkdirSync('tmp', { recursive: true });
+        fs.writeFileSync(`tmp/client-v3-${name}.png`, Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+      }
+      await evaluate(`document.body.classList.add('browser-playing')`);
+      assert.equal(await evaluate(`getComputedStyle(document.querySelector('.layout')).display`), 'none');
+      assert.deepEqual(errors, []);
+      console.log('PASS: V3 gallery, genre/live/clear filters, empty state, fixed actions, responsive layout and gameplay isolation.');
+      return;
+    }
     for (let index = 0; index < 46; index++) {
       await evaluate(`document.querySelectorAll('.game-cover')[${index}].click()`);
       await pause(430);
