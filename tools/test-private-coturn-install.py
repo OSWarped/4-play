@@ -13,6 +13,10 @@ spec.loader.exec_module(installer)
 
 
 class InstallTests(unittest.TestCase):
+    def test_destination_is_outside_user_managed_application_tree(self):
+        self.assertEqual(installer.DESTINATION, Path("/opt/4play-coturn") / installer.VERSION)
+        self.assertNotIn(Path("/opt/4play"), installer.DESTINATION.parents)
+
     def test_verified_bytes_are_a_snapshot_of_the_pinned_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

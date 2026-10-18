@@ -15,7 +15,9 @@ import tempfile
 
 VERSION = "4.18.0"
 COMMIT = "23c6c1d32a3d2b21a56cee65d3203bcc4ea82d2b"
-DESTINATION = Path("/opt/4play/coturn") / VERSION
+# /opt/4play can intentionally be user-owned for library administration.
+# Privileged service executables must not live beneath that mutable prefix.
+DESTINATION = Path("/opt/4play-coturn") / VERSION
 
 
 def verified_artifact(directory, expected):
@@ -46,7 +48,7 @@ def private_destination(directory):
             path.mkdir(mode=0o755)
         metadata = path.lstat()
         if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
-            raise ValueError("Destination must have root-owned, non-writable directory ancestors")
+            raise ValueError(f"Unsafe destination directory {path}: requires a root-owned directory without group/world write permission")
 
 
 def main():

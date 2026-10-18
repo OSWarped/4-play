@@ -233,7 +233,7 @@ sudo python3 deploy/systemd/install-private-coturn.py \
 
 The installer validates the receipt/pinned commit and hashes the exact bytes it
 copies. It never executes the user-built binary as root. It installs exclusively
-at `/opt/4play/coturn/4.18.0/turnserver`, requires root-owned/non-writable directory
+at `/opt/4play-coturn/4.18.0/turnserver`, requires root-owned/non-writable directory
 ancestors, refuses conflicting existing binaries or symlinks, and is idempotent
 for matching protected bytes. Debian's binary, all services, environment files,
 firewalls and nginx remain unchanged. If the build directory no longer exists,
