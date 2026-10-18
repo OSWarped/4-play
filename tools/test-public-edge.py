@@ -3,6 +3,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -20,12 +21,18 @@ class EdgeTests(unittest.TestCase):
             nginx = "/usr/sbin/nginx"
         if not nginx:
             self.skipTest("nginx parser unavailable on this host")
+        # nginx -t also checks listener binding on this build. Use an unprivileged
+        # loopback port so validation neither needs root nor touches live port 80.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        rendered = edge.render().replace("listen 80;", f"listen 127.0.0.1:{port};")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "nginx.conf"
             config.write_text(
                 f"error_log stderr;\npid {root.as_posix()}/nginx.pid;\n"
-                "events {}\nhttp {\naccess_log off;\n" + edge.render() + "}\n",
+                "events {}\nhttp {\naccess_log off;\n" + rendered + "}\n",
                 encoding="utf-8")
             result = subprocess.run([nginx, "-e", "stderr", "-t", "-p", str(root), "-c", str(config)],
                                     capture_output=True, text=True, timeout=15)
