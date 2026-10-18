@@ -261,6 +261,13 @@ mod tests {
     use super::*;
     async fn fixture() -> (tempfile::TempDir, TesterAccess) {
         let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // tempfile follows this host's umask (0002 on the reference host).
+            // Set up the same explicitly private directory as the operator CLI.
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let access = TesterAccess::open(&dir.path().join("test.sqlite3"))
             .await
             .unwrap();
