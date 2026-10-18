@@ -138,6 +138,7 @@ def listener_port():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--turnserver", help="Explicit pinned test binary; default is the installed coturn")
+    parser.add_argument("--media", action="store_true", help="Also test real GStreamer decoded media/input over a forced loopback relay")
     args = parser.parse_args()
     binary = str(Path(args.turnserver).resolve(strict=True)) if args.turnserver else shutil.which("turnserver")
     if not binary or os.name != "posix":
@@ -241,6 +242,9 @@ no-stdout-log
                     assert kind == 0x0113 and response[0x0009][2:4] == b"\x04\x01", "Invalid REST credential accepted"
                 finally: client.close()
                 print(f"PASS: {label} credential denied")
+            if args.media:
+                from webrtc_turn_fixture import test_relay_media
+                test_relay_media(port, secret, root)
         finally:
             stop.set()
             thread.join(timeout=2)

@@ -27,6 +27,7 @@ class InputTests(unittest.TestCase):
     def test_peer_cleanup_deadlines_and_connection_recovery(self):
         publisher = Publisher.__new__(Publisher)
         publisher.closed = False
+        publisher.wan_admission = None
         publisher.pipeline_failed = False
         publisher.input_authorization = None
         publisher.created_at = 10

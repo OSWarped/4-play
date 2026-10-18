@@ -33,6 +33,7 @@ from webrtc_peer_pool import PeerPool, PeerCapacityError
 from webrtc_client_address import browser_host_for_request
 from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_ice_udp_ports, validate_answer_candidates
 from webrtc_wan import WanIce, request_is_wan
+from webrtc_wan_admission import WanAdmission
 from webrtc_offer_codecs import offered_payloads
 
 import gi
@@ -73,6 +74,7 @@ class RawSessionPublisher:
         self.ice_ports = IceUdpPortRange.from_args(args)
         self.wan_mode = False
         self.wan_ice = None
+        self.wan_admission = None
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
         self.owns_input_relay = input_relay is None
@@ -142,6 +144,8 @@ class RawSessionPublisher:
 
     def expired(self, now: float) -> bool:
         if self.closed or self.pipeline_failed:
+            return True
+        if self.wan_admission is not None and not self.wan_admission.valid():
             return True
         if self.input_authorization:
             current = self.input_relay.authorization
@@ -374,8 +378,12 @@ class RawSessionPublisher:
         timeout_seconds: float = 8.0,
         input_authorization: InputAuthorization | None = None,
         wan_media: bool = False,
+        wan_admission=None,
     ) -> str:
         with self.offer_lock:
+            if wan_media and (wan_admission is None or not wan_admission.valid()):
+                raise RuntimeError("WAN admission is not authorized")
+            self.wan_admission = wan_admission if wan_media else None
             if self.closed:
                 raise RuntimeError("browser peer closed")
             rebuild = self.pipeline_failed or self.media_started or self.wan_mode != wan_media
@@ -681,7 +689,7 @@ class MultiPeerSessionPublisher:
         for _key, peer in self.pool.snapshot():
             peer.mark_pipeline_failed(reason)
 
-    def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None, wan_media=False):
+    def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None, wan_media=False, wan_admission=None):
         if not offer.lstrip().startswith("v=0") or "\nm=" not in offer or len(offer.encode("utf-8")) > 262144:
             raise RuntimeError("invalid SDP offer")
         with self.offer_lock:
@@ -691,6 +699,7 @@ class MultiPeerSessionPublisher:
                 options = {"input_authorization": input_authorization}
                 if wan_media:
                     options["wan_media"] = True
+                    options["wan_admission"] = wan_admission
                 answer = peer.answer_for_offer(offer, host_ip, **options)
                 print(f"Browser peer ready key={key} count={len(self.pool.snapshot())}", file=sys.stderr, flush=True)
                 return answer
@@ -797,6 +806,7 @@ def request_handler(publisher) -> type[BaseHTTPRequestHandler]:
                 options = {"input_authorization": authorization}
                 if request_is_wan(self.headers, self.client_address[0]):
                     options["wan_media"] = True
+                    options["wan_admission"] = WanAdmission.from_headers(self.headers)
                 if isinstance(publisher, MultiPeerSessionPublisher):
                     options["viewer_key"] = self.headers.get("x-4play-viewer-key")
                 answer = publisher.answer_for_offer(offer, browser_host_ip, **options)

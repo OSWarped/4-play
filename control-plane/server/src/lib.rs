@@ -48,7 +48,9 @@ const DEFAULT_WEBRTC_SESSION_PORT_START: u16 = 43_000;
 const WEBRTC_INPUT_LEASE_MS: u64 = 60_000;
 type BrowserConnectInfo = Option<Extension<ConnectInfo<SocketAddr>>>;
 #[derive(Clone)]
-struct WanMediaRequest;
+struct WanMediaRequest {
+    admission_hash: String,
+}
 
 fn browser_source_ip(peer: BrowserConnectInfo) -> Option<IpAddr> {
     let Extension(ConnectInfo(address)) = peer?;
@@ -1038,7 +1040,7 @@ async fn signal_webrtc_test_pattern(
         None,
         None,
         browser_source_ip(peer),
-        false,
+        None,
     )
     .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
@@ -1153,7 +1155,8 @@ async fn signal_session_webrtc_offer(
         input.as_ref(),
         viewer_key.as_deref(),
         browser_source_ip(peer),
-        wan.is_some(),
+        wan.as_ref()
+            .map(|Extension(context)| context.admission_hash.as_str()),
     )
     .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
@@ -1352,7 +1355,7 @@ async fn post_sdp_offer_to_publisher(
     input: Option<&PublisherInput>,
     viewer_key: Option<&str>,
     browser_ip: Option<IpAddr>,
-    wan: bool,
+    wan_admission: Option<&str>,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(WEBRTC_PUBLISHER_TIMEOUT)
@@ -1378,8 +1381,10 @@ async fn post_sdp_offer_to_publisher(
     if let Some(browser_ip) = browser_ip {
         publisher_request = publisher_request.header("x-4play-browser-ip", browser_ip.to_string());
     }
-    if wan {
-        publisher_request = publisher_request.header("x-4play-media-profile", "wan");
+    if let Some(admission_hash) = wan_admission {
+        publisher_request = publisher_request
+            .header("x-4play-media-profile", "wan")
+            .header("x-4play-admission-hash", admission_hash);
     }
     let response = publisher_request.send().await.map_err(|error| {
         eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
@@ -4068,7 +4073,9 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from(value.to_string()))
             .unwrap();
-        request.extensions_mut().insert(super::WanMediaRequest);
+        request.extensions_mut().insert(super::WanMediaRequest {
+            admission_hash: "a".repeat(64),
+        });
         let response = service.oneshot(request).await.unwrap();
         let status = response.status().as_u16();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();

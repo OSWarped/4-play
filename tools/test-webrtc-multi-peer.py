@@ -35,12 +35,15 @@ def wait_for(predicate, label, timeout=10):
 
 
 class Client:
-    def __init__(self, publisher, authorization, viewer_key=None, video_payload=96, audio_payload=111):
+    def __init__(self, publisher, authorization, viewer_key=None, video_payload=96, audio_payload=111,
+                 configure_peer=None, signal=None):
         self.pipeline = Gst.Pipeline.new(None)
         self.peer = Gst.ElementFactory.make("webrtcbin", None)
         self.peer.set_property("bundle-policy", GstWebRTC.WebRTCBundlePolicy.MAX_BUNDLE)
         self.peer.set_property("latency", 0)
         self.pipeline.add(self.peer)
+        if configure_peer:
+            configure_peer(self.peer)
         self.counts = dict(video=0, audio=0)
         self.channel = None
         self.channel_open = False
@@ -70,7 +73,8 @@ class Client:
         assert event.wait(5), "offer timeout"
         self.peer.emit("set-local-description", context["offer"], Gst.Promise.new())
         wait_for(lambda: self.peer.get_property("ice-gathering-state") == GstWebRTC.WebRTCICEGatheringState.COMPLETE, "client ICE gathering")
-        answer = publisher.answer_for_offer(self.peer.get_property("local-description").sdp.as_text(), None, authorization, viewer_key)
+        signal = signal or publisher.answer_for_offer
+        answer = signal(self.peer.get_property("local-description").sdp.as_text(), None, authorization, viewer_key)
         result, sdp = GstSdp.SDPMessage.new_from_text(answer)
         assert result == GstSdp.SDPResult.OK
         self.peer.emit("set-remote-description", GstWebRTC.WebRTCSessionDescription.new(

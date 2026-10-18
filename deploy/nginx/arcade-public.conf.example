@@ -44,6 +44,7 @@ server {
     proxy_set_header Forwarded "";
     proxy_set_header X-4Play-Browser-IP "";
     proxy_set_header X-4Play-Media-Profile "";
+    proxy_set_header X-4Play-Admission-Hash "";
     proxy_connect_timeout 3s;
     proxy_read_timeout 30s;
 

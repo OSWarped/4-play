@@ -243,6 +243,9 @@ fn credential(headers: &HeaderMap) -> Option<&str> {
         Some(value)
     }
 }
+pub(crate) fn admission_fingerprint(headers: &HeaderMap) -> Option<String> {
+    credential(headers).map(crate::tester_access::admission_fingerprint)
+}
 
 fn forbidden() -> GateError {
     GateError(

@@ -97,6 +97,9 @@ fn hash(domain: &[u8], value: &str) -> String {
 fn valid_credential(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|c| c.is_ascii_hexdigit())
 }
+pub(crate) fn admission_fingerprint(credential: &str) -> String {
+    hash(b"4play-tester-admission-v1\0", credential)
+}
 fn timestamp(value: u64) -> Result<i64, AccessError> {
     i64::try_from(value).map_err(|_| AccessError::InvalidSettings)
 }

@@ -97,11 +97,15 @@ a later TURN/TLS endpoint/host. Do not claim universal connectivity.
    proxy into unrelated LAN services. Plan host-level egress port restrictions if
    the private MAME host must be an allowed peer; IP allowlisting alone is not a
    sufficient port restriction. No active coturn config is shipped yet.
-3. Current player input revocation is bounded by its existing short input lease.
-   Spectator media is not forcibly disconnected by invitation revocation. Add
-   server-enforced viewer admission expiry/revocation handling before activation.
-   Revocation currently rejects subsequent HTTP authorization, not arbitrary
-   already-established DTLS media connections.
+3. Established WAN media now checks admission expiry/revocation through the
+   existing background maintenance thread, independent of browser cooperation.
+   The control plane sends only a domain-separated admission fingerprint to the
+   private publisher; it never sends the browser credential. Publishers read the
+   same private invitation DB read-only, cache at most one second, and fail closed
+   on unavailable/unsafe storage. Typical closure is within two maintenance ticks;
+   OS scheduling is not a hard real-time deadline. LAN peers do not use this check.
+   Root setup must pass the same `FOURPLAY_WAN_TESTER_DATABASE` path to the host
+   agent and control plane. Missing/invalid admission data blocks WAN signaling.
 4. Delegated relay credentials expire after one hour. Automatic credential/ICE
    renewal is not implemented yet; use bounded experimental tests, not an
    unattended all-night session. Do not relax credential expiry as a workaround.
@@ -178,6 +182,65 @@ pools. It stops its own process and removes only its own temporary artifacts.
 Never copy its `allow-loopback-peers` setting into public configuration.
 Until the patched binary and public security gates are validated, keep coturn
 masked and the public website on staging 503. No router rules yet.
+
+## Patched build and real forced-relay evidence (reference host)
+
+The pinned source was built successfully as the ordinary service user at:
+
+`/tmp/4play-coturn-4.18.0-2dm5_dga/source/bin/turnserver`
+
+Its SHA-256 is:
+
+`afca6458e0bd736bb485eb6f934732fbd2cc6b51cdb6538b046ef8cda38b9b86`
+
+This fingerprint identifies this specific compiled artifact, not every rebuild.
+The build receipt records upstream version/commit; no system binary was replaced.
+Checks passed:
+
+- Patched coturn REST authentication, UDP/TCP relay clients, payload round trips,
+  expired/wrong-secret rejection, bounded relay range, explicit allocation release.
+- Upstream `turnutils_rfc5769check` conformance checks.
+- Real GStreamer sender and receiver, forced-relay ICE on **both** peers: decoded
+  audio/video and SCTP controller press/release, not just a STUN allocation.
+- A simultaneous LAN spectator retained host-only ICE and continued decoding.
+- A second relayed spectator decoded audio/video. Revoking the player's admission
+  closed only that player; expiring the spectator's admission closed only that
+  spectator; the LAN spectator continued.
+
+The loopback media fixture substitutes its local endpoint and maps a copy of
+loopback candidate addresses/ranges only for validation. It does not change
+negotiated SDP addresses or the production WAN validator. It reuses the real raw
+publisher, encoders, REST credentials, input bridge, and peer ownership. This is
+**not** proof of real internet routing, Safari/browser interoperability, or WAN
+latency. Those tests still follow deployment/network activation.
+
+Known cleanup warning: the installed libnice/GStreamer stack reports live TURN
+refreshes during peer disposal. Investigate explicit asynchronous allocation
+cleanup before public activation; the loopback fixture stops its private relay,
+so it does not leave a public allocation/server behind.
+
+## Next operator action: protect the tested binary outside /tmp
+
+Run only after the updated installer is present in the Linux checkout:
+
+```bash
+cd ~/src/4-play
+sudo python3 deploy/systemd/install-private-coturn.py \
+  --build-directory /tmp/4play-coturn-4.18.0-2dm5_dga \
+  --sha256 afca6458e0bd736bb485eb6f934732fbd2cc6b51cdb6538b046ef8cda38b9b86 \
+  --apply
+```
+
+The installer validates the receipt/pinned commit and hashes the exact bytes it
+copies. It never executes the user-built binary as root. It installs exclusively
+at `/opt/4play/coturn/4.18.0/turnserver`, requires root-owned/non-writable directory
+ancestors, refuses conflicting existing binaries or symlinks, and is idempotent
+for matching protected bytes. Debian's binary, all services, environment files,
+firewalls and nginx remain unchanged. If the build directory no longer exists,
+rebuild/retest and obtain its new fingerprint; do not bypass verification.
+
+This is binary staging only. Keep `coturn.service` masked. A dedicated least-
+privilege service and destination/port egress restrictions are still required.
 
 ## Regression commands
 

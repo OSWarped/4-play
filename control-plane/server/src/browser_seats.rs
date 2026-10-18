@@ -609,6 +609,11 @@ async fn proxy(
         );
     };
     let seat = format!("browser-{id}");
+    let wan_admission = if wan_id.is_some() {
+        crate::wan_testers::admission_fingerprint(request.headers())
+    } else {
+        None
+    };
     let path = request
         .uri()
         .path()
@@ -676,8 +681,10 @@ async fn proxy(
     parts
         .extensions
         .insert(ConnectInfo(SocketAddr::new(ip, peer.port())));
-    if wan_id.is_some() {
-        parts.extensions.insert(super::WanMediaRequest);
+    if let Some(admission_hash) = wan_admission {
+        parts
+            .extensions
+            .insert(super::WanMediaRequest { admission_hash });
     }
     // Forward only server-built headers, never the edge key, cookie, or a
     // browser-supplied private publisher/input/forwarding header.
