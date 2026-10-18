@@ -219,6 +219,22 @@ refreshes during peer disposal. Investigate explicit asynchronous allocation
 cleanup before public activation; the loopback fixture stops its private relay,
 so it does not leave a public allocation/server behind.
 
+The reference host is missing the optional `Nice` Python introspection namespace:
+its runtime agent appears as a generic GObject without `close_async`. Debian's
+`gir1.2-nice-0.1` package provides that binding. Before implementing and exercising
+explicit cleanup, install it and run the opt-in WAN prerequisite check:
+
+```bash
+sudo apt-get install --no-install-recommends gir1.2-nice-0.1
+bash deploy/systemd/check-browser-media-prereqs.sh --wan
+```
+
+This check opens no listener and modifies no services. The default check remains
+LAN-only and does not require the new binding. A successful dependency check is
+not proof of relay cleanup: real allocation-release tests must still pass after
+the cleanup implementation is integrated. The upstream lifecycle requirement is
+documented in [libnice close_async](https://libnice.freedesktop.org/libnice/NiceAgent.html#nice-agent-close-async).
+
 ## Next operator action: protect the tested binary outside /tmp
 
 Run only after the updated installer is present in the Linux checkout:

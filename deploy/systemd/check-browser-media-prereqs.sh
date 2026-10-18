@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+wan=0
+case "${1:-}" in
+  "") ;;
+  --wan) wan=1 ;;
+  *) echo "Usage: $0 [--wan]" >&2; exit 2 ;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "Usage: $0 [--wan]" >&2
+  exit 2
+fi
+
 missing=0
 
 check_command() {
@@ -80,6 +91,23 @@ else
   missing=1
 fi
 echo
+
+if [ "$wan" -eq 1 ]; then
+  if command -v python3 >/dev/null 2>&1 && python3 - <<'PY' >/dev/null 2>&1
+import gi
+gi.require_version("Nice", "0.1")
+from gi.repository import Nice
+assert callable(getattr(Nice.Agent, "close_async", None))
+PY
+  then
+    printf '%-24s %s\n' "TURN async cleanup API" "present"
+  else
+    printf '%-24s %s\n' "TURN async cleanup API" "missing (Debian: gir1.2-nice-0.1)"
+    missing=1
+  fi
+  echo "This checks dependencies only; it does not certify WAN readiness or enable access."
+  echo
+fi
 
 if [ "$missing" -eq 0 ]; then
   echo "Browser-native media spike prerequisites look present."
