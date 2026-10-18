@@ -319,6 +319,43 @@ errors with a distinct status, which is accepted only for a blocked test case
 whose receiver got nothing. Bind failures, routing errors, other worker failures,
 or denial/non-delivery of allowed traffic still fail the test.
 
+## Root-only service staging (does not activate TURN)
+
+After the isolated egress test passes, stage a persistent candidate bundle:
+
+```bash
+cd ~/src/4-play
+sudo python3 deploy/systemd/stage-private-turn.py \
+  --local-ip 192.168.20.68 \
+  --public-ip 45.24.46.155 \
+  --apply
+```
+
+Without `--apply`, this only checks the installed binary and describes the step.
+The reference fingerprint is the default; another build requires its own tested
+`--binary-sha256`. Apply revalidates the binary hash and root-owned/non-writable
+ancestors, requires Debian coturn to remain masked and both candidate services to
+be inactive, and reruns the kernel namespace/systemd syntax test before writing
+anything persistent. It then creates `/etc/4play-turn` root-only mode 0700 with:
+
+- `turnserver.conf`: fresh random shared secret and bounded relay configuration.
+- `egress.nft`: UID-scoped candidate outbound policy.
+- `4play-turn.service` and `4play-turn-egress.service`: **staged here only**, not
+  installed into systemd's unit search path.
+- `stage-receipt.json`: non-secret settings, artifact fingerprint and file hashes.
+
+All files are root-owned mode 0600. Secrets are neither printed nor accepted in
+arguments. An exact retry preserves the original secret and makes no changes;
+different, symlinked, insecure, unexpected or incomplete files cause refusal,
+never automatic replacement. An interrupted partial staging operation requires
+operator review rather than silently generating a new credential.
+
+This step does not install/enable/restart services, load host firewall rules,
+alter application environment or nginx, rotate existing application tokens, or
+enable public access. Runtime systemd-confinement and production-config relay
+tests remain separate gates before installation/activation. Do not manually
+start the staged unit or copy its credential contents into chat.
+
 Still required before public activation: install/test the confined deployment,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
@@ -337,6 +374,7 @@ python3 tools/test-webrtc-multi-peer.py
 python3 tools/test-webrtc-turn-cleanup.py
 python3 tools/test-private-turn-bundle.py
 python3 tools/test-private-turn-egress-results.py
+python3 tools/test-private-turn-stage.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a
