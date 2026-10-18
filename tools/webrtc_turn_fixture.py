@@ -6,6 +6,7 @@ REST credential generation and WAN profile selection execute unchanged.
 """
 import argparse
 import importlib.util
+import os
 from pathlib import Path
 import socket
 import sqlite3
@@ -21,7 +22,26 @@ from webrtc_browser_input import InputAuthorization
 from webrtc_wan_admission import WanAdmission
 
 
-def test_relay_media(port, secret, root):
+def relay_sockets(pid):
+    """Observe only this fixture's coturn-owned sockets, not unrelated services."""
+    inodes = set()
+    for fd in Path(f"/proc/{pid}/fd").iterdir():
+        try:
+            target = os.readlink(fd)
+        except FileNotFoundError:
+            continue
+        if target.startswith("socket:["):
+            inodes.add(target[8:-1])
+    sockets = set()
+    for name in ("udp", "udp6"):
+        for line in Path(f"/proc/{pid}/net/{name}").read_text().splitlines()[1:]:
+            fields = line.split()
+            if fields[9] in inodes and 62000 <= int(fields[1].split(":")[1], 16) <= 62031:
+                sockets.add(fields[9])
+    return sockets
+
+
+def test_relay_media(port, secret, root, relay_pid):
     spec = importlib.util.spec_from_file_location("relay_shared_fixture", Path(__file__).with_name("test-webrtc-multi-peer.py"))
     shared = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(shared)
@@ -74,6 +94,7 @@ def test_relay_media(port, secret, root):
     publisher = None
     feeder = None
     maintenance = None
+    shared.wait_for(lambda: not relay_sockets(relay_pid), "protocol relay sockets released", timeout=5)
     try:
         video, audio = root / "video.raw", root / "audio.pcm"
         video.touch(); audio.touch()
@@ -122,6 +143,7 @@ def test_relay_media(port, secret, root):
         server_peer = publisher.pool.peers["player:1"]
         assert server_peer.wan_mode and server_peer.wan_ice is policy
         assert server_peer.webrtc.get_property("ice-transport-policy") == GstWebRTC.WebRTCICETransportPolicy.RELAY
+        assert len(relay_sockets(relay_pid)) >= 2, "No coturn-owned relay sockets observed"
 
         def receive_buttons(expected):
             deadline = time.monotonic() + 5
@@ -156,17 +178,22 @@ def test_relay_media(port, secret, root):
         clients.append(viewer)
         shared.wait_for(lambda: viewer.counts["video"] > 10 and viewer.counts["audio"] > 10,
                         "relayed spectator decodes media")
+        viewer_peer = publisher.pool.peers["viewer:wan-spectator"]
         with closing(sqlite3.connect(database)) as db:
             db.execute("UPDATE tester_invitations SET revoked=1 WHERE id='player'")
             db.commit()
         shared.wait_for(lambda: "player:1" not in publisher.pool.peers, "revoked player peer closed", timeout=4)
         assert server_peer.closed
+        shared.wait_for(lambda: server_peer.turn_cleanup.done.is_set(), "revoked player's TURN release")
+        assert server_peer.turn_cleanup.released
         before = viewer.counts["video"]
         shared.wait_for(lambda: viewer.counts["video"] > before + 10, "unrevoked WAN viewer survives")
         with closing(sqlite3.connect(database)) as db:
             db.execute("UPDATE tester_admissions SET expires_ms=0 WHERE invitation_id='viewer'")
             db.commit()
         shared.wait_for(lambda: "viewer:wan-spectator" not in publisher.pool.peers, "expired spectator peer closed", timeout=4)
+        shared.wait_for(lambda: viewer_peer.turn_cleanup.done.is_set(), "expired spectator's TURN release")
+        assert viewer_peer.turn_cleanup.released
         before = spectator.counts["video"]
         shared.wait_for(lambda: spectator.counts["video"] > before + 10, "LAN viewer survives WAN revoke/expiry")
         print("PASS: player revocation and spectator expiry close only their WAN peers; other viewers continue")
@@ -177,5 +204,8 @@ def test_relay_media(port, secret, root):
         for client in clients: client.close()
         if publisher: publisher.pool.close()
         receiver.close()
+        assert raw.drain_turn_cleanup(GLib), "TURN cleanup tasks did not complete"
         loop.quit()
         loop_thread.join(timeout=2)
+        shared.wait_for(lambda: not relay_sockets(relay_pid), "all coturn relay sockets released before server shutdown")
+        print("PASS: async cleanup released coturn-owned relay ports while relay server remained running")

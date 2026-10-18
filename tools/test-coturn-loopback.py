@@ -244,7 +244,7 @@ no-stdout-log
                 print(f"PASS: {label} credential denied")
             if args.media:
                 from webrtc_turn_fixture import test_relay_media
-                test_relay_media(port, secret, root)
+                test_relay_media(port, secret, root, process.pid)
         finally:
             stop.set()
             thread.join(timeout=2)

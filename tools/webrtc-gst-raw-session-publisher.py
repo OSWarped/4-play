@@ -35,6 +35,7 @@ from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_
 from webrtc_wan import WanIce, request_is_wan
 from webrtc_wan_admission import WanAdmission
 from webrtc_offer_codecs import offered_payloads
+from webrtc_turn_cleanup import TurnCleanup, drain_turn_cleanup, require_cleanup_binding
 
 import gi
 
@@ -100,6 +101,7 @@ class RawSessionPublisher:
         self.ice_timeout_id: int | None = None
         self.pipeline: Gst.Pipeline | None = None
         self.webrtc: Gst.Element | None = None
+        self.turn_cleanup = None
 
         self.build_pipeline()
 
@@ -122,7 +124,10 @@ class RawSessionPublisher:
             self.pending_answer_context = None
         if self.pipeline is not None:
             self.pipeline.get_bus().remove_signal_watch()
-            self.pipeline.set_state(Gst.State.NULL)
+            if self.wan_ice is not None:
+                self.turn_cleanup = TurnCleanup(self.pipeline, self.webrtc, Gst, GLib)
+            else:
+                self.pipeline.set_state(Gst.State.NULL)
 
     def detach_callbacks(self):
         if self.input_channel is not None:
@@ -185,6 +190,7 @@ class RawSessionPublisher:
             raise RuntimeError("pipeline did not create webrtcbin named 'webrtc'")
         configure_ice_udp_ports(self.webrtc, self.ice_ports)
         if self.wan_mode:
+            require_cleanup_binding()
             self.wan_ice = WanIce.from_environment()
             self.wan_ice.configure(self.webrtc)
 
@@ -216,11 +222,15 @@ class RawSessionPublisher:
         self.input_relay.authorize(None)
         if self.pipeline is not None:
             self.pipeline.get_bus().remove_signal_watch()
-            self.pipeline.set_state(Gst.State.NULL)
+            if self.wan_ice is not None:
+                TurnCleanup(self.pipeline, self.webrtc, Gst, GLib)
+            else:
+                self.pipeline.set_state(Gst.State.NULL)
         self.started = False
         self.media_started = False
         self.pipeline_failed = False
         self.pending_answer_context = None
+        self.wan_ice = None
         self.build_pipeline()
 
     def run_http_signaling(self) -> None:
@@ -260,8 +270,8 @@ class RawSessionPublisher:
             server.shutdown()
             for reader in self.reader_threads:
                 reader.join(timeout=1)
-            if self.pipeline is not None:
-                self.pipeline.set_state(Gst.State.NULL)
+            self.close()
+            drain_turn_cleanup(GLib)
 
     def read_fifo(self, label: str, path: str, block_bytes: int) -> None:
         try:
@@ -389,7 +399,6 @@ class RawSessionPublisher:
             rebuild = self.pipeline_failed or self.media_started or self.wan_mode != wan_media
             self.wan_mode = wan_media
             if rebuild:
-                self.wan_ice = None
                 self.reset_pipeline("new browser offer")
             self.input_authorization = input_authorization
             self.input_relay.authorize(input_authorization)
@@ -745,6 +754,7 @@ class MultiPeerSessionPublisher:
             for thread in threads:
                 thread.join(timeout=1)
             self.pool.close()
+            drain_turn_cleanup(GLib)
 
 
 def request_handler(publisher) -> type[BaseHTTPRequestHandler]:

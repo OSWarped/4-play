@@ -214,15 +214,26 @@ publisher, encoders, REST credentials, input bridge, and peer ownership. This is
 **not** proof of real internet routing, Safari/browser interoperability, or WAN
 latency. Those tests still follow deployment/network activation.
 
-Known cleanup warning: the installed libnice/GStreamer stack reports live TURN
-refreshes during peer disposal. Investigate explicit asynchronous allocation
-cleanup before public activation; the loopback fixture stops its private relay,
-so it does not leave a public allocation/server behind.
+Explicit WAN cleanup now uses libnice `close_async` before pipeline disposal.
+Input is revoked immediately; cleanup runs in the default GLib context without
+blocking the peer pool/media feeder, retaining the native owners until completion.
+A five-second timeout disposes local resources and reports remote release as
+unconfirmed (never as success). Shutdown drains callbacks for up to six seconds.
+LAN peers retain immediate teardown. No encoder or playback buffer was changed.
 
-The reference host is missing the optional `Nice` Python introspection namespace:
-its runtime agent appears as a generic GObject without `close_async`. Debian's
-`gir1.2-nice-0.1` package provides that binding. Before implementing and exercising
-explicit cleanup, install it and run the opt-in WAN prerequisite check:
+The strengthened real relay fixture observes coturn-owned UDP sockets via `/proc`:
+it confirms live allocations exist, checks revoked/expired publisher peers complete
+cleanup, then checks **all fixture relay sockets disappear while coturn is still
+running**, before stopping that private relay. This test passes on the reference
+host, without the prior live-refresh/disposal warnings. A zero-lifetime TURN
+refresh can require a short native teardown grace period; the assertion polls
+with a bound rather than assuming synchronous socket removal.
+
+The owner installed Debian's `gir1.2-nice-0.1` binding on the reference host.
+Without it the agent appears as a generic GObject without `close_async`. The
+cleanup helper registers this GI namespace before the first agent is constructed;
+loading it later also leaves cached wrappers without the required methods. On a
+new host, install it and run the opt-in WAN prerequisite check:
 
 ```bash
 sudo apt-get install --no-install-recommends gir1.2-nice-0.1
@@ -231,11 +242,15 @@ bash deploy/systemd/check-browser-media-prereqs.sh --wan
 
 This check opens no listener and modifies no services. The default check remains
 LAN-only and does not require the new binding. A successful dependency check is
-not proof of relay cleanup: real allocation-release tests must still pass after
-the cleanup implementation is integrated. The upstream lifecycle requirement is
+not proof of relay cleanup: real allocation-release tests must also pass.
+The upstream lifecycle requirement is
 documented in [libnice close_async](https://libnice.freedesktop.org/libnice/NiceAgent.html#nice-agent-close-async).
 
-## Next operator action: protect the tested binary outside /tmp
+## Completed operator action: protect the tested binary outside /tmp
+
+The owner completed this installation, and read-only verification confirmed the
+installed binary is root:root mode 0755. The command below is retained for new
+hosts/reinstallation; it need not be repeated on the reference host.
 
 Run only after the updated installer is present in the Linux checkout:
 
@@ -258,6 +273,50 @@ rebuild/retest and obtain its new fingerprint; do not bypass verification.
 This is binary staging only. Keep `coturn.service` masked. A dedicated least-
 privilege service and destination/port egress restrictions are still required.
 
+## Next operator action: isolated kernel egress validation (not installation)
+
+The candidate renderer `deploy/systemd/private_turn_bundle.py` produces a separate
+`4play-turn.service`, its required `4play-turn-egress.service`, a private systemd
+credential config, and a dedicated `inet fourplay_turn` nft table. It does not
+install or start anything. The proposed relay runs as the existing `turnserver`
+account with empty capabilities, read-only system files, private temporary/device
+directories, and bounded memory/tasks/file descriptors. It binds IPv4 only;
+TURN TCP/UDP clients use 3478 with UDP relays 52000-52199. TURN/TLS is not provided
+in this experiment (443 remains nginx's). This is still a candidate, not a proven
+systemd-confined deployment.
+
+The outbound chain applies only to the dedicated relay UID. It permits replies
+from the 3478 listener only for established connections, runtime-host ICE UDP
+50000-50999, own-public-IP relay UDP 52000-52199, and relay-source UDP to public
+peers. Other private/local/reserved destinations, IPv6, arbitrary own-public-IP
+ports, and other outbound traffic are dropped. Other UIDs return unchanged.
+This is necessary because allowing the private runtime IP in coturn's IP ACL
+alone would also expose unrelated services on that host. The dedicated account
+must never run other applications. No global firewall flush or input rule is
+generated. Restarting the egress unit with a pre-existing table fails closed;
+review/replacement must occur with TURN stopped.
+
+First test the actual nft rules in a fresh network namespace:
+
+```bash
+cd ~/src/4-play
+sudo python3 tools/test-private-turn-egress.py
+```
+
+This requires sudo for kernel namespace/firewall operations. The parent launches
+`unshare --net`; the child refuses to operate in PID 1's host network namespace.
+All addresses, interfaces and nft rules are fixture-only within that namespace.
+It checks nft syntax, systemd unit syntax, allowed publisher/public peer traffic,
+blocked LAN/loopback/IPv6/bad-port traffic, listener replies, and that another UID
+is unaffected. It neither loads host firewall rules nor installs/starts any
+service. If namespace creation is disallowed, stop and report that error; do not
+run the commands directly in the host namespace. Kernel test results and actual
+confined coturn-service tests are pending until this owner step succeeds.
+
+Still required before public activation: install/test the confined deployment,
+credential renewal/ICE restart, secret rotation/private tester enrollment setup,
+explicit forwarding/UFW changes and genuine remote browser acceptance tests.
+
 ## Regression commands
 
 ```bash
@@ -269,6 +328,8 @@ python3 tools/test-wan-nginx.py
 python3 tools/test-webrtc-client-address.py
 python3 tools/test-webrtc-raw-publisher.py
 python3 tools/test-webrtc-multi-peer.py
+python3 tools/test-webrtc-turn-cleanup.py
+python3 tools/test-private-turn-bundle.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a

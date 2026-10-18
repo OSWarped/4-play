@@ -42,6 +42,8 @@ class Client:
         self.peer.set_property("bundle-policy", GstWebRTC.WebRTCBundlePolicy.MAX_BUNDLE)
         self.peer.set_property("latency", 0)
         self.pipeline.add(self.peer)
+        self.relay_cleanup = configure_peer is not None
+        self.turn_cleanup = None
         if configure_peer:
             configure_peer(self.peer)
         self.counts = dict(video=0, audio=0)
@@ -97,10 +99,15 @@ class Client:
         self.channel.emit("send-string", json.dumps(dict(sequence=sequence, buttons=buttons, axis_x=1, axis_y=-1)))
 
     def close(self):
-        self.pipeline.set_state(Gst.State.NULL)
         for owner, handler in self.handlers:
             owner.disconnect(handler)
         self.handlers.clear()
+        if self.turn_cleanup is not None:
+            return
+        if self.relay_cleanup:
+            self.turn_cleanup = module.TurnCleanup(self.pipeline, self.peer, Gst, GLib)
+        else:
+            self.pipeline.set_state(Gst.State.NULL)
 
 
 def soak(publisher, clients, authorizations, receive_combo, seconds, sample_seconds,
