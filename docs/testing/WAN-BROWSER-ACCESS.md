@@ -85,9 +85,12 @@ a later TURN/TLS endpoint/host. Do not claim universal connectivity.
 
 ## Not yet complete / activation blockers
 
-1. Install coturn safely without starting a default service, inspect the installed
-   version/options, and validate one-hour credentials plus a real forced-relay
-   media/input peer. No real TURN allocation has been tested by the pure tests.
+1. Coturn is installed and remains masked/inactive. Real loopback protocol tests
+   passed for REST authentication, UDP/TCP clients, bounded UDP relay payload
+   round trips, allocation release, and expired/wrong-secret rejection. These
+   tests do not prove browser media, WAN NAT traversal, or latency. The installed
+   Debian `4.6.1-2` package has unresolved security issues and must not be exposed;
+   see the patched-build gate below. Real forced-relay media/input remains pending.
 2. Coturn configuration must authenticate, bound allocations/bandwidth, disable
    CLI/admin and unsafe features, set correct external/private address mapping,
    and enforce peer destination restrictions. In particular do not create a TURN
@@ -108,7 +111,7 @@ a later TURN/TLS endpoint/host. Do not claim universal connectivity.
 6. Only then open exact firewall/router ports and test cellular direct/forced
    relay, multiple testers, cleanup, responsiveness, and existing sites/LAN.
 
-## Next operator action: install the missing relay tool without enabling it
+## Completed operator action: install the relay tool without enabling it
 
 On the reference server coturn was not installed. Run these one at a time:
 
@@ -124,6 +127,57 @@ normal for a masked service). Do not unmask/start it and do not add router rules
 yet. Masking first prevents package installation from starting an unreviewed
 default relay. Stop if a command fails or an existing unrelated coturn service
 is discovered. There is no need to restart the 4-Play services for this step.
+
+## Next operator action: prerequisites for a separately pinned patched build
+
+Reference-host inspection after package installation found:
+
+- `coturn 4.6.1-2`, masked and inactive.
+- No patched candidate in the currently configured Debian trixie repositories.
+- Debian marks this package vulnerable, including the IPv4-mapped IPv6 peer-ACL
+  bypass [CVE-2026-27624](https://security-tracker.debian.org/tracker/CVE-2026-27624).
+  Review the [complete coturn tracker](https://security-tracker.debian.org/tracker/source-package/coturn)
+  again before activation; do not assume one fixed CVE is the entire security gate.
+- The upstream `4.18.0` source tag resolves to commit
+  `23c6c1d32a3d2b21a56cee65d3203bcc4ea82d2b`. That exact commit is pinned in
+  `deploy/systemd/build-private-coturn.py`; changed tag contents are rejected.
+- Compiler, make, git, pkg-config and OpenSSL development files are present.
+  libevent and SQLite development files are missing.
+
+Run on Linux:
+
+```bash
+sudo apt-get install --no-install-recommends libevent-dev libsqlite3-dev
+```
+
+Then the agent can run, without root:
+
+```bash
+cd ~/src/4-play
+python3 deploy/systemd/build-private-coturn.py
+python3 deploy/systemd/build-private-coturn.py --build
+```
+
+The builder uses a new private temporary directory, verifies the source commit,
+removes service secrets/compiler hooks from the build environment, and builds with
+two jobs. Optional database backends, metrics, systemd integration and SCTP are
+disabled; OpenSSL and SQLite remain available. It never runs `make install`, starts
+a daemon, replaces the Debian binary, or changes existing applications. A provenance
+receipt and the build tree remain for review; `/tmp` is not a production install.
+A reviewed persistent deployment is a separate step after validation.
+
+Test the resulting binary using its printed absolute path:
+
+```bash
+python3 tools/test-coturn-loopback.py --turnserver /ABSOLUTE/BUILD/PATH/bin/turnserver
+```
+
+The loopback test uses its own mode-0600 config/random credentials, a random
+127.0.0.1 listener, and fixture relay ports 62000–62031, separate from production
+pools. It stops its own process and removes only its own temporary artifacts.
+Never copy its `allow-loopback-peers` setting into public configuration.
+Until the patched binary and public security gates are validated, keep coturn
+masked and the public website on staging 503. No router rules yet.
 
 ## Regression commands
 
