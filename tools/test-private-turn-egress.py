@@ -17,13 +17,33 @@ spec = importlib.util.spec_from_file_location("turn_bundle", Path(__file__).reso
 bundle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bundle)
 
-WORKER = """import socket,sys
+WORKER = """import errno,socket,sys
 host,port,source,family = sys.argv[1:]
 s=socket.socket(socket.AF_INET6 if family=='6' else socket.AF_INET,socket.SOCK_DGRAM)
 s.bind(('::1' if family=='6' else '192.168.20.68', int(source)))
-s.sendto(b'4play-egress-fixture',(host,int(port)))
-s.close()
+try:
+    try:
+        s.sendto(b'4play-egress-fixture',(host,int(port)))
+    except OSError as error:
+        if error.errno not in (errno.EPERM, errno.EACCES):
+            raise
+        sys.exit(77)
+finally:
+    s.close()
 """
+
+
+def validate_udp_result(returncode, data, allowed):
+    # Local OUTPUT drops can fail sendto immediately instead of silently timing
+    # out. Accept ONLY the worker's explicit permission-denied sentinel for a
+    # forbidden packet, never a bind failure or another subprocess error.
+    if returncode not in (0, 77):
+        raise AssertionError(f"UDP worker failed unexpectedly: exit {returncode}")
+    if allowed:
+        if returncode != 0 or data != b"4play-egress-fixture":
+            raise AssertionError("Allowed UDP packet was blocked or did not arrive")
+    elif data is not None:
+        raise AssertionError("Forbidden UDP packet reached the receiver")
 
 
 def main():
@@ -57,15 +77,18 @@ def main():
             with socket.socket(family, socket.SOCK_DGRAM) as receiver:
                 receiver.bind((host, port))
                 receiver.settimeout(.2)
-                subprocess.run([sys.executable, "-c", WORKER, host, str(port), str(source),
+                result = subprocess.run([sys.executable, "-c", WORKER, host, str(port), str(source),
                                 "6" if family == socket.AF_INET6 else "4"],
                                user=account.pw_uid if uid is None else uid,
-                               group=account.pw_gid, extra_groups=[], cwd="/", check=True)
+                               group=account.pw_gid, extra_groups=[], cwd="/", check=False, timeout=5)
                 try:
                     data = receiver.recv(100)
                 except socket.timeout:
                     data = None
-                assert (data == b"4play-egress-fixture") == allowed, f"Unexpected egress result for {host}:{port} source={source}"
+                try:
+                    validate_udp_result(result.returncode, data, allowed)
+                except AssertionError as error:
+                    raise AssertionError(f"Unexpected egress result for {host}:{port} source={source}: {error}") from error
         for host, port in [("192.168.20.68", 50000), ("192.168.20.68", 50999),
                            ("45.24.46.155", 50000), ("45.24.46.155", 52000), ("45.24.46.155", 52199),
                            ("8.8.8.8", 45000)]:

@@ -313,6 +313,12 @@ service. If namespace creation is disallowed, stop and report that error; do not
 run the commands directly in the host namespace. Kernel test results and actual
 confined coturn-service tests are pending until this owner step succeeds.
 
+Linux may report a forbidden local OUTPUT packet as immediate `sendto` EPERM or
+EACCES, rather than silently dropping it. The worker reports only those send
+errors with a distinct status, which is accepted only for a blocked test case
+whose receiver got nothing. Bind failures, routing errors, other worker failures,
+or denial/non-delivery of allowed traffic still fail the test.
+
 Still required before public activation: install/test the confined deployment,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
@@ -330,6 +336,7 @@ python3 tools/test-webrtc-raw-publisher.py
 python3 tools/test-webrtc-multi-peer.py
 python3 tools/test-webrtc-turn-cleanup.py
 python3 tools/test-private-turn-bundle.py
+python3 tools/test-private-turn-egress-results.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a
