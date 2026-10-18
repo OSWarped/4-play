@@ -2,6 +2,7 @@
 name = "control-plane-server"
 version = "0.1.0"
 edition = "2024"
+default-run = "control-plane-server"
 
 [dependencies]
 axum = "0.8"

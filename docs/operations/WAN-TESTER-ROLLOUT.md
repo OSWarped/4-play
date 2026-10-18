@@ -4,8 +4,13 @@ Target: `https://arcade.blakemilam.com/client-v4`. Testers use a normal browser,
 without installing a VPN or entering service API tokens.
 
 Status: DNS added by the owner and verified as `45.24.46.155`. HTTPS staging
-tool prepared; not yet activated. No nginx, firewall, router, or authentication
-changes have been applied by this plan.
+activated successfully by the owner; certificate issued with automatic renewal.
+The owner verified the intended staging response. No playable public endpoint,
+new firewall/router rule, or public enrollment flow has been activated.
+
+Private invitation storage/operator CLI implemented next; see
+[tester access validation](../testing/WAN-TESTER-ACCESS.md). It is not yet wired
+into public requests. Keep the staging 503 site in place until all gates pass.
 
 ## Verified starting point (2026-10-18)
 

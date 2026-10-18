@@ -3,6 +3,7 @@ mod game_imports;
 pub use game_imports::{GameImportConfig, with_game_imports};
 mod store;
 mod thegamesdb;
+pub mod tester_access;
 pub use browser_seats::with_browser_seats;
 pub use thegamesdb::with_thegamesdb;
 
