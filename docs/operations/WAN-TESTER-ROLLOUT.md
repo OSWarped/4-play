@@ -8,9 +8,11 @@ activated successfully by the owner; certificate issued with automatic renewal.
 The owner verified the intended staging response. No playable public endpoint,
 new firewall/router rule, or public enrollment flow has been activated.
 
-Private invitation storage/operator CLI implemented next; see
-[tester access validation](../testing/WAN-TESTER-ACCESS.md). It is not yet wired
-into public requests. Keep the staging 503 site in place until all gates pass.
+Private invitation storage/operator CLI and an opt-in browser gate with experimental
+WAN ICE are implemented; see [browser access](../testing/WAN-BROWSER-ACCESS.md)
+for completed pieces, activation blockers, and the next masked coturn installation
+step. They are not activated on the reference host. Keep staging 503 until all
+gates pass.
 
 ## Verified starting point (2026-10-18)
 

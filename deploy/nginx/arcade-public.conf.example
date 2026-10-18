@@ -1,0 +1,69 @@
+# REVIEWED CANDIDATE ONLY. Do not enable alongside 4play-arcade-staging.
+# Activate only after WAN access, TURN and network acceptance checks pass.
+# Includes are in nginx's http context (Debian sites-enabled).
+log_format fourplay_wan '$remote_addr [$time_iso8601] $request_method $uri $status $body_bytes_sent';
+limit_req_zone $binary_remote_addr zone=fourplay_wan:1m rate=10r/s;
+
+server {
+    listen 80;
+    server_name arcade.blakemilam.com;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/4play-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 302 https://arcade.blakemilam.com$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name arcade.blakemilam.com;
+    ssl_certificate /etc/letsencrypt/live/arcade.blakemilam.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/arcade.blakemilam.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log /var/log/nginx/4play-wan-access.log fourplay_wan;
+    # No request query strings, referrers, cookies, or authorization in access logs.
+    error_log /var/log/nginx/4play-wan-error.log crit;
+    client_max_body_size 300k;
+    limit_req zone=fourplay_wan burst=120 nodelay;
+    limit_req_status 429;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Frame-Options DENY always;
+    location = / { return 302 /client-v4; }
+
+    # These headers apply to all explicitly proxied client routes below. nginx
+    # must overwrite incoming edge/client-IP headers, not append a proxy chain.
+    proxy_set_header Host arcade.blakemilam.com;
+    include /etc/nginx/snippets/4play-wan-edge-key.conf;
+    # Private root-owned snippet contains ONLY:
+    # proxy_set_header X-4Play-Edge-Key "<separate random 64-hex key>";
+    proxy_set_header X-4Play-Client-IP $remote_addr;
+    proxy_set_header Authorization "";
+    proxy_set_header X-Forwarded-For "";
+    proxy_set_header Forwarded "";
+    proxy_set_header X-4Play-Browser-IP "";
+    proxy_set_header X-4Play-Media-Profile "";
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 30s;
+
+    location = /client-v4 { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v4/ { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v4/experience.js { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v4/styles.css { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v3/experience.js { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v3/styles.css { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/experience.js { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/styles.css { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/bootstrap { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/webrtc-config { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/tester-access { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v2/tester-access.js { proxy_pass http://127.0.0.1:8080; }
+    location ~ ^/client/(app\.js|input\.js|media\.js|spectator\.js|carousel\.js|styles\.css)$ {
+        proxy_pass http://127.0.0.1:8080;
+    }
+    # The Rust facade authenticates, authorizes, and allowlists scoped operations.
+    # This is NOT a proxy for the raw /api/v1 endpoints.
+    location ^~ /client-v2/api/ { proxy_pass http://127.0.0.1:8080; }
+    location / { return 404; }
+}

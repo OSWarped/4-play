@@ -2,8 +2,9 @@
 
 This is an operator-only foundation for WAN access, **not an enabled public
 login flow**. The public hostname must continue returning the staging 503 page.
-No new routes, middleware, service settings, or browser behavior are activated
-by this change. LAN enrollment is unchanged.
+The follow-on [browser gate and experimental ICE implementation](WAN-BROWSER-ACCESS.md)
+is now available behind explicit settings; it is not activated on the reference
+host. LAN enrollment is unchanged.
 
 ## Implemented
 

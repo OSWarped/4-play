@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>4-Play | Tester access</title>
+  <link rel="stylesheet" href="/client/styles.css" />
+  <script src="/client-v2/tester-access.js" defer></script>
+</head>
+<body>
+  <main>
+    <section class="panel" aria-labelledby="tester-heading">
+      <p class="eyebrow">4-Play Arcade</p>
+      <h1 id="tester-heading">Welcome, tester</h1>
+      <p>Enter the invitation code shared with you by the arcade host.</p>
+      <form id="tester-form">
+        <label for="invitation">Invitation code</label>
+        <input id="invitation" name="invitation" type="password" required maxlength="64"
+          pattern="[a-fA-F0-9]{64}" autocomplete="off" spellcheck="false" autocapitalize="none" />
+        <button id="tester-submit" type="submit">Enter arcade</button>
+      </form>
+      <p id="tester-status" role="status" aria-live="polite"></p>
+      <p>Invitations expire and may be limited to one browser. Keep your code private.</p>
+    </section>
+  </main>
+</body>
+</html>

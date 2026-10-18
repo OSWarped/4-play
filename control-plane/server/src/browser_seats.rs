@@ -1,4 +1,5 @@
 //! Opt-in, direct-LAN browser seats. The shared bearer never leaves the server.
+use crate::wan_testers::{GateError, WanGate, WanTesterConfig};
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
@@ -29,6 +30,7 @@ struct Seats {
     secret: Arc<String>,
     networks: Vec<IpNet>,
     origins: Vec<String>,
+    wan: Option<WanGate>,
 }
 
 /// Empty settings disable automatic enrollment. No forwarded headers are trusted.
@@ -37,6 +39,30 @@ pub fn with_browser_seats(
     secret: String,
     networks: &str,
     origins: &str,
+) -> Result<Router, String> {
+    browser_router(app, secret, networks, origins, None)
+}
+
+pub async fn with_wan_browser_seats(
+    app: Router,
+    secret: String,
+    networks: &str,
+    origins: &str,
+    config: Option<WanTesterConfig>,
+) -> Result<Router, String> {
+    let wan = match config {
+        Some(config) => Some(WanGate::open(config).await?),
+        None => None,
+    };
+    browser_router(app, secret, networks, origins, wan)
+}
+
+fn browser_router(
+    app: Router,
+    secret: String,
+    networks: &str,
+    origins: &str,
+    wan: Option<WanGate>,
 ) -> Result<Router, String> {
     let networks = networks
         .split(',')
@@ -72,6 +98,7 @@ pub fn with_browser_seats(
         secret: Arc::new(secret),
         networks,
         origins,
+        wan,
     };
     Ok(app.merge(
         Router::new()
@@ -88,6 +115,12 @@ pub fn with_browser_seats(
             .route("/client-v4/experience.js", get(minimal_script))
             .route("/client-v4/styles.css", get(minimal_styles))
             .route("/client-v2/bootstrap", post(bootstrap))
+            .route("/client-v2/webrtc-config", get(media_config))
+            .route(
+                "/client-v2/tester-access",
+                get(tester_page).post(tester_enroll),
+            )
+            .route("/client-v2/tester-access.js", get(tester_script))
             .route(
                 "/client-v2/api/{*path}",
                 get(proxy).post(proxy).delete(proxy),
@@ -186,6 +219,174 @@ fn protected_response(mut response: Response) -> Response {
 }
 
 struct AccessDenied(StatusCode, &'static str);
+fn gate_response(error: GateError) -> Response {
+    let mut response = protected_response(
+        (error.0, Json(json!({"code":error.1,"message":error.2}))).into_response(),
+    );
+    if error.0 == StatusCode::TOO_MANY_REQUESTS {
+        response
+            .headers_mut()
+            .insert("retry-after", "60".parse().unwrap());
+    }
+    response
+}
+
+async fn media_config(
+    State(state): State<Seats>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, _, wan_id) = match state.authorize(&headers, peer, false).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Some(id) = wan_id {
+        let Some(media) = state.wan.as_ref().and_then(|w| w.media.as_ref()) else {
+            return gate_response(GateError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "wan_media_unavailable",
+                "Internet media is not configured yet.",
+            ));
+        };
+        return protected_response(
+            Json(media.browser_config(id, super::unix_time_ms())).into_response(),
+        );
+    }
+    if state.identity(&headers, super::unix_time_ms()).is_none() {
+        return fail(
+            StatusCode::UNAUTHORIZED,
+            "Browser seat expired. Reload the client.",
+        );
+    }
+    protected_response(Json(json!({"iceServers":[]})).into_response())
+}
+
+async fn tester_page(
+    State(state): State<Seats>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+) -> Response {
+    let Some(wan) = state.wan.as_ref() else {
+        return fail(StatusCode::NOT_FOUND, "Not found.");
+    };
+    if request.uri().query().is_some() {
+        return fail(
+            StatusCode::BAD_REQUEST,
+            "Invitation codes must not be placed in URLs.",
+        );
+    }
+    if let Err(error) = wan.transport(request.headers(), peer) {
+        return gate_response(error);
+    }
+    let mut response = protected_response(
+        (
+            [("content-type", "text/html; charset=utf-8")],
+            include_str!("../static/client-v2/tester-access.html"),
+        )
+            .into_response(),
+    );
+    response.headers_mut().insert("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'".parse().unwrap());
+    response
+        .headers_mut()
+        .insert("referrer-policy", "no-referrer".parse().unwrap());
+    response
+}
+
+async fn tester_script() -> Response {
+    super::static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client-v2/tester-access.js"),
+    )
+}
+
+async fn tester_enroll(
+    State(state): State<Seats>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+) -> Response {
+    let Some(wan) = state.wan.as_ref() else {
+        return fail(StatusCode::NOT_FOUND, "Not found.");
+    };
+    if request.uri().query().is_some() {
+        return fail(
+            StatusCode::BAD_REQUEST,
+            "Invitation codes must not be placed in URLs.",
+        );
+    }
+    let ip = match wan.request(request.headers(), peer, true) {
+        Ok(ip) => ip,
+        Err(error) => return gate_response(error),
+    };
+    if let Err(error) = wan.take_attempt(ip) {
+        return gate_response(error);
+    }
+    if request
+        .headers()
+        .get("content-type")
+        .and_then(|s| s.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("").trim())
+        != Some("application/json")
+    {
+        return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Expected JSON.");
+    }
+    let now = super::unix_time_ms();
+    // Retrying a form submission with an already valid cookie must not consume a
+    // second browser enrollment. It does not refresh/extend that cookie.
+    if wan.identity(request.headers(), now).await.is_ok() {
+        return protected_response(Json(json!({"ok":true})).into_response());
+    }
+    let bytes = match to_bytes(request.into_body(), 1024).await {
+        Ok(b) => b,
+        Err(_) => return fail(StatusCode::PAYLOAD_TOO_LARGE, "Request too large."),
+    };
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Enrollment {
+        invitation: String,
+    }
+    let body: Enrollment = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return fail(StatusCode::BAD_REQUEST, "Expected an invitation code."),
+    };
+    let admission = match wan.access.redeem(&body.invitation, now).await {
+        Ok(v) => v,
+        Err(crate::tester_access::AccessError::Capacity) => {
+            return gate_response(GateError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "tester_capacity",
+                "All tester seats are currently in use.",
+            ));
+        }
+        Err(crate::tester_access::AccessError::Storage) => {
+            return gate_response(GateError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "tester_storage_unavailable",
+                "Tester access is temporarily unavailable.",
+            ));
+        }
+        Err(_) => {
+            return gate_response(GateError(
+                StatusCode::UNAUTHORIZED,
+                "tester_invitation_denied",
+                "Invitation is invalid, expired, revoked, or already used.",
+            ));
+        }
+    };
+    let mut response = protected_response(Json(json!({"ok":true})).into_response());
+    response.headers_mut().insert(
+        "set-cookie",
+        format!(
+            "{}={}; Path=/client-v2; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
+            crate::wan_testers::COOKIE,
+            admission.credential,
+            ((admission.expires_ms - now) / 1000).max(1)
+        )
+        .parse()
+        .unwrap(),
+    );
+    response
+}
+
 impl IntoResponse for AccessDenied {
     fn into_response(self) -> Response {
         fail(self.0, self.1)
@@ -193,6 +394,24 @@ impl IntoResponse for AccessDenied {
 }
 
 impl Seats {
+    async fn authorize(
+        &self,
+        headers: &HeaderMap,
+        peer: SocketAddr,
+        write: bool,
+    ) -> Result<(IpAddr, String, Option<Uuid>), Response> {
+        if let Some(wan) = self.wan.as_ref().filter(|wan| wan.matches_host(headers)) {
+            let ip = wan.request(headers, peer, write).map_err(gate_response)?;
+            let id = wan
+                .identity(headers, super::unix_time_ms())
+                .await
+                .map_err(gate_response)?;
+            return Ok((ip, wan.origin.clone(), Some(id)));
+        }
+        self.check(headers, peer, write)
+            .map(|(ip, origin)| (ip, origin, None))
+            .map_err(IntoResponse::into_response)
+    }
     fn check(
         &self,
         headers: &HeaderMap,
@@ -297,22 +516,26 @@ async fn bootstrap(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
-    let (ip, origin) = match state.check(&headers, peer, true) {
+    let (ip, origin, wan_id) = match state.authorize(&headers, peer, true).await {
         Ok(value) => value,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
     let now = super::unix_time_ms();
-    let id = state.identity(&headers, now).unwrap_or_else(Uuid::new_v4);
+    let id = wan_id
+        .or_else(|| state.identity(&headers, now))
+        .unwrap_or_else(Uuid::new_v4);
     let mut response =
         Json(json!({ "seat_id":format!("browser-{id}"), "destination_address":ip.to_string() }))
             .into_response();
-    response.headers_mut().insert(
-        "set-cookie",
-        state
-            .issue(id, now, origin.starts_with("https:"))
-            .parse()
-            .unwrap(),
-    );
+    if wan_id.is_none() {
+        response.headers_mut().insert(
+            "set-cookie",
+            state
+                .issue(id, now, origin.starts_with("https:"))
+                .parse()
+                .unwrap(),
+        );
+    }
     protected_response(response)
 }
 
@@ -371,11 +594,15 @@ async fn proxy(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     request: Request<Body>,
 ) -> Response {
-    let (ip, _) = match state.check(request.headers(), peer, request.method() != Method::GET) {
+    let (ip, _, wan_id) = match state
+        .authorize(request.headers(), peer, request.method() != Method::GET)
+        .await
+    {
         Ok(value) => value,
-        Err(response) => return response.into_response(),
+        Err(response) => return response,
     };
-    let Some(id) = state.identity(request.headers(), super::unix_time_ms()) else {
+    let Some(id) = wan_id.or_else(|| state.identity(request.headers(), super::unix_time_ms()))
+    else {
         return fail(
             StatusCode::UNAUTHORIZED,
             "Browser seat expired. Reload the client to reconnect.",
@@ -446,9 +673,15 @@ async fn proxy(
     // Do not carry the outer wildcard's routing parameters into the inner API.
     // Preserve only the real socket peer, used for WebRTC ICE address handling.
     parts.extensions.clear();
-    parts.extensions.insert(ConnectInfo(peer));
-    parts.headers.remove("cookie");
-    parts.headers.remove("content-length");
+    parts
+        .extensions
+        .insert(ConnectInfo(SocketAddr::new(ip, peer.port())));
+    if wan_id.is_some() {
+        parts.extensions.insert(super::WanMediaRequest);
+    }
+    // Forward only server-built headers, never the edge key, cookie, or a
+    // browser-supplied private publisher/input/forwarding header.
+    parts.headers = HeaderMap::new();
     parts.headers.insert(
         "authorization",
         format!("Bearer {}", state.secret).parse().unwrap(),
@@ -491,7 +724,243 @@ mod tests {
 
     const SECRET: &str = "server-only-test-seat-secret";
     const ORIGIN: &str = "http://192.168.20.68:8080";
+    const WAN_ORIGIN: &str = "https://arcade.example.test";
+    const EDGE_KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    async fn wan_fixture() -> (
+        tempfile::TempDir,
+        crate::tester_access::TesterAccess,
+        Router,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let database = dir.path().join("testers.db");
+        let access = crate::tester_access::TesterAccess::open(&database)
+            .await
+            .unwrap();
+        let app = with_wan_browser_seats(
+            Router::new().route("/api/v1/{*path}", get(echo).post(echo).delete(echo)),
+            SECRET.into(),
+            "192.168.20.0/24",
+            ORIGIN,
+            Some(WanTesterConfig {
+                origin: WAN_ORIGIN.into(),
+                edge_key: EDGE_KEY.into(),
+                database,
+            }),
+        )
+        .await
+        .unwrap();
+        (dir, access, app)
+    }
+    fn wan_request(method: Method, path: &str, cookie: Option<&str>) -> Request<Body> {
+        let mut r = request(method, path, cookie, "127.0.0.1", WAN_ORIGIN);
+        r.headers_mut()
+            .insert("host", "arcade.example.test".parse().unwrap());
+        r.headers_mut()
+            .insert("x-4play-edge-key", EDGE_KEY.parse().unwrap());
+        r.headers_mut()
+            .insert("x-4play-client-ip", "192.0.2.123".parse().unwrap());
+        r
+    }
+    async fn wan_enroll(app: Router, code: &str) -> Response {
+        let r = wan_request(Method::POST, "/client-v2/tester-access", None);
+        let (parts, _) = r.into_parts();
+        app.oneshot(Request::from_parts(
+            parts,
+            Body::from(json!({"invitation":code}).to_string()),
+        ))
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn wan_enrollment_cookie_scope_revocation_and_scoped_proxy() {
+        let (_dir, access, app) = wan_fixture().await;
+        let now = super::super::unix_time_ms();
+        let invite = access.issue(now, now + 3_600_000, 1).await.unwrap();
+        let unauth = app
+            .clone()
+            .oneshot(wan_request(Method::POST, "/client-v2/bootstrap", None))
+            .await
+            .unwrap();
+        assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body(unauth).await["code"], "tester_access_required");
+        let response = wan_enroll(app.clone(), &invite.code).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let full_cookie = response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(full_cookie.contains("Path=/client-v2; HttpOnly; Secure; SameSite=Strict"));
+        let cookie = full_cookie.split(';').next().unwrap();
+        let response_body = body(response).await;
+        assert_eq!(response_body, json!({"ok":true}));
+        let bootstrap = app
+            .clone()
+            .oneshot(wan_request(
+                Method::POST,
+                "/client-v2/bootstrap",
+                Some(cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(bootstrap.status(), StatusCode::OK);
+        assert!(bootstrap.headers().get("set-cookie").is_none());
+        let identity = body(bootstrap).await;
+        assert_eq!(identity["destination_address"], "192.0.2.123");
+        let response = app
+            .clone()
+            .oneshot(wan_request(
+                Method::POST,
+                "/client-v2/api/sessions",
+                Some(cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = body(response).await;
+        assert_eq!(value["peer"], "192.0.2.123");
+        assert_eq!(value["echo"]["seat_id"], identity["seat_id"]);
+        assert!(value["connection_grant"].get("token").is_none());
+        for path in [
+            "/client-v2/api/runtime-hosts",
+            "/client-v2/api/games/tmnt/metadata",
+            "/client-v2/api/sessions/cleanup",
+        ] {
+            let r = app
+                .clone()
+                .oneshot(wan_request(Method::POST, path, Some(cookie)))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        }
+        // Existing cookie cannot consume a new enrollment by retrying the form.
+        let r = app
+            .clone()
+            .oneshot(wan_request(
+                Method::POST,
+                "/client-v2/tester-access",
+                Some(cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(access.list().await.unwrap()[0].used_seats, 1);
+        access.revoke(invite.id).await.unwrap();
+        let r = app
+            .oneshot(wan_request(
+                Method::GET,
+                "/client-v2/api/games",
+                Some(cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn wan_forged_edges_origins_and_lan_cookie_cannot_enroll() {
+        let (_dir, access, app) = wan_fixture().await;
+        for variant in 0..8 {
+            let mut r = wan_request(Method::POST, "/client-v2/tester-access", None);
+            match variant {
+                0 => {
+                    r.headers_mut().remove("x-4play-edge-key");
+                }
+                1 => {
+                    r.headers_mut()
+                        .insert("x-4play-edge-key", "b".repeat(64).parse().unwrap());
+                }
+                2 => {
+                    r.extensions_mut().insert(ConnectInfo(
+                        "192.168.20.10:1234".parse::<SocketAddr>().unwrap(),
+                    ));
+                }
+                3 => {
+                    r.headers_mut()
+                        .insert("origin", "https://evil.example".parse().unwrap());
+                }
+                4 => {
+                    r.headers_mut().remove("origin");
+                }
+                5 => {
+                    r.headers_mut()
+                        .insert("x-4play-client-ip", "127.0.0.1".parse().unwrap());
+                }
+                6 => {
+                    r.headers_mut()
+                        .append("x-4play-client-ip", "192.0.2.5".parse().unwrap());
+                }
+                _ => {
+                    r.headers_mut()
+                        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+                }
+            }
+            let response = app.clone().oneshot(r).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "variant {variant}"
+            );
+        }
+        assert!(access.list().await.unwrap().is_empty());
+        // A valid LAN cookie is not a public admission cookie, and real LAN
+        // enrollment remains independent of this new opt-in policy.
+        let (cookie, _) = enroll(app.clone()).await;
+        let r = app
+            .oneshot(wan_request(
+                Method::POST,
+                "/client-v2/bootstrap",
+                Some(&cookie),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn wan_login_limits_and_secrets_in_urls_are_rejected() {
+        let (_dir, _access, app) = wan_fixture().await;
+        for _ in 0..5 {
+            let r = wan_enroll(app.clone(), &"f".repeat(64)).await;
+            assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        }
+        let r = wan_enroll(app.clone(), &"f".repeat(64)).await;
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.headers()["retry-after"], "60");
+        for method in [Method::GET, Method::POST] {
+            let r = app
+                .clone()
+                .oneshot(wan_request(
+                    method,
+                    "/client-v2/tester-access?invitation=secret",
+                    None,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        }
+        let r = app
+            .clone()
+            .oneshot(wan_request(Method::GET, "/client-v2/tester-access", None))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert!(r.headers().get("content-security-policy").is_some());
+        let r = fixture()
+            .oneshot(wan_request(Method::GET, "/client-v2/tester-access", None))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
     async fn echo(request: ExtractRequest) -> Json<Value> {
+        assert!(!request.headers().contains_key("x-4play-edge-key"));
+        assert!(!request.headers().contains_key("cookie"));
         assert_eq!(
             request.headers()["authorization"],
             format!("Bearer {SECRET}")
@@ -926,6 +1395,7 @@ mod tests {
             secret: Arc::new(SECRET.into()),
             networks: vec![],
             origins: vec![],
+            wan: None,
         };
         let id = Uuid::new_v4();
         let issued = state.issue(id, 100, true);

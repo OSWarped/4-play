@@ -1,10 +1,13 @@
 mod browser_seats;
+mod wan_media;
+mod wan_testers;
+pub use wan_testers::WanTesterConfig;
 mod game_imports;
 pub use game_imports::{GameImportConfig, with_game_imports};
 mod store;
-mod thegamesdb;
 pub mod tester_access;
-pub use browser_seats::with_browser_seats;
+mod thegamesdb;
+pub use browser_seats::{with_browser_seats, with_wan_browser_seats};
 pub use thegamesdb::with_thegamesdb;
 
 use std::{
@@ -44,6 +47,8 @@ const WEBRTC_PUBLISHER_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_WEBRTC_SESSION_PORT_START: u16 = 43_000;
 const WEBRTC_INPUT_LEASE_MS: u64 = 60_000;
 type BrowserConnectInfo = Option<Extension<ConnectInfo<SocketAddr>>>;
+#[derive(Clone)]
+struct WanMediaRequest;
 
 fn browser_source_ip(peer: BrowserConnectInfo) -> Option<IpAddr> {
     let Extension(ConnectInfo(address)) = peer?;
@@ -774,6 +779,7 @@ async fn put_asset(
 
 async fn create_session(
     State(state): State<AppState>,
+    wan: Option<Extension<WanMediaRequest>>,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<Session>), ApiError> {
     validate_session_request(&request)?;
@@ -791,6 +797,7 @@ async fn create_session(
             state.port_pools.media_port_count,
             state.port_pools.input_port_start,
             state.port_pools.input_port_count,
+            wan.is_some(),
         )
         .await
         .map_err(ApiError::store)?;
@@ -1031,6 +1038,7 @@ async fn signal_webrtc_test_pattern(
         None,
         None,
         browser_source_ip(peer),
+        false,
     )
     .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
@@ -1083,6 +1091,7 @@ async fn signal_session_webrtc_offer(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<String>,
     peer: BrowserConnectInfo,
+    wan: Option<Extension<WanMediaRequest>>,
     Json(request): Json<WebRtcOfferRequest>,
 ) -> Result<Json<WebRtcAnswerResponse>, ApiError> {
     validate_webrtc_offer_request(&request)?;
@@ -1144,6 +1153,7 @@ async fn signal_session_webrtc_offer(
         input.as_ref(),
         viewer_key.as_deref(),
         browser_source_ip(peer),
+        wan.is_some(),
     )
     .await?;
     validate_sdp("invalid_sdp_answer", "SDP answer", &answer)?;
@@ -1342,6 +1352,7 @@ async fn post_sdp_offer_to_publisher(
     input: Option<&PublisherInput>,
     viewer_key: Option<&str>,
     browser_ip: Option<IpAddr>,
+    wan: bool,
 ) -> Result<String, ApiError> {
     let client = reqwest::Client::builder()
         .timeout(WEBRTC_PUBLISHER_TIMEOUT)
@@ -1366,6 +1377,9 @@ async fn post_sdp_offer_to_publisher(
     }
     if let Some(browser_ip) = browser_ip {
         publisher_request = publisher_request.header("x-4play-browser-ip", browser_ip.to_string());
+    }
+    if wan {
+        publisher_request = publisher_request.header("x-4play-media-profile", "wan");
     }
     let response = publisher_request.send().await.map_err(|error| {
         eprintln!("WebRTC {publisher_label} publisher request failed: {error}");
@@ -1404,6 +1418,7 @@ async fn post_sdp_offer_to_publisher(
 async fn create_spectator_grant(
     State(state): State<AppState>,
     AxumPath(session_id): AxumPath<String>,
+    wan: Option<Extension<WanMediaRequest>>,
     Json(request): Json<CreateSpectatorGrantRequest>,
 ) -> Result<(StatusCode, Json<SpectatorGrant>), ApiError> {
     validate_seat_id(&request.seat_id)?;
@@ -1426,6 +1441,7 @@ async fn create_spectator_grant(
             now.saturating_add(state.grant_ttl_ms),
             state.port_pools.media_port_start,
             state.port_pools.media_port_count,
+            wan.is_some(),
         )
         .await
         .map_err(ApiError::store)?;
@@ -1934,6 +1950,11 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "session_ports_exhausted",
                 "runtime host has no available session ports",
+            ),
+            StoreError::PublicCapacity => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "tester_capacity",
+                "Tester resource limit reached. Close another game or spectator view and try again.",
             ),
             StoreError::PlayerSlotNotFound => Self::new(
                 StatusCode::NOT_FOUND,
@@ -4037,6 +4058,114 @@ mod tests {
             "seat_id": seat_id,
             "destination_address": "192.0.2.25"
         })
+    }
+
+    async fn wan_json(service: axum::Router, path: &str, value: Value) -> (u16, Value) {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header("authorization", "Bearer test-seat-token")
+            .header("content-type", "application/json")
+            .body(Body::from(value.to_string()))
+            .unwrap();
+        request.extensions_mut().insert(super::WanMediaRequest);
+        let response = service.oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn wan_session_capacity_is_transactional_and_lan_is_unchanged() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (a, b, c, d) = tokio::join!(
+            wan_json(
+                service.clone(),
+                "/api/v1/sessions",
+                session_request("public-a")
+            ),
+            wan_json(
+                service.clone(),
+                "/api/v1/sessions",
+                session_request("public-b")
+            ),
+            wan_json(
+                service.clone(),
+                "/api/v1/sessions",
+                session_request("public-c")
+            ),
+            wan_json(
+                service.clone(),
+                "/api/v1/sessions",
+                session_request("public-d")
+            )
+        );
+        let results = [a, b, c, d];
+        assert_eq!(results.iter().filter(|r| r.0 == 201).count(), 3);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|r| r.1["code"] == "tester_capacity")
+                .count(),
+            1
+        );
+        let (status, _) = request_json(
+            service,
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("local-seat")),
+        )
+        .await;
+        assert_eq!(status, 201);
+    }
+
+    #[tokio::test]
+    async fn wan_spectator_capacity_is_bounded_reconnects_reuse_grants() {
+        let service = app().await.unwrap();
+        register_host_and_catalog(&service).await;
+        let (_, session) = wan_json(
+            service.clone(),
+            "/api/v1/sessions",
+            session_request("creator"),
+        )
+        .await;
+        let (_, other) = request_json(
+            service.clone(),
+            Method::POST,
+            "/api/v1/sessions",
+            Some(session_request("other")),
+        )
+        .await;
+        let path = format!(
+            "/api/v1/sessions/{}/spectators",
+            session["id"].as_str().unwrap()
+        );
+        let other_path = format!(
+            "/api/v1/sessions/{}/spectators",
+            other["id"].as_str().unwrap()
+        );
+        let view = |seat: &str| json!({"seat_id":seat,"destination_address":"192.0.2.25"});
+        let (status, first) = wan_json(service.clone(), &path, view("public-viewer")).await;
+        assert_eq!(status, 201);
+        let (status, retry) = wan_json(service.clone(), &path, view("public-viewer")).await;
+        assert_eq!(status, 201);
+        assert_eq!(first["id"], retry["id"]);
+        let (status, _) = wan_json(service.clone(), &other_path, view("public-viewer")).await;
+        assert_eq!(status, 503);
+        for i in 0..6 {
+            let (status, _) = wan_json(service.clone(), &path, view(&format!("viewer-{i}"))).await;
+            assert_eq!(status, 201);
+        }
+        let (a, b) = tokio::join!(
+            wan_json(service.clone(), &path, view("last-a")),
+            wan_json(service.clone(), &path, view("last-b"))
+        );
+        assert_eq!(usize::from(a.0 == 201) + usize::from(b.0 == 201), 1);
+        assert_eq!(usize::from(a.0 == 503) + usize::from(b.0 == 503), 1);
+        let (status, _) =
+            request_json(service, Method::POST, &path, Some(view("local-viewer"))).await;
+        assert_eq!(status, 201);
     }
 
     #[tokio::test]

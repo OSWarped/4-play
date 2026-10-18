@@ -956,7 +956,15 @@ async function startBrowserMedia(button) {
   browserPlayer.scrollIntoView({ behavior: "smooth", block: "start" });
   setBrowserMediaState("Creating browser media peer...");
 
-  const peer = new RTCPeerConnection({ iceServers: [] });
+  let mediaConfiguration;
+  try {
+    mediaConfiguration = await window.FourPlayV2?.mediaConfiguration?.() || { iceServers: [] };
+  } catch (error) {
+    stopBrowserMedia();
+    setBrowserMediaState(`Browser media configuration failed: ${error.message}`);
+    return;
+  }
+  const peer = new RTCPeerConnection(mediaConfiguration);
   let stream = new MediaStream();
   state.browserMediaPeer = peer;
   state.browserMediaStream = stream;

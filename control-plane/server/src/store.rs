@@ -593,6 +593,7 @@ impl RuntimeHostStore {
         media_port_count: u16,
         input_port_start: u16,
         input_port_count: u16,
+        public_tester: bool,
     ) -> Result<Session, StoreError> {
         let now = to_sql_integer(now_unix_ms, "session timestamp")?;
         let grant_expires = to_sql_integer(grant_expires_unix_ms, "grant expiry")?;
@@ -605,6 +606,11 @@ impl RuntimeHostStore {
             .call(move |connection| -> tokio_rusqlite::rusqlite::Result<Result<StoredSession, AllocationRejection>> {
                 let transaction = connection.transaction()?;
                 mark_expired_offline(&transaction, cutoff, now)?;
+
+                if public_tester {
+                    let active: i64 = transaction.query_row("SELECT count(*) FROM sessions WHERE state NOT IN ('stopped','allocation_failed','launch_failed','runtime_lost','terminated')", [], |r| r.get(0))?;
+                    if active >= 3 { return Ok(Err(AllocationRejection::PublicCapacity)); }
+                }
 
                 let seat_busy = seat_has_claimed_slot(&transaction, &request.seat_id, None, now_unix_ms)?;
                 if seat_busy {
@@ -836,6 +842,7 @@ impl RuntimeHostStore {
         expires_unix_ms: u64,
         media_port_start: u16,
         port_count: u16,
+        public_tester: bool,
     ) -> Result<SpectatorGrant, StoreError> {
         let now = to_sql_integer(now_unix_ms, "spectator grant timestamp")?;
         let expires = to_sql_integer(expires_unix_ms, "spectator grant expiry")?;
@@ -875,6 +882,20 @@ impl RuntimeHostStore {
                         "DELETE FROM spectator_grants WHERE expires_unix_ms <= ?1",
                         [now],
                     )?;
+
+                    if public_tester {
+                        // Reconnect the same spectator without allocating another
+                        // relay/UDP destination or spending another resource slot.
+                        let existing = transaction.query_row("SELECT id,media_udp_port FROM spectator_grants WHERE session_id=?1 AND seat_id=?2 AND expires_unix_ms>?3", params![session_id,seat_id,now], |r| Ok((r.get::<_,String>(0)?,r.get::<_,u16>(1)?))).optional()?;
+                        if let Some((id,media_udp_port)) = existing {
+                            transaction.execute("UPDATE spectator_grants SET destination_address=?1, expires_unix_ms=?2 WHERE id=?3", params![destination_address,expires,id])?;
+                            transaction.commit()?;
+                            return Ok(Ok(SpectatorGrant { id, session_id, seat_id, destination_address, runtime_host_id, runtime_host_address, media_transport: MediaTransport::UdpMpegTs, media_udp_port, webrtc_signaling:None, expires_unix_ms }));
+                        }
+                        let active: i64 = transaction.query_row("SELECT count(*) FROM spectator_grants WHERE expires_unix_ms>?1", [now], |r| r.get(0))?;
+                        let own: i64 = transaction.query_row("SELECT count(*) FROM spectator_grants WHERE seat_id=?1 AND expires_unix_ms>?2", params![seat_id,now], |r| r.get(0))?;
+                        if active >= 8 || own >= 1 { return Ok(Err(StoreError::PublicCapacity)); }
+                    }
 
                     let mut selected_port = None;
                     for offset in 0..port_count {
@@ -2296,6 +2317,7 @@ enum HeartbeatRejection {
 }
 
 enum AllocationRejection {
+    PublicCapacity,
     GameNotFound,
     GameUnavailable,
     SeatBusy,
@@ -2325,6 +2347,7 @@ enum SlotReservationRejection {
 
 #[derive(Debug)]
 pub enum StoreError {
+    PublicCapacity,
     NotFound,
     GameNotFound,
     GameUnavailable,
@@ -2373,6 +2396,7 @@ impl StoreError {
             AllocationRejection::GameUnavailable => Self::GameUnavailable,
             AllocationRejection::SeatBusy => Self::SeatBusy,
             AllocationRejection::PortsExhausted => Self::PortsExhausted,
+            AllocationRejection::PublicCapacity => Self::PublicCapacity,
             AllocationRejection::InvalidHostCapabilities => {
                 Self::data("runtime host capabilities could not be decoded")
             }
@@ -2418,6 +2442,7 @@ impl fmt::Display for StoreError {
             Self::GameUnavailable => write!(formatter, "catalog game has no online runtime host"),
             Self::SessionNotFound => write!(formatter, "session was not found"),
             Self::SeatBusy => write!(formatter, "seat already has a nonterminal session"),
+            Self::PublicCapacity => write!(formatter, "public tester resource limit reached"),
             Self::PortsExhausted => {
                 write!(formatter, "runtime host has no available session ports")
             }

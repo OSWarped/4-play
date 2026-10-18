@@ -10,6 +10,7 @@ import traceback
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from webrtc_client_address import browser_host_for_request
+from webrtc_wan import request_is_wan
 from webrtc_browser_input import InputAuthorization
 from webrtc_peer_pool import PeerCapacityError
 
@@ -43,6 +44,7 @@ class HttpAddressTests(unittest.TestCase):
         tree = ast.parse(script.read_text(encoding="utf-8"))
         handler = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "request_handler")
         namespace = dict(BaseHTTPRequestHandler=BaseHTTPRequestHandler, browser_host_for_request=browser_host_for_request,
+                         request_is_wan=request_is_wan,
                          InputAuthorization=InputAuthorization, PeerCapacityError=PeerCapacityError,
                          MultiPeerSessionPublisher=type("MultiPeer", (), {}), sys=sys, traceback=traceback)
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), handler], type_ignores=[])

@@ -40,6 +40,15 @@
     },
   });
   api.headers = { "X-4Play-Client": "v2" };
+  api.mediaConfiguration = async () => {
+    const response = await root.fetch("/client-v2/webrtc-config", { credentials: "same-origin", cache: "no-store", headers: api.headers });
+    const result = await response.json();
+    if (!response.ok) {
+      if (response.status === 401 && result.code === "tester_access_required") root.location.replace("/client-v2/tester-access");
+      throw Error(result.message || "Media configuration unavailable.");
+    }
+    return result;
+  };
   api.artworkEnvironment = {
     URL: root.URL, AbortController: root.AbortController,
     fetch: (path, options) => root.fetch(apiUrl(path), { ...options, credentials: "same-origin" }),
@@ -48,6 +57,7 @@
     const response = await root.fetch("/client-v2/bootstrap", { method: "POST", credentials: "same-origin", headers: { ...api.headers, "Content-Type": "application/json" }, body: "{}" });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
+      if (response.status === 401 && error.code === "tester_access_required") root.location.replace("/client-v2/tester-access");
       throw Error(error.message || "This seat could not connect. Please ask the site operator.");
     }
     return response.json();

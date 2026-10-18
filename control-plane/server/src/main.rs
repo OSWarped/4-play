@@ -93,12 +93,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None
     };
     let app = control_plane_server::with_game_imports(app, import_config);
-    let app = control_plane_server::with_browser_seats(
+    let app = control_plane_server::with_wan_browser_seats(
         app,
         seat_api_token,
         &env::var("FOURPLAY_BROWSER_SEAT_NETWORKS").unwrap_or_default(),
         &env::var("FOURPLAY_BROWSER_SEAT_ORIGINS").unwrap_or_default(),
+        control_plane_server::WanTesterConfig::from_environment().map_err(std::io::Error::other)?,
     )
+    .await
     .map_err(std::io::Error::other)?;
 
     println!(

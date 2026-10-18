@@ -32,6 +32,7 @@ from webrtc_browser_input import BrowserInputRelay, InputAuthorization
 from webrtc_peer_pool import PeerPool, PeerCapacityError
 from webrtc_client_address import browser_host_for_request
 from webrtc_ice_ports import IceUdpPortRange, add_ice_port_arguments, configure_ice_udp_ports, validate_answer_candidates
+from webrtc_wan import WanIce, request_is_wan
 from webrtc_offer_codecs import offered_payloads
 
 import gi
@@ -70,6 +71,8 @@ class RawSessionPublisher:
     def __init__(self, args: argparse.Namespace, input_relay=None) -> None:
         self.args = args
         self.ice_ports = IceUdpPortRange.from_args(args)
+        self.wan_mode = False
+        self.wan_ice = None
         self.loop = GLib.MainLoop()
         self.offer_lock = threading.Lock()
         self.owns_input_relay = input_relay is None
@@ -177,6 +180,9 @@ class RawSessionPublisher:
         if self.webrtc is None:
             raise RuntimeError("pipeline did not create webrtcbin named 'webrtc'")
         configure_ice_udp_ports(self.webrtc, self.ice_ports)
+        if self.wan_mode:
+            self.wan_ice = WanIce.from_environment()
+            self.wan_ice.configure(self.webrtc)
 
         self.webrtc_handlers = [self.webrtc.connect(signal, callback) for signal, callback in (
             ("notify::ice-gathering-state", self.on_ice_gathering_state),
@@ -367,15 +373,19 @@ class RawSessionPublisher:
         browser_host_ip: str | None,
         timeout_seconds: float = 8.0,
         input_authorization: InputAuthorization | None = None,
+        wan_media: bool = False,
     ) -> str:
         with self.offer_lock:
             if self.closed:
                 raise RuntimeError("browser peer closed")
-            if self.pipeline_failed or self.media_started:
+            rebuild = self.pipeline_failed or self.media_started or self.wan_mode != wan_media
+            self.wan_mode = wan_media
+            if rebuild:
+                self.wan_ice = None
                 self.reset_pipeline("new browser offer")
             self.input_authorization = input_authorization
             self.input_relay.authorize(input_authorization)
-            if browser_host_ip:
+            if browser_host_ip and not self.wan_mode:
                 offer_text = replace_mdns_candidates(offer_text, browser_host_ip)
             event = threading.Event()
             context: dict[str, object] = {"event": event}
@@ -395,7 +405,10 @@ class RawSessionPublisher:
             answer = context.get("answer")
             if not isinstance(answer, str):
                 raise RuntimeError("GStreamer did not produce an SDP answer")
-            validate_answer_candidates(answer, self.ice_ports)
+            if self.wan_ice:
+                self.wan_ice.validate_answer(answer, self.ice_ports)
+            else:
+                validate_answer_candidates(answer, self.ice_ports)
             if self.args.answer_file:
                 Path(self.args.answer_file).write_text(answer, encoding="utf-8")
             return answer
@@ -554,11 +567,16 @@ class RawSessionPublisher:
         if self.webrtc is None:
             return True
         description = self.webrtc.get_property("local-description")
+        if self.wan_mode and self.webrtc.get_property("ice-gathering-state") != GstWebRTC.WebRTCICEGatheringState.COMPLETE:
+            return True  # Never return an early host-only answer for a WAN viewer.
         if description is None:
             return True
         answer_text = normalize_sdp(description.sdp.as_text())
         try:
-            validate_answer_candidates(answer_text, self.ice_ports)
+            if self.wan_ice:
+                self.wan_ice.validate_answer(answer_text, self.ice_ports)
+            else:
+                validate_answer_candidates(answer_text, self.ice_ports)
         except RuntimeError as error:
             self.mark_pipeline_failed(str(error))
             return False
@@ -663,14 +681,17 @@ class MultiPeerSessionPublisher:
         for _key, peer in self.pool.snapshot():
             peer.mark_pipeline_failed(reason)
 
-    def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None):
+    def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None, wan_media=False):
         if not offer.lstrip().startswith("v=0") or "\nm=" not in offer or len(offer.encode("utf-8")) > 262144:
             raise RuntimeError("invalid SDP offer")
         with self.offer_lock:
             self.prune()
             key, peer = self.pool.create(input_authorization, viewer_key)
             try:
-                answer = peer.answer_for_offer(offer, host_ip, input_authorization=input_authorization)
+                options = {"input_authorization": input_authorization}
+                if wan_media:
+                    options["wan_media"] = True
+                answer = peer.answer_for_offer(offer, host_ip, **options)
                 print(f"Browser peer ready key={key} count={len(self.pool.snapshot())}", file=sys.stderr, flush=True)
                 return answer
             except Exception:
@@ -774,6 +795,8 @@ def request_handler(publisher) -> type[BaseHTTPRequestHandler]:
                 browser_host_ip = browser_host_for_request(self.headers, self.client_address[0], publisher.args.browser_host_ip)
                 authorization = InputAuthorization.from_headers(self.headers)
                 options = {"input_authorization": authorization}
+                if request_is_wan(self.headers, self.client_address[0]):
+                    options["wan_media"] = True
                 if isinstance(publisher, MultiPeerSessionPublisher):
                     options["viewer_key"] = self.headers.get("x-4play-viewer-key")
                 answer = publisher.answer_for_offer(offer, browser_host_ip, **options)
