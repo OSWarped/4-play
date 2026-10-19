@@ -395,6 +395,18 @@ WAN responsiveness acceptance. Those gates remain required. Runtime/credential
 directories and a root-private fixture log are temporary; no staged secret,
 application service, nginx config, host firewall or router setting is changed.
 
+The first owner run passed confinement, UDP/TCP relay, private-service denial and
+invalid-credential rejection, but the namespace-wide socket-empty assertion timed
+out. That measurement was incorrect: `/proc/PID/net/udp` lists sockets for the
+whole network namespace, not that process alone. The revised check joins the
+table to coturn's file-descriptor socket inodes, observes each advertised live
+allocation before use, requires a zero-lifetime refresh acknowledgement and
+waits for those exact allocation sockets to disappear after each release. It
+does not ignore an observed allocation that remains open, extend its timeout,
+or treat unreadable ownership information as success. A genuine remaining
+allocation now reports only its port(s), never a credential. The corrected
+privileged run is still pending; the earlier timeout is not claimed as a pass.
+
 The namespace/credential behavior follows the official
 [systemd execution documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
 and [transient service documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html).
@@ -419,6 +431,7 @@ python3 tools/test-private-turn-bundle.py
 python3 tools/test-private-turn-egress-results.py
 python3 tools/test-private-turn-stage.py
 python3 tools/test-private-turn-service-unit.py
+python3 tools/test-turn-socket-observation.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a

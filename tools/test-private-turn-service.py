@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import uuid
+from turn_socket_observation import owned_udp_sockets
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "deploy/systemd"))
@@ -104,6 +105,7 @@ def protocol_checks(config, pid):
         except OSError:
             return False
     wait_for(listening, "Confined TURN listener did not become ready")
+    tracked = set()
     # Root fixture sockets model a public UDP endpoint and the private runtime.
     # They exist only in this namespace, not on the actual LAN/public network.
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as echo, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as runtime, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as forbidden:
@@ -123,6 +125,10 @@ def protocol_checks(config, pid):
                 allocated = True
                 address, port = protocol.decoded_address(response[0x0016])
                 assert address == public and 52000 <= port <= 52199
+                allocation_sockets = set(owned_udp_sockets(pid, port, port))
+                if not allocation_sockets:
+                    raise AssertionError("The advertised allocation has no observable coturn-owned relay socket")
+                tracked.update(allocation_sockets)
                 def permission(ip, port):
                     return client.exchange(8, [(0x0012, protocol.xor_address(ip, port))], True)
                 def send(ip, port):
@@ -159,6 +165,15 @@ def protocol_checks(config, pid):
                     raise AssertionError("Authenticated relay reached the private web port")
             finally:
                 client.close(allocated)
+            if allocated:
+                def released():
+                    return not allocation_sockets.intersection(owned_udp_sockets(pid, 52000, 52199))
+                try:
+                    wait_for(released, "Confined relay allocation socket did not release", seconds=10)
+                except RuntimeError:
+                    remaining = owned_udp_sockets(pid, 52000, 52199)
+                    ports = sorted({remaining[inode][2] for inode in allocation_sockets.intersection(remaining)})
+                    raise RuntimeError(f"Coturn still owns the observed allocation socket(s) on UDP port(s) {ports}") from None
             print(f"PASS: confined {'TCP' if tcp else 'UDP'} TURN authentication, relay payload, private-service denial, allocation release")
         for label, credential in [("expired", protocol.credentials(secret, int(time.time()) - 60)),
                                   ("wrong-secret", protocol.credentials(secrets.token_hex(32), int(time.time()) + 120))]:
@@ -169,14 +184,9 @@ def protocol_checks(config, pid):
             finally:
                 client.close()
             print(f"PASS: confined relay rejects {label} credentials")
-    def no_relay_sockets():
-        for name in ("udp", "udp6"):
-            for line in Path(f"/proc/{pid}/net/{name}").read_text().splitlines()[1:]:
-                if 52000 <= int(line.split()[1].split(":")[1], 16) <= 52199:
-                    return False
-        return True
-    wait_for(no_relay_sockets, "Confined relay allocations did not release", seconds=10)
-    print("PASS: relay ports released while the confined service is still running")
+    wait_for(lambda: not tracked.intersection(owned_udp_sockets(pid, 52000, 52199)),
+             "Confined observed allocations did not release", seconds=10)
+    print("PASS: observed coturn allocation sockets released while the confined service is still running")
 
 
 def main():

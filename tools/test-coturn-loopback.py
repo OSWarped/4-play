@@ -115,8 +115,8 @@ class Client:
     def close(self, release=False):
         try:
             if release:
-                kind, _ = self.exchange(4, [(0x000d, b"\0\0\0\0")], True)
-                assert kind == 0x0104, "TURN allocation did not release"
+                kind, response = self.exchange(4, [(0x000d, b"\0\0\0\0")], True)
+                assert kind == 0x0104 and response.get(0x000d) == b"\0\0\0\0", "TURN did not acknowledge a zero-lifetime allocation release"
         finally:
             self.socket.close()
 

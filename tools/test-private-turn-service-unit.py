@@ -59,5 +59,17 @@ class ServiceTests(unittest.TestCase):
             protocol.Client(3478, host="192.168.20.68")
             make.return_value.connect.assert_called_with(("192.168.20.68", 3478))
 
+    def test_release_requires_zero_lifetime_ack_and_closes_on_failure(self):
+        protocol = fixture.load("protocol_release_test", Path(__file__).with_name("test-coturn-loopback.py"))
+        with patch.object(protocol.socket, "socket") as make:
+            for lifetime in (b"\0\0\0\0", b"\0\0\0\x3c", None):
+                client = protocol.Client(3478)
+                with patch.object(client, "exchange", return_value=(0x0104, {0x000d:lifetime})):
+                    if lifetime == b"\0\0\0\0":
+                        client.close(True)
+                    else:
+                        with self.assertRaises(AssertionError): client.close(True)
+                make.return_value.close.assert_called()
+
 
 if __name__ == "__main__": unittest.main()
