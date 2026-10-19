@@ -214,7 +214,7 @@ def media_checks(config, pid, parent_net=None):
     from webrtc_turn_fixture import test_relay_media
     with tempfile.TemporaryDirectory(prefix="4play-confined-media-") as temporary:
         test_relay_media(3478, found[0], Path(temporary), pid, private_profile=True, reconnect=True)
-    print("PASS: restricted relay decoded audio/video, forwarded input and cleaned reconnect/leave/revoked peers")
+    print("PASS: production-profile relay decoded audio/video, forwarded input and cleaned reconnect/leave/revoked peers")
 
 
 def main():

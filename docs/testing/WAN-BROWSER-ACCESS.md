@@ -499,7 +499,7 @@ Still required before public activation: finish confined media/deployment tests,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
 
-### Next media gate: not yet passing
+### Next media gate: routing smoke passed; confinement pending
 
 `tools/smoke-turn-media-profile.py` runs without sudo in a disposable user/network
 namespace against the installed policy candidate. It uses fresh fixture credentials,
@@ -523,16 +523,40 @@ leave/rejoin can pass with the UDP-only receiver. Adding the relayed spectator
 then fails with coturn error 486, `Allocation Bandwidth Quota Reached`, followed
 by the publisher rejecting an answer without a relay candidate. The earlier
 receiver with speculative TCP allocations hit the limit during player reconnect.
-This is an unresolved capacity/accounting/lifecycle gate, not a successful media
-acceptance test. Socket-release PASS alone does not prove bandwidth reservations
-are reusable. Do not raise/remove production quotas to make this fixture pass.
+That first run was not a successful media acceptance test. Do not raise/remove
+production quotas to make this fixture pass.
+
+Follow-up diagnosis on 2026-10-19: twelve alternating UDP/TCP allocation/release
+cycles pass with a bandwidth budget for **only one allocation**, provided each
+cycle waits for the observed coturn socket to close. The media fixture had only
+waited for `Nice.Agent.close_async` completion: this is not the same as coturn's
+deferred native allocation-deletion timer expiring. It now also observes the old
+allocation inodes disappearing before rejoining. For a spectator it tracks only
+that spectator's inodes, preserving the player's live allocations.
+
+With that correction the production-profile routing smoke passes decoded AV,
+SCTP press/release, player leave/rejoin, spectator leave/rejoin, admission
+revocation/expiry, unaffected LAN viewing and final native allocation release.
+All allocation/bandwidth quotas and production candidate validation are unchanged.
+This establishes clean leave/rejoin, **not** unrestricted immediate overlapping
+reconnect or browser multi-interface capacity. Rapid retry/backoff and capacity
+headroom remain rollout considerations; a cleanup callback alone must not be
+presented as proof that server-side capacity is already free.
+
+Reproduce the tighter independent bandwidth-reuse check without sudo:
+
+```bash
+python3 tools/test-coturn-loopback.py \
+  --turnserver /opt/4play-coturn/4.18.0-4play-policy1/turnserver --capacity-reuse
+```
 
 The extended privileged gate is implemented but **not yet accepted**:
 `sudo python3 tools/test-private-turn-service.py --policy-candidate --media`.
 It validates staging unchanged and starts only a throwaway confined unit with a
-fresh credential and the same simulated-public routing adaptation. First resolve
-the smoke failure; then run this command to prove media under the actual UID/nft
-and systemd restrictions. The existing no-`--media` protocol gate remains unchanged.
+fresh credential and the same simulated-public routing adaptation. The routing
+smoke now passes; run this command next to test media under the actual UID/nft
+and systemd restrictions. SSH `sudo -n` requires a password, so the operator must
+run the privileged gate in their own terminal. The existing no-`--media` protocol gate remains unchanged.
 The public site must remain staged until this and the other rollout gates pass.
 
 ## Regression commands
@@ -552,6 +576,7 @@ python3 tools/test-private-turn-egress-results.py
 python3 tools/test-private-turn-stage.py
 python3 tools/test-private-turn-service-unit.py
 python3 tools/test-turn-socket-observation.py
+python3 tools/test-turn-capacity-reuse.py
 python3 tools/test-coturn-policy-candidate.py
 python3 tools/test-coturn-policy-install.py
 ```

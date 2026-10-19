@@ -135,11 +135,36 @@ def listener_port():
     return port
 
 
+def check_capacity_reuse(port, secret, pid):
+    """One-allocation bandwidth budget must be reusable after native release."""
+    from turn_socket_observation import owned_udp_sockets
+    for attempt in range(12):
+        client = Client(port, tcp=bool(attempt % 2))
+        allocated = False
+        try:
+            kind, response = client.allocate(*credentials(secret, int(time.time()) + 120))
+            assert kind == 0x0103, f"Bandwidth capacity was not reusable at cycle {attempt + 1}"
+            allocated = True
+            _, relay_port = decoded_address(response[0x0016])
+            observed = set(owned_udp_sockets(pid, relay_port, relay_port))
+            assert observed, "Allocation did not own an observed relay socket"
+        finally:
+            client.close(allocated)
+        deadline = time.monotonic() + 5
+        while observed.intersection(owned_udp_sockets(pid, 62000, 62031)):
+            assert time.monotonic() < deadline, "Released allocation socket remains open"
+            time.sleep(.02)
+    print("PASS: twelve UDP/TCP allocation/release cycles reuse a one-allocation bandwidth budget")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--turnserver", help="Explicit pinned test binary; default is the installed coturn")
     parser.add_argument("--media", action="store_true", help="Also test real GStreamer decoded media/input over a forced loopback relay")
+    parser.add_argument("--capacity-reuse", action="store_true", help="Test sequential bandwidth reuse with capacity for only one allocation")
     args = parser.parse_args()
+    if args.capacity_reuse and args.media:
+        parser.error("The one-allocation capacity fixture cannot run multi-peer media")
     binary = str(Path(args.turnserver).resolve(strict=True)) if args.turnserver else shutil.which("turnserver")
     if not binary or os.name != "posix":
         raise SystemExit("Run on Linux with coturn installed; no sudo required")
@@ -186,6 +211,9 @@ log-file={root}/turn.log
 simple-log
 no-stdout-log
 """, encoding="utf-8")
+        if args.capacity_reuse:
+            with config.open("a", encoding="utf-8") as capacity:
+                capacity.write("bps-capacity=1000000\n")
         config.chmod(0o600)
         process = subprocess.Popen([binary, "-c", str(config)], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         echo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -212,7 +240,9 @@ no-stdout-log
                 except OSError:
                     if time.monotonic() >= deadline: raise AssertionError("Isolated coturn startup timeout")
                     time.sleep(.05)
-            for tcp in [False, True]:
+            if args.capacity_reuse:
+                check_capacity_reuse(port, secret, process.pid)
+            for tcp in ([] if args.capacity_reuse else [False, True]):
                 client = Client(port, tcp)
                 allocated = False
                 try:

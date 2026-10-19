@@ -179,11 +179,14 @@ def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, re
         print("PASS: simultaneous LAN peer remains host-only; relay media continues")
         if reconnect:
             old_peer, old_client = server_peer, client
+            old_allocations = allocated_sockets()
             old_client.close()
             publisher.pool.remove("player:1", old_peer)
             shared.wait_for(lambda: old_peer.turn_cleanup.done.is_set() and old_client.turn_cleanup.done.is_set(),
                             "player leave allocations cleaned")
             assert old_peer.turn_cleanup.released and old_client.turn_cleanup.released
+            shared.wait_for(lambda: not old_allocations.intersection(allocated_sockets()),
+                            "coturn releases departed player sockets", timeout=5)
             auth = replace(auth, peer_id=str(uuid.uuid4()))
             with patch.object(raw.WanIce, "from_environment", return_value=policy):
                 client = shared.Client(publisher, auth, configure_peer=configure_client, signal=signal)
@@ -202,6 +205,7 @@ def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, re
             before = spectator.counts["video"]
             shared.wait_for(lambda: spectator.counts["video"] > before + 10, "LAN survives player reconnect")
             print("PASS: player leave/rejoin resumes media/input, releases old allocations and preserves LAN viewing")
+        player_allocations = allocated_sockets()
         with patch.object(raw.WanIce, "from_environment", return_value=policy):
             def viewer_signal(offer, host, authorization, viewer_key):
                 return publisher.answer_for_offer(offer, host, authorization, viewer_key, wan_media=True, wan_admission=viewer_guard)
@@ -211,11 +215,17 @@ def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, re
                         "relayed spectator decodes media")
         viewer_peer = publisher.pool.peers["viewer:wan-spectator"]
         if reconnect:
+            # Preserve the player's allocations; observe only the departing
+            # spectator's native sockets by subtracting the earlier baseline.
+            viewer_allocations = allocated_sockets() - player_allocations
+            assert viewer_allocations, "No spectator relay sockets observed"
             viewer.close()
             publisher.pool.remove("viewer:wan-spectator", viewer_peer)
             shared.wait_for(lambda: viewer_peer.turn_cleanup.done.is_set() and viewer.turn_cleanup.done.is_set(),
                             "spectator leave allocations cleaned")
             assert viewer_peer.turn_cleanup.released and viewer.turn_cleanup.released
+            shared.wait_for(lambda: not viewer_allocations.intersection(allocated_sockets()),
+                            "coturn releases departed spectator sockets", timeout=5)
             before = client.counts["video"]
             shared.wait_for(lambda: client.counts["video"] > before + 10, "player survives spectator leave")
             with patch.object(raw.WanIce, "from_environment", return_value=policy):
