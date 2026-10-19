@@ -780,6 +780,35 @@ keys, conflicting sources and extra Rust diagnostic arguments fail. POSIX reader
 tests and installation rollback/idempotence tests pass. Actual systemd transient
 credential delivery still requires the operator command above.
 
+### Systemd named-user ACL compatibility (2026-10-19)
+
+The first root credential installation passed both live TURN probes but failed
+the Rust credential-reader gate, before writing application configuration.
+Systemd can implement service-user access with a root-owned file and a named-user
+read ACL. Its ACL mask makes the mode appear as `0440`, even with zero owning-group
+permissions; the original mode-only reader rejected this legitimate layout.
+See [systemd's credential writer](https://github.com/systemd/systemd/blob/v257/src/core/exec-credential.c).
+
+Both readers now validate the opened descriptor's exact Linux ACL: owner read,
+current-user read, owning-group none, read-only mask, others none. Only root or the
+current user may own this ACL-backed file. Ordinary group-readable files, other
+named users, write permissions, symlinks, multiple links and malformed keys still
+fail closed. Existing owner-only files remain supported; no source permissions
+are changed. Synthetic ACL fixtures exercise both actual diagnostic executables.
+A user-systemd integration test additionally checks real `LoadCredential` delivery
+without using the production key. The root installer remains the final gate for
+the real service identities; its successful completion is not yet confirmed.
+
+After pulling and rebuilding the release control plane, retry only:
+
+```bash
+sudo python3 deploy/systemd/install-wan-media-credentials.py --apply
+```
+
+Do not rerun local TURN commissioning, loosen config permissions or remove its
+local-only firewall guard. This installer does not restart applications or enable
+public access.
+
 ```bash
 python3 tools/test-webrtc-wan.py
 python3 tools/test-wan-media-credentials.py

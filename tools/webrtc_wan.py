@@ -14,11 +14,30 @@ import time
 import uuid
 from pathlib import Path
 import stat
+import struct
 from urllib.parse import quote
 
 RELAY_START = 52000
 RELAY_END = 52199
 CREDENTIAL_SECONDS = 3600
+
+
+def private_credential_permissions(stream):
+    metadata = os.fstat(stream.fileno())
+    mode = stat.S_IMODE(metadata.st_mode)
+    if not mode & 0o077:
+        return True
+    # systemd's named-user read ACL has a read mask, not owning-group access.
+    if mode != 0o440 or not hasattr(os, "getxattr") or metadata.st_uid not in (0, os.geteuid()):
+        return False
+    try:
+        acl = os.getxattr(stream.fileno(), "system.posix_acl_access")
+    except OSError:
+        return False
+    expected = struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in (
+        (1, 4, 0xffffffff), (2, 4, os.geteuid()), (4, 0, 0xffffffff),
+        (16, 4, 0xffffffff), (32, 0, 0xffffffff)))
+    return acl == expected
 
 
 def credential_secret(settings):
@@ -32,10 +51,11 @@ def credential_secret(settings):
         if name != "4play-turn.conf" or not directory.is_absolute(): raise ValueError()
         path = directory / name
         metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1 or metadata.st_size > 65536 or (os.name == "posix" and metadata.st_mode & 0o077): raise ValueError()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1 or metadata.st_size > 65536 or (os.name == "posix" and metadata.st_mode & 0o037): raise ValueError()
         with path.open("rb") as stream:
             opened = os.fstat(stream.fileno())
             if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino): raise ValueError()
+            if os.name == "posix" and not private_credential_permissions(stream): raise ValueError()
             data = stream.read(65537)
         if len(data) > 65536: raise ValueError()
         values = [line.removeprefix("static-auth-secret=") for line in data.decode().splitlines() if line.startswith("static-auth-secret=")]

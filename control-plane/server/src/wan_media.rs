@@ -23,11 +23,15 @@ fn credential_secret(name: &str, directory: Option<&str>) -> Result<String, Stri
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if metadata.permissions().mode() & 0o077 != 0 || metadata.nlink() > 1 {
+        if metadata.permissions().mode() & 0o037 != 0 || metadata.nlink() > 1 {
             return Err(error());
         }
     }
     let file = std::fs::File::open(path).map_err(|_| error())?;
+    #[cfg(unix)]
+    if !private_credential_permissions(&file).map_err(|_| error())? {
+        return Err(error());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -54,6 +58,62 @@ fn credential_secret(name: &str, directory: Option<&str>) -> Result<String, Stri
         return Err(error());
     }
     Ok(values[0].into())
+}
+
+#[cfg(unix)]
+fn private_credential_permissions(file: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = file.metadata()?.permissions().mode() & 0o777;
+    if mode & 0o077 == 0 {
+        return Ok(true);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+        // systemd prefers a root-owned 0400 file with a named-user read ACL.
+        // Its ACL mask appears as group-read in st_mode; do not accept ordinary 0440.
+        let mut acl = [0u8; 64];
+        // SAFETY: valid borrowed descriptor and writable bounded buffer; no ownership transfer.
+        let size = unsafe {
+            libc::fgetxattr(
+                file.as_raw_fd(),
+                c"system.posix_acl_access".as_ptr(),
+                acl.as_mut_ptr().cast(),
+                acl.len(),
+            )
+        };
+        // SAFETY: geteuid has no pointer or lifetime requirements.
+        let uid = unsafe { libc::geteuid() };
+        let owner = file.metadata()?.uid();
+        Ok(mode == 0o440
+            && (owner == 0 || owner == uid)
+            && size == 44
+            && private_read_acl(&acl[..44], uid))
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn private_read_acl(acl: &[u8], uid: u32) -> bool {
+    if acl.len() != 44 || acl[..4] != 2u32.to_le_bytes() {
+        return false;
+    }
+    let expected = [
+        (1u16, 4u16, u32::MAX),
+        (2, 4, uid),
+        (4, 0, u32::MAX),
+        (16, 4, u32::MAX),
+        (32, 0, u32::MAX),
+    ];
+    acl[4..]
+        .chunks_exact(8)
+        .zip(expected)
+        .all(|(entry, (tag, permission, id))| {
+            entry[..2] == tag.to_le_bytes()
+                && entry[2..4] == permission.to_le_bytes()
+                && entry[4..] == id.to_le_bytes()
+        })
 }
 
 fn secret_source(

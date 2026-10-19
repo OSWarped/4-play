@@ -20,6 +20,9 @@ base64 = "0.22"
 ipnet = "2"
 tower = { version = "0.5", features = ["util"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
