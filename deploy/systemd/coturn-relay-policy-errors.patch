@@ -1,0 +1,20 @@
+diff --git a/src/apps/relay/ns_ioalib_engine_impl.c b/src/apps/relay/ns_ioalib_engine_impl.c
+--- a/src/apps/relay/ns_ioalib_engine_impl.c
++++ b/src/apps/relay/ns_ioalib_engine_impl.c
+@@ -4254,6 +4254,16 @@ int udp_send(ioa_socket_handle s, const ioa_addr *dest_addr, const char *buffer, int len
+       if (socket_enobufs() || socket_eagain()) {
+         // Lost packet due to overload ... fine.
+         rc = len;
++#if defined(__linux__)
++      } else if (s->st == UDP_SOCKET && s->sat == RELAY_SOCKET &&
++                 (socket_errno() == EPERM || socket_errno() == EACCES)) {
++        /* A local policy denied this destination/datagram, not the socket.
++         * Marking the relay to-be-closed would also exclude it from REFRESH
++         * family selection, acknowledging lifetime=0 without scheduling its
++         * deletion. Drop this packet, preserving the allocation and cleanup.
++         * The firewall denial remains in force. */
++        rc = len;
++#endif
+       } else if (is_connreset()) {
+         if (try_again) {
+           try_again = 0;

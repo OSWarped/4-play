@@ -411,6 +411,88 @@ The namespace/credential behavior follows the official
 [systemd execution documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
 and [transient service documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html).
 
+## Confirmed native policy-denial bug and separately tested local candidate
+
+The corrected privileged test confirmed an actual retained allocation socket,
+not just unrelated namespace sockets. This was reproduced autonomously in a new
+unprivileged user/network namespace: normal UDP/TCP traffic releases correctly;
+adding a send to the firewall-blocked runtime web port yields EPERM, after which
+the zero-lifetime Refresh is acknowledged but its allocation socket remains.
+Disabling optional recvmmsg did not fix it. The pinned native code marks the
+relay socket to-be-closed after this send error, then excludes to-be-closed
+sockets from Refresh family selection, skipping the deletion timer. This retains
+the original lifetime rather than proving a permanent leak. Earlier measurement
+fixes remain useful, but did not resolve this native error path.
+
+Source evidence: pinned upstream
+[UDP send handling](https://github.com/coturn/coturn/blob/4.18.0/src/apps/relay/ns_ioalib_engine_impl.c)
+and [Refresh family selection](https://github.com/coturn/coturn/blob/4.18.0/src/server/ns_turn_server.c).
+
+`deploy/systemd/coturn-relay-policy-errors.patch` is a **local downstream candidate,
+not a new upstream release**. It treats Linux EPERM/EACCES on plain UDP relay
+sends as a dropped datagram, consistent with existing recoverable UDP-drop paths,
+without marking the whole allocation to-be-closed. It changes no firewall/ACL,
+authentication or cryptography. The candidate must remain distinct and maintained
+explicitly until an upstream resolution replaces it; production promotion is not
+automatic. No upstream issue/PR has been filed on the owner's behalf.
+
+The patch SHA-256 (LF-normalized) is:
+`3e9fb96a00625369f612a79f9dcc79010df86583279c9fca0459c6f901c7fc5f`.
+The builder verifies the upstream commit and patch before compiling in a fresh
+private directory. It records separate candidate provenance and never installs.
+
+Reference private artifact:
+`/tmp/4play-coturn-4.18.0-4play-policy1-nqj93n0n/source/bin/turnserver`
+
+Artifact SHA-256:
+`3038dfe8786facafeb5be2138f77df6489b89f8af4953ff60150cadc9c41bc15`
+
+Both unprivileged reproduction cases pass with this candidate, including blocked
+web-port delivery, continued legitimate relay traffic after that denial, invalid
+credentials and observed allocation-socket release. Existing real forced-relay
+decoded audio/video, SCTP input, admission revocation/expiry, LAN isolation and
+async-cleanup checks also pass with the candidate. Those media checks are still
+loopback fixtures, not full systemd-constrained media or actual internet tests.
+The user-namespace reproduction adapts only the fixture UID and client socket
+mark to model unfiltered non-TURN callers. Never copy this adaptation into the
+production nft table. EACCES follows the same native branch; the actual firewall
+reproduction exercises EPERM, not both possible errno values.
+
+Next copy the exact tested candidate into its own protected path, then test it
+under the actual transient systemd restrictions:
+
+```bash
+cd ~/src/4-play
+sudo python3 deploy/systemd/install-coturn-policy-candidate.py \
+  --build-directory /tmp/4play-coturn-4.18.0-4play-policy1-nqj93n0n \
+  --sha256 3038dfe8786facafeb5be2138f77df6489b89f8af4953ff60150cadc9c41bc15 \
+  --apply
+sudo python3 tools/test-private-turn-service.py --policy-candidate
+```
+
+The first command validates pinned candidate receipt/hash, never runs the input
+binary as root, and installs only root-owned binary/provenance under
+`/opt/4play-coturn/4.18.0-4play-policy1`. It refuses conflicting files and leaves
+the upstream binary and `/etc/4play-turn` unchanged. The second checks the
+root-owned candidate receipt/permissions again and selects it only for the
+isolated transient validation unit; all sandbox properties and existing staged
+files are still validated. No production service or host firewall is activated.
+The privileged candidate run is pending. Do not rerun the default baseline and
+expect a different result; it intentionally still tests the unchanged upstream
+binary. Both the native fix and the final deployment need review before enabling
+public gameplay. No additional router or UFW rule is needed for these tests.
+
+Non-root reproduction/rebuild (temporary artifacts are retained):
+
+```bash
+python3 tools/reproduce-turn-release.py --turnserver /ABSOLUTE/CANDIDATE/PATH
+python3 deploy/systemd/build-coturn-policy-candidate.py --build
+```
+
+The installed baseline reproduces the failure and exits nonzero; do not label
+that outcome a successful security test. A new build has a different fingerprint:
+retest it and use its actual receipt/hash rather than copying the reference hash.
+
 Still required before public activation: finish confined media/deployment tests,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
@@ -432,6 +514,8 @@ python3 tools/test-private-turn-egress-results.py
 python3 tools/test-private-turn-stage.py
 python3 tools/test-private-turn-service-unit.py
 python3 tools/test-turn-socket-observation.py
+python3 tools/test-coturn-policy-candidate.py
+python3 tools/test-coturn-policy-install.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a

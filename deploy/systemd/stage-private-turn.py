@@ -37,15 +37,15 @@ def protected_ancestors(directory):
         check_metadata(path.lstat(), directory=True)
 
 
-def verify_binary(expected):
+def verify_binary(expected, binary=BINARY):
     if not re.fullmatch(r"[a-f0-9]{64}", expected):
         raise ValueError("Expected a SHA-256 fingerprint")
-    protected_ancestors(BINARY.parent)
-    metadata = BINARY.lstat()
+    protected_ancestors(binary.parent)
+    metadata = binary.lstat()
     check_metadata(metadata)
     if metadata.st_size > 64 * 1024 * 1024 or metadata.st_mode & 0o111 != 0o111:
         raise ValueError("Unexpected binary size or executable permissions")
-    data = BINARY.read_bytes()
+    data = binary.read_bytes()
     if not data.startswith(b"\x7fELF") or hashlib.sha256(data).hexdigest() != expected:
         raise ValueError("Installed binary does not match the tested fingerprint")
 

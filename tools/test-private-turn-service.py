@@ -83,8 +83,8 @@ def check_process(pid, namespace, uid):
         raise RuntimeError("TURN filesystem sandbox was not created")
 
 
-def protocol_checks(config, pid):
-    if os.readlink("/proc/self/ns/net") == os.readlink("/proc/1/ns/net"):
+def protocol_checks(config, pid, probe_private_web=True, parent_net=None):
+    if os.readlink("/proc/self/ns/net") == (parent_net or os.readlink("/proc/1/ns/net")):
         raise RuntimeError("Refusing fixture protocol checks in the host network namespace")
     if os.readlink(f"/proc/{pid}/ns/net") != os.readlink("/proc/self/ns/net"):
         raise RuntimeError("TURN process is outside this fixture namespace")
@@ -154,15 +154,25 @@ def protocol_checks(config, pid):
                 assert kind == 0x0118 and response[0x0009][2:4] == b"\x04\x03", "Unrelated private peer permission was allowed"
                 # The IP ACL intentionally allows the runtime IP. The kernel
                 # egress policy, not that IP-only ACL, must protect its web port.
-                kind, _ = permission(host, 8080)
-                assert kind == 0x0108
-                send(host, 8080)
-                try:
-                    forbidden.recv(100)
-                except socket.timeout:
-                    pass
-                else:
-                    raise AssertionError("Authenticated relay reached the private web port")
+                if probe_private_web:
+                    kind, _ = permission(host, 8080)
+                    assert kind == 0x0108
+                    send(host, 8080)
+                    try:
+                        forbidden.recv(100)
+                    except socket.timeout:
+                        pass
+                    else:
+                        raise AssertionError("Authenticated relay reached the private web port")
+                    send("8.8.8.8", 45000)
+                    try:
+                        data, peer = echo.recvfrom(100)
+                    except socket.timeout:
+                        raise AssertionError("Valid relay traffic stopped after a firewall-denied datagram") from None
+                    assert data == b"confined-relay-check"
+                    echo.sendto(data, peer)
+                    kind, response = protocol.parse(client.receive())
+                    assert kind == 0x0017 and response[0x0013] == data
             finally:
                 client.close(allocated)
             if allocated:
@@ -193,6 +203,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol-config", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--turn-pid", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--policy-candidate", action="store_true", help="Test the separately installed, verified local policy-error patch candidate")
     args = parser.parse_args()
     if sys.platform != "linux" or os.geteuid() != 0:
         parser.error("Run with sudo on the reference Linux host")
@@ -207,6 +218,10 @@ def main():
     secret = stage.existing_secret(directory)
     receipt = json.loads(stage.read_private(directory / "stage-receipt.json"))
     stage.verify_binary(receipt["binary_sha256"])
+    binary = stage.BINARY
+    if args.policy_candidate:
+        local_candidate = load("installed_policy_candidate", ROOT / "deploy/systemd/install-coturn-policy-candidate.py")
+        binary = local_candidate.verify_installed()
     import pwd
     account = pwd.getpwnam("turnserver")
     expected = stage.contents(account.pw_uid, receipt["local_ip"], receipt["public_ip"], secret, receipt["binary_sha256"])
@@ -235,7 +250,7 @@ def main():
             text = turn_config(receipt["local_ip"], receipt["public_ip"], secrets.token_hex(32))
             text = text.replace("/run/4play-turn/turnserver.pid", f"/run/{unit.removesuffix('.service')}/turnserver.pid")
             stage.write_exclusive(config, text.encode())
-            command = transient_command(unit, net, config, Path(temporary) / "service.log", stage.BINARY)
+            command = transient_command(unit, net, config, Path(temporary) / "service.log", binary)
             attempted = True
             subprocess.run(command, check=True, timeout=30)
             result = subprocess.run(["/usr/bin/systemctl", "show", unit, "--property=MainPID", "--value"], capture_output=True, text=True, check=True)
