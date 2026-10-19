@@ -660,7 +660,8 @@ the first write. On a failed install/reload, only files created by this invocati
 are removed, with device/inode checks to avoid deleting replaced files; existing
 matching units are retained. The installer never runs start, stop or enable.
 
-The root installation step remains pending. No host nft table/UFW rule, app
+The operator reported root installation PASS at `85b300b`: two unit definitions
+installed inactive/disabled, with Debian coturn still masked. No host nft table/UFW rule, app
 credential/environment, nginx, router or public-access change occurs in this step.
 Do not run `systemctl enable --now` manually: reviewed relay activation and
 application secret delivery are separate following steps. The old baseline
@@ -671,6 +672,60 @@ Portable installer regressions:
 ```bash
 python3 tools/test-tested-turn-units.py
 python3 tools/test-tested-turn-stage.py
+```
+
+### Start TURN for host-only commissioning
+
+```bash
+sudo python3 deploy/systemd/start-local-only-turn.py --apply
+```
+
+This is the first **live host service/firewall** step, not another staging command.
+It starts only `4play-turn.service` and its required egress oneshot. It never enables
+either unit at boot or starts/restarts the application services. Before changing
+host state it verifies the protected bundle, installed and loaded unit definitions,
+absence of drop-ins/stale daemon state, disabled/inactive TURN status, unused
+service UID and free listener/relay ports. Existing managed nft tables cause a
+refusal, never automatic deletion/replacement.
+
+It first reruns actual ingress packet checks in two disposable namespaces. Then
+it loads a small, separate `inet fourplay_turn_local_only` host INPUT guard before
+starting TURN. New non-loopback UDP/TCP listener traffic on 3478 and unsolicited
+UDP relay traffic on 52000–52199 are dropped. Loopback and established/related
+replies are retained, including unrelated locally initiated UDP whose ephemeral
+source port falls in the relay interval. Unrelated web ports are unaffected.
+The service dependency loads the already reviewed `inet fourplay_turn` UID-scoped
+OUTPUT policy. No global table flush, UFW, router or nginx edit occurs.
+
+After startup the tool verifies the actual candidate executable, non-root UID,
+zero capabilities, no-new-privileges and mount sandbox. Real local UDP and TCP
+TURN clients authenticate with derived credentials, send/receive a payload to an
+unused local publisher-range UDP socket, request release and observe coturn's
+native allocation socket disappear. The persistent shared secret is not printed.
+The advertised public relay address is checked but no public/NAT connectivity is
+claimed by this local probe.
+
+Actual host commissioning is pending. The ingress renderer has passed real UDP/TCP
+packet tests inside disposable namespaces (including non-loopback veth traffic),
+and the activation/probe guards have portable mocked tests. These do not replace
+the real host checks performed by `--apply`.
+
+If commissioning fails after mutation, the tool requests a stop of **only** the
+managed relay and retains any ingress/egress restrictions fail-closed. Do not
+remove tables or repeat startup blindly; send the output for review. Restrictions
+intentionally outlive a relay stop. No nft persistence or boot enablement is added:
+after reboot the relay remains disabled. Keep it disabled throughout commissioning.
+The bundle receipt is immutable creation-time provenance, not live service status.
+
+After success, TURN is running **host-only**, not available to LAN/WAN browsers.
+Do not remove the ingress guard yet. Application secret delivery, tester/edge
+configuration, narrow forwarding/UFW activation, coordinated removal of this
+guard and genuine remote browser acceptance are still subsequent reviewed steps.
+
+```bash
+python3 tools/test-local-turn-commission.py
+# Additional unprivileged kernel packet validation on the reference host:
+unshare --user --map-root-user python3 tools/test-turn-local-guard.py
 ```
 
 ## Regression commands
