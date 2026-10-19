@@ -34,6 +34,8 @@ const state = {
   browserMediaMonitor: null,
   browserMediaRetry: null,
   browserMediaNegotiating: false,
+  browserMediaGeneration: 0,
+  browserCredentialRenewal: null,
   spectatorOverlay: null,
   spectatorSlotsTimer: null,
   spectatorSlotsLoading: false,
@@ -939,6 +941,7 @@ async function startBrowserMedia(button) {
     return;
   }
   stopBrowserMedia();
+  const generation = state.browserMediaGeneration;
   window.FourPlayV4?.closeForPlay();
   state.browserMediaRetry = { ...button.dataset };
   state.browserMediaNegotiating = true;
@@ -960,10 +963,13 @@ async function startBrowserMedia(button) {
   try {
     mediaConfiguration = await window.FourPlayV2?.mediaConfiguration?.() || { iceServers: [] };
   } catch (error) {
-    stopBrowserMedia();
+    if (state.browserMediaGeneration !== generation) return;
+    state.browserMediaNegotiating = false;
+    reconnectBrowserMediaButton.disabled = !state.browserMediaRetry || state.browserExitPending;
     setBrowserMediaState(`Browser media configuration failed: ${error.message}`);
     return;
   }
+  if (state.browserMediaGeneration !== generation) return;
   const peer = new RTCPeerConnection(mediaConfiguration);
   let stream = new MediaStream();
   state.browserMediaPeer = peer;
@@ -1078,6 +1084,18 @@ async function startBrowserMedia(button) {
       }, 20000);
     }
     setBrowserMediaState("Applied WebRTC answer; waiting for media packets...");
+    if (FourPlayBrowserMediaMonitor.CredentialRenewal) {
+      state.browserCredentialRenewal = new FourPlayBrowserMediaMonitor.CredentialRenewal(
+        mediaConfiguration.credential_renew_after_ms, () => {
+          if (state.browserMediaPeer !== peer || state.browserExitPending || !state.browserMediaRetry) return;
+          if (state.browserMediaNegotiating || state.browserJoinPending) return false;
+          const dataset = { ...state.browserMediaRetry };
+          startBrowserMedia({ dataset }).catch(() => {
+            setBrowserMediaState("Media renewal failed. Use Reconnect media to try again.");
+          });
+        });
+      state.browserCredentialRenewal.start();
+    }
   } catch (error) {
     if (state.browserMediaPeer !== peer) return;
     setBrowserMediaState(`Browser media failed: ${error.message || error}`);
@@ -1092,12 +1110,17 @@ async function startBrowserMedia(button) {
       state.browserMediaStream = null;
     }
   } finally {
+    if (state.browserMediaGeneration !== generation) return;
     state.browserMediaNegotiating = false;
     reconnectBrowserMediaButton.disabled = !state.browserMediaRetry || state.browserExitPending;
   }
 }
 
 function stopBrowserMedia() {
+  state.browserMediaGeneration = (state.browserMediaGeneration || 0) + 1;
+  state.browserMediaNegotiating = false;
+  state.browserCredentialRenewal?.stop();
+  state.browserCredentialRenewal = null;
   document.body?.classList.remove("browser-playing");
   stopSpectatorOverlay();
   state.browserMediaMonitor?.stop();

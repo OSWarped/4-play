@@ -52,7 +52,8 @@ impl WanMedia {
         json!({"iceServers":[
             {"urls":format!("stun:{}:3478",self.host)},
             {"urls":[format!("turn:{}:3478?transport=udp",self.host),format!("turn:{}:3478?transport=tcp",self.host)],"username":username,"credential":credential}
-        ],"iceTransportPolicy":"all","expires_unix_ms":expiry*1000})
+        ],"iceTransportPolicy":"all","expires_unix_ms":expiry*1000,
+          "credential_renew_after_ms":45*60*1000})
     }
 }
 
@@ -65,6 +66,7 @@ mod tests {
         let seat = Uuid::nil();
         let json = config.browser_config(seat, 100_000);
         assert_eq!(json["expires_unix_ms"], 3_700_000);
+        assert_eq!(json["credential_renew_after_ms"], 2_700_000);
         assert_eq!(
             json["iceServers"][1]["username"],
             format!("3700:browser-{seat}")

@@ -550,14 +550,56 @@ python3 tools/test-coturn-loopback.py \
   --turnserver /opt/4play-coturn/4.18.0-4play-policy1/turnserver --capacity-reuse
 ```
 
-The extended privileged gate is implemented but **not yet accepted**:
+The operator reported the extended privileged gate **PASS** on 2026-10-19 at
+commit `76468d8`, including decoded AV, input, clean leave/rejoin, revocation,
+expiry, native allocation deletion and transient service/namespace cleanup:
 `sudo python3 tools/test-private-turn-service.py --policy-candidate --media`.
 It validates staging unchanged and starts only a throwaway confined unit with a
 fresh credential and the same simulated-public routing adaptation. The routing
-smoke now passes; run this command next to test media under the actual UID/nft
-and systemd restrictions. SSH `sudo -n` requires a password, so the operator must
-run the privileged gate in their own terminal. The existing no-`--media` protocol gate remains unchanged.
+smoke passes. SSH `sudo -n` requires a password, so the operator runs this gate
+in their own terminal. Repeat it after publisher lifecycle changes; the newest
+WAN replacement grace described below still needs that repeat. The existing
+no-`--media` protocol gate remains unchanged.
 The public site must remain staged until this and the other rollout gates pass.
+
+### Credential refresh and WAN replacement
+
+Browser WAN configuration now includes `credential_renew_after_ms=2700000`.
+The browser uses a monotonic 45-minute timer to refresh media before both sides'
+one-hour delegated credentials expire. Each refresh fetches fresh authenticated
+configuration and creates a fresh offer; publisher configuration also derives
+fresh TURN credentials for the new peer. No persistent secret enters browser code.
+The current player slot or spectator grant is retained; spectators never acquire
+an input channel. LAN configuration has no refresh timer.
+
+This is a controlled **whole-peer reconnect**, not seamless in-place ICE restart.
+Expect a brief media/control interruption at refresh. Stop/leave cancels the timer
+and late configuration responses cannot resurrect a departed game. A busy slot
+promotion defers the scheduling decision; an actual refresh failure exposes the
+existing explicit Reconnect action instead of creating an unbounded retry loop.
+Returning from a throttled background tab checks for overdue refresh. This does
+not guarantee uninterrupted playback through browser suspension or lost networks.
+
+For a matching existing WAN peer, the publisher now validates the new admission
+before retiring it, waits at most five seconds for confirmed libnice deallocation,
+then provides 1.25 seconds of deletion grace before creating the replacement.
+The pool lock is not held while waiting; unrelated viewers continue receiving
+media. Unconfirmed cleanup fails closed. This grace reduces temporary pressure;
+it is not a capacity reservation or proof that arbitrary multi-interface browser
+loads fit the current quotas. No TURN limits have been increased.
+
+Automated checks cover monotonic scheduling, cancel/leave, delayed configuration,
+fresh configuration requests, player/spectator ownership, invalid admission and
+native WAN replacement with decoded AV/input. Remaining acceptance: repeat the
+privileged media gate for the new publisher logic, then test real browser WAN
+refresh beyond 45 minutes and verify Safari autoplay/input recovery. Internet
+NAT/forwarding, multi-device capacity and latency remain separate pending gates.
+
+```bash
+node --test tools/test-browser-media.cjs tools/test-browser-media-lifecycle.cjs
+python3 tools/test-webrtc-reconnect.py
+sudo python3 tools/test-private-turn-service.py --policy-candidate --media
+```
 
 ## Regression commands
 

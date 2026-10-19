@@ -6,7 +6,7 @@ const vm = require("node:vm");
 const Spectator = require("../control-plane/server/static/client/spectator.js");
 
 function setup() {
-  const peers = [], inputs = [], monitors = [], calls = [];
+  const peers = [], inputs = [], monitors = [], calls = [], renewals = [];
   const bodyClasses = new Set();
   const state = { seatId: "seat-1", browserExitPending: false, browserMediaNegotiating: false, sessions: [] };
   const video = { focus() {}, pause() {}, srcObject: null, play: async () => {} };
@@ -40,6 +40,11 @@ function setup() {
     start() {}
     stop() { this.stopped = true; }
   }
+  Monitor.CredentialRenewal = class {
+    constructor(delay, renew) { this.delay = delay; this.renew = renew; renewals.push(this); }
+    start() {}
+    stop() { this.stopped = true; }
+  };
   const context = vm.createContext({
     state, URL, RTCPeerConnection: Peer, FourPlayBrowserInput: Input, FourPlayBrowserMediaMonitor: Monitor,
     MediaStream: class { constructor(tracks = []) { this.tracks = [...tracks]; } addTrack(track) { this.tracks.push(track); } getTracks() { return this.tracks; } },
@@ -56,8 +61,59 @@ function setup() {
   vm.runInContext(code.slice(code.indexOf("async function startBrowserMedia("), code.indexOf("function renderLastRuntimeHint(")), context);
   const button = { dataset: { browserMediaUrl: "http://server/api/v1/sessions/game-1/webrtc/offer",
     browserMediaRole: "player", browserMediaPlayer: "2", browserMediaButtons: "2" } };
-  return { context, state, peers, inputs, monitors, calls, video, status, reconnect, button, bodyClasses, player };
+  return { context, state, peers, inputs, monitors, calls, renewals, video, status, reconnect, button, bodyClasses, player };
 }
+
+test("late media configuration cannot resurrect a player after leave", async () => {
+  const s = setup(); let resolve;
+  s.context.window.FourPlayV2 = { mediaConfiguration: () => new Promise((done) => { resolve = done; }) };
+  const pending = s.context.startBrowserMedia(s.button);
+  s.context.stopBrowserMedia(); resolve({ iceServers: [] }); await pending;
+  assert.equal(s.peers.length, 0); assert.equal(s.state.browserMediaPeer, undefined);
+  assert.equal(s.state.browserMediaNegotiating, false);
+});
+
+test("failed fresh configuration keeps the slot context and explicit retry", async () => {
+  const s = setup();
+  s.context.window.FourPlayV2 = { mediaConfiguration: async () => { throw Error("configuration unavailable"); } };
+  await s.context.startBrowserMedia(s.button);
+  assert.equal(s.peers.length, 0);
+  assert.equal(s.state.browserMediaContext.sessionId, "game-1");
+  assert.equal(s.reconnect.disabled, false);
+  assert.equal(s.state.browserMediaNegotiating, false);
+});
+
+test("scheduled renewal fetches fresh config and preserves player ownership without a reserve call", async () => {
+  const s = setup(); let configurations = 0;
+  s.context.window.FourPlayV2 = { mediaConfiguration: async () => {
+    configurations++; return { iceServers: [], credential_renew_after_ms: 2700000 };
+  } };
+  await s.context.startBrowserMedia(s.button);
+  const renewal = s.renewals[0]; assert.equal(renewal.delay, 2700000);
+  const old = s.peers[0];
+  renewal.renew();
+  for (let n = 0; n < 30 && s.state.browserMediaNegotiating; n++) await Promise.resolve();
+  assert.equal(configurations, 2); assert.equal(s.peers.length, 2);
+  assert.equal(old.connectionState, "closed"); assert.equal(renewal.stopped, true);
+  assert.equal(s.state.browserMediaContext.playerNumber, 2);
+  assert.equal(s.calls.length, 2);
+  assert.ok(s.calls.every((call) => call.url.endsWith("/webrtc/offer")));
+  s.context.stopBrowserMedia(); const count = s.peers.length;
+  s.renewals.at(-1).renew(); await Promise.resolve(); assert.equal(s.peers.length, count);
+});
+
+test("spectator credential renewal retains its grant and cannot create player input", async () => {
+  const s = setup();
+  s.context.window.FourPlayV2 = { mediaConfiguration: async () => ({ iceServers: [], credential_renew_after_ms: 2700000 }) };
+  s.button.dataset.browserMediaRole = "spectator";
+  s.button.dataset.browserMediaGrant = "spectator-grant";
+  delete s.button.dataset.browserMediaPlayer;
+  await s.context.startBrowserMedia(s.button);
+  s.renewals[0].renew();
+  for (let n = 0; n < 30 && s.state.browserMediaNegotiating; n++) await Promise.resolve();
+  assert.equal(s.inputs.length, 0); assert.equal(s.calls.length, 2);
+  assert.ok(s.calls.every((call) => call.body.role === "spectator" && call.body.spectator_grant_id === "spectator-grant"));
+});
 
 test("disconnect releases controls, reconnect preserves slot and closes old media", async () => {
   const s = setup(); await s.context.startBrowserMedia(s.button);

@@ -2,6 +2,58 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const Monitor = require("../control-plane/server/static/client/media.js");
 
+function renewalSetup(delay, renew = () => {}) {
+  let now = 0, tick, visibility, intervals = 0, cleared = 0;
+  const env = {
+    performance: { now: () => now },
+    setInterval(callback) { intervals++; tick = callback; return 7; },
+    clearInterval(id) { assert.equal(id, 7); cleared++; },
+    document: { addEventListener(name, callback) { assert.equal(name, "visibilitychange"); visibility = callback; },
+      removeEventListener(name, callback) { assert.equal(name, "visibilitychange"); if (visibility === callback) visibility = null; } },
+  };
+  const timer = new Monitor.CredentialRenewal(delay, renew, env);
+  return { timer, env, set: (time) => { now = time; }, tick: () => tick(),
+    visible: () => visibility?.(), counts: () => ({ intervals, cleared }) };
+}
+
+test("WAN credential refresh uses monotonic elapsed time and runs only once", () => {
+  let renewals = 0;
+  const s = renewalSetup(2700000, () => { renewals++; });
+  s.timer.start(); s.timer.start();
+  s.set(2699999); s.tick(); assert.equal(renewals, 0);
+  s.set(2700000); s.tick(); s.tick();
+  assert.equal(renewals, 1); assert.deepEqual(s.counts(), { intervals: 1, cleared: 1 });
+});
+
+test("LAN or invalid renewal metadata never creates a timer", () => {
+  for (const value of [undefined, null, 0, -1, 999, 3600001, "2700000", NaN, Infinity]) {
+    const s = renewalSetup(value); s.timer.start();
+    assert.deepEqual(s.counts(), { intervals: 0, cleared: 0 });
+  }
+});
+
+test("stopped credential refresh cannot reconnect a departed session", () => {
+  let renewals = 0;
+  const s = renewalSetup(1000, () => { renewals++; });
+  s.timer.start(); const tick = s.tick;
+  s.timer.stop(); s.timer.stop(); s.set(2000); tick(); s.visible();
+  assert.equal(renewals, 0); assert.deepEqual(s.counts(), { intervals: 1, cleared: 1 });
+});
+
+test("return from a throttled background tab checks overdue renewal", () => {
+  let renewals = 0;
+  const s = renewalSetup(1000, () => { renewals++; });
+  s.timer.start(); s.set(100000); s.visible(); s.tick();
+  assert.equal(renewals, 1);
+});
+
+test("a busy promotion delays scheduling without making repeated network attempts", () => {
+  let busy = true, attempts = 0;
+  const s = renewalSetup(1000, () => { if (busy) return false; attempts++; });
+  s.timer.start(); s.set(1000); s.tick(); s.tick(); assert.equal(attempts, 0);
+  busy = false; s.tick(); s.tick(); assert.equal(attempts, 1);
+});
+
 function setup() {
   let now = 0, stats = [], tick, cleared = 0;
   const reports = [];

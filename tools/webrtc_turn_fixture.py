@@ -181,12 +181,6 @@ def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, re
             old_peer, old_client = server_peer, client
             old_allocations = allocated_sockets()
             old_client.close()
-            publisher.pool.remove("player:1", old_peer)
-            shared.wait_for(lambda: old_peer.turn_cleanup.done.is_set() and old_client.turn_cleanup.done.is_set(),
-                            "player leave allocations cleaned")
-            assert old_peer.turn_cleanup.released and old_client.turn_cleanup.released
-            shared.wait_for(lambda: not old_allocations.intersection(allocated_sockets()),
-                            "coturn releases departed player sockets", timeout=5)
             auth = replace(auth, peer_id=str(uuid.uuid4()))
             with patch.object(raw.WanIce, "from_environment", return_value=policy):
                 client = shared.Client(publisher, auth, configure_peer=configure_client, signal=signal)
@@ -198,6 +192,8 @@ def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, re
             shared.wait_for(lambda: old_peer.turn_cleanup.done.is_set() and old_client.turn_cleanup.done.is_set(),
                             "old reconnect allocations cleaned")
             assert old_peer.turn_cleanup.released and old_client.turn_cleanup.released
+            shared.wait_for(lambda: not old_allocations.intersection(allocated_sockets()),
+                            "coturn releases replaced player sockets", timeout=5)
             client.send(1, 1)
             receive_buttons(1)
             client.send(2, 0)

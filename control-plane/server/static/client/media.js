@@ -1,5 +1,33 @@
-/* Receiver diagnostics only: never buffer media or expose private grants. */
+/* Receiver diagnostics and credential scheduling: never buffer media or expose grants. */
 (() => {
+  class CredentialRenewal {
+    constructor(delay, renew, environment = globalThis) {
+      this.env = environment;
+      this.renew = renew;
+      this.timer = null;
+      this.stopped = false;
+      this.deadline = null;
+      this.delay = Number.isSafeInteger(delay) && delay >= 1000 && delay <= 3600000 ? delay : null;
+      this.tick = () => {
+        if (this.stopped || this.deadline === null || this.env.performance.now() < this.deadline) return;
+        // A promotion/leave transition may briefly own negotiation. Retry the
+        // scheduling decision, not a failed network request, on the next tick.
+        if (this.renew() !== false) this.stop();
+      };
+    }
+    start() {
+      if (this.stopped || this.timer !== null || this.delay === null) return;
+      this.deadline = this.env.performance.now() + this.delay;
+      this.timer = this.env.setInterval(this.tick, 1000);
+      this.env.document?.addEventListener("visibilitychange", this.tick);
+    }
+    stop() {
+      this.stopped = true;
+      if (this.timer !== null) this.env.clearInterval(this.timer);
+      this.timer = null;
+      this.env.document?.removeEventListener("visibilitychange", this.tick);
+    }
+  }
   class BrowserMediaMonitor {
     constructor(peer, report, environment = globalThis) {
       this.peer = peer;
@@ -70,6 +98,7 @@
       this.previous.clear();
     }
   }
+  BrowserMediaMonitor.CredentialRenewal = CredentialRenewal;
   if (typeof module !== "undefined" && module.exports) module.exports = BrowserMediaMonitor;
   else globalThis.FourPlayBrowserMediaMonitor = BrowserMediaMonitor;
 })();

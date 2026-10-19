@@ -36,6 +36,7 @@ from webrtc_wan import WanIce, request_is_wan
 from webrtc_wan_admission import WanAdmission
 from webrtc_offer_codecs import offered_payloads
 from webrtc_turn_cleanup import TurnCleanup, drain_turn_cleanup, require_cleanup_binding
+from webrtc_reconnect import release_previous_wan_peer
 
 import gi
 
@@ -701,8 +702,14 @@ class MultiPeerSessionPublisher:
     def answer_for_offer(self, offer, host_ip, input_authorization=None, viewer_key=None, wan_media=False, wan_admission=None):
         if not offer.lstrip().startswith("v=0") or "\nm=" not in offer or len(offer.encode("utf-8")) > 262144:
             raise RuntimeError("invalid SDP offer")
+        if wan_media and (wan_admission is None or not wan_admission.valid()):
+            raise RuntimeError("WAN admission is not authorized")
         with self.offer_lock:
             self.prune()
+            if wan_media:
+                # Cleanup runs on GLib; keep the pool lock free so unrelated
+                # viewers and the shared media feeder continue during grace.
+                release_previous_wan_peer(self.pool, input_authorization, viewer_key)
             key, peer = self.pool.create(input_authorization, viewer_key)
             try:
                 options = {"input_authorization": input_authorization}
