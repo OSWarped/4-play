@@ -118,11 +118,14 @@ recovery. Never remove or disable the pre-existing sites.
 ## Acceptance checks
 
 Private TURN protocol + decoded media confinement passed on the reference host
-at `76468d8`; this does not enable public access or establish internet NAT behavior.
+at `76468d8` and `de9d451`; this does not enable public access or establish internet NAT behavior.
 The client now schedules fresh whole-peer credentials at 45 minutes for WAN only.
 This can briefly interrupt media/input; real long-running browser acceptance is
-still required. Repeat the confined gate after the latest publisher replacement
-grace change. See [current validation evidence](../testing/WAN-BROWSER-ACCESS.md).
+still required. The updated replacement grace also passed the operator's confined
+gate. Next prepare the separate tested-candidate bundle using
+`stage-tested-turn-candidate.py --apply --accept-local-patch` with sudo; this
+reruns the gate but installs/activates no service. Preserve the original baseline.
+See [current validation evidence](../testing/WAN-BROWSER-ACCESS.md).
 
 - Uninvited/expired/revoked testers cannot enroll or create media sessions.
 - Admin and unscoped APIs remain inaccessible via the public hostname.

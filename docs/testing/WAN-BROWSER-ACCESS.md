@@ -495,11 +495,11 @@ The installed baseline reproduces the failure and exits nonzero; do not label
 that outcome a successful security test. A new build has a different fingerprint:
 retest it and use its actual receipt/hash rather than copying the reference hash.
 
-Still required before public activation: finish confined media/deployment tests,
-credential renewal/ICE restart, secret rotation/private tester enrollment setup,
+Still required before public activation: finish deployment tests,
+real-browser credential refresh acceptance, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
 
-### Next media gate: routing smoke passed; confinement pending
+### Private media gate: routing and confinement passed
 
 `tools/smoke-turn-media-profile.py` runs without sudo in a disposable user/network
 namespace against the installed policy candidate. It uses fresh fixture credentials,
@@ -551,14 +551,14 @@ python3 tools/test-coturn-loopback.py \
 ```
 
 The operator reported the extended privileged gate **PASS** on 2026-10-19 at
-commit `76468d8`, including decoded AV, input, clean leave/rejoin, revocation,
+commits `76468d8` and `de9d451` (the latter includes WAN replacement grace),
+including decoded AV, input, clean leave/rejoin, revocation,
 expiry, native allocation deletion and transient service/namespace cleanup:
 `sudo python3 tools/test-private-turn-service.py --policy-candidate --media`.
 It validates staging unchanged and starts only a throwaway confined unit with a
 fresh credential and the same simulated-public routing adaptation. The routing
 smoke passes. SSH `sudo -n` requires a password, so the operator runs this gate
-in their own terminal. Repeat it after publisher lifecycle changes; the newest
-WAN replacement grace described below still needs that repeat. The existing
+in their own terminal. Repeat it after publisher lifecycle changes. The existing
 no-`--media` protocol gate remains unchanged.
 The public site must remain staged until this and the other rollout gates pass.
 
@@ -590,9 +590,9 @@ loads fit the current quotas. No TURN limits have been increased.
 
 Automated checks cover monotonic scheduling, cancel/leave, delayed configuration,
 fresh configuration requests, player/spectator ownership, invalid admission and
-native WAN replacement with decoded AV/input. Remaining acceptance: repeat the
-privileged media gate for the new publisher logic, then test real browser WAN
-refresh beyond 45 minutes and verify Safari autoplay/input recovery. Internet
+native WAN replacement with decoded AV/input. The operator's `de9d451` confined
+gate passed. Remaining acceptance: test real browser WAN refresh beyond 45
+minutes and verify Safari autoplay/input recovery. Internet
 NAT/forwarding, multi-device capacity and latency remain separate pending gates.
 
 ```bash
@@ -600,6 +600,42 @@ node --test tools/test-browser-media.cjs tools/test-browser-media-lifecycle.cjs
 python3 tools/test-webrtc-reconnect.py
 sudo python3 tools/test-private-turn-service.py --policy-candidate --media
 ```
+
+### Separate tested-candidate deployment bundle
+
+The original `/etc/4play-turn` staging intentionally still refers to the upstream
+binary that reproduced the firewall-denial cleanup bug. Do not install those old
+units as the final relay. The new preparer creates a **separate inactive bundle**
+for the installed, locally patched candidate:
+
+```bash
+python3 deploy/systemd/stage-tested-turn-candidate.py --describe
+sudo python3 deploy/systemd/stage-tested-turn-candidate.py \
+  --apply --accept-local-patch
+```
+
+The acknowledgement is explicit because `4.18.0-4play-policy1` is a downstream
+patch, not an upstream release or a claim of upstream approval. This command
+verifies the original protected staging and candidate provenance, checks TURN is
+inactive and Debian coturn remains masked, and reruns the entire isolated
+confined-media gate. Only after PASS does it create/reuse a fresh durable secret
+and write five root-only files under `/etc/4play-turn-policy1`:
+`turnserver.conf`, `egress.nft`, the two inactive service unit files and
+`deployment-receipt.json`. All non-path service hardening and network limits are
+identical. The receipt records the candidate provenance, baseline receipt hash
+and file hashes, but never the secret. The original staging/binary is retained.
+
+No unit is installed in systemd's search path, no daemon reload/start/enable is
+performed, and no host nft/UFW rules, app environment, nginx or router changes
+occur. Repeated matching runs preserve the same new secret and files; conflicts
+or incomplete bundles fail closed. The gate failing prevents durable credential
+generation and staging. The actual root creation step requires operator sudo and
+is pending; unprivileged plan output is not evidence of successful installation.
+
+After this step, reviewed unit installation/activation, shared-secret delivery to
+the applications, development-token rotation/tester enrollment, narrow public
+routes/forwarding and real remote-browser acceptance still remain. Do not open
+public routes merely because the deployment bundle exists.
 
 ## Regression commands
 
