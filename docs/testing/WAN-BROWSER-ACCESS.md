@@ -356,7 +356,50 @@ enable public access. Runtime systemd-confinement and production-config relay
 tests remain separate gates before installation/activation. Do not manually
 start the staged unit or copy its credential contents into chat.
 
-Still required before public activation: install/test the confined deployment,
+## Next operator action: actual confined TURN service validation
+
+The reference host owner completed private staging and the actual nft namespace
+checks successfully. Next run:
+
+```bash
+cd ~/src/4-play
+sudo python3 tools/test-private-turn-service.py
+```
+
+This verifies root-only staging against the renderer and receipt, hashes the
+installed binary, then creates a fresh network namespace (loopback/fixture IPs
+only, no physical interface/default route). The kernel egress checks run there
+again. A randomly named **transient** `4play-turn-validation-<uuid>.service`
+starts the real patched coturn binary in that namespace, copying the reviewed
+service's hardening/resource settings. Only the credential path, runtime directory,
+logging and test lifecycle are overridden; `Restart=no`, `RuntimeMaxSec=90s` and
+`Type=exec` prevent a runaway/restarting fixture. Permanent units are not installed
+or started. Cleanup stops only that exact transient unit and releases the namespace.
+
+The test uses a new throwaway shared key, never the production staged key. systemd
+loads its fixture credential privately; neither key is printed or placed in
+arguments. It confirms the real process UID, zero effective/permitted/inheritable/
+bounding/ambient capabilities, no-new-privileges and separate network/mount
+namespaces. Actual authenticated UDP and TCP TURN clients then relay a payload
+to a fixture public address, verify invalid/expired credentials are denied,
+confirm an unrelated private IP is rejected by coturn and the runtime's web port
+is blocked by nft even though its IP is allowed, and check allocation ports are
+released while coturn is still running. No packet reaches the real public network.
+This fixture currently supports only the staged reference IP pair.
+
+Portable command/process-validation tests and the existing local relay/media tests
+can run without sudo. Actual transient-service results remain pending until the
+owner runs the command above. This is **protocol and confinement** validation, not
+yet relayed browser audio/video/input under confinement, genuine NAT traversal or
+WAN responsiveness acceptance. Those gates remain required. Runtime/credential
+directories and a root-private fixture log are temporary; no staged secret,
+application service, nginx config, host firewall or router setting is changed.
+
+The namespace/credential behavior follows the official
+[systemd execution documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html)
+and [transient service documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd-run.html).
+
+Still required before public activation: finish confined media/deployment tests,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
 
@@ -375,6 +418,7 @@ python3 tools/test-webrtc-turn-cleanup.py
 python3 tools/test-private-turn-bundle.py
 python3 tools/test-private-turn-egress-results.py
 python3 tools/test-private-turn-stage.py
+python3 tools/test-private-turn-service-unit.py
 ```
 
 nginx test uses throwaway self-signed TLS, unprivileged loopback listeners and a

@@ -73,10 +73,10 @@ def decoded_address(value):
 
 
 class Client:
-    def __init__(self, port, tcp=False):
+    def __init__(self, port, tcp=False, host="127.0.0.1"):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM if tcp else socket.SOCK_DGRAM)
         self.socket.settimeout(3)
-        self.socket.connect(("127.0.0.1", port))
+        self.socket.connect((host, port))
         self.tcp = tcp
         self.auth = []
         self.key = None
