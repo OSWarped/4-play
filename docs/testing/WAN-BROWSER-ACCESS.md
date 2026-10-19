@@ -629,13 +629,49 @@ No unit is installed in systemd's search path, no daemon reload/start/enable is
 performed, and no host nft/UFW rules, app environment, nginx or router changes
 occur. Repeated matching runs preserve the same new secret and files; conflicts
 or incomplete bundles fail closed. The gate failing prevents durable credential
-generation and staging. The actual root creation step requires operator sudo and
-is pending; unprivileged plan output is not evidence of successful installation.
+generation and staging. The operator reported root bundle creation PASS at
+`27a6ae6`, including the repeated confined media gate. Unprivileged plan output
+alone is not evidence of successful installation.
 
 After this step, reviewed unit installation/activation, shared-secret delivery to
 the applications, development-token rotation/tester enrollment, narrow public
 routes/forwarding and real remote-browser acceptance still remain. Do not open
 public routes merely because the deployment bundle exists.
+
+### Install the verified units inactive
+
+```bash
+sudo python3 deploy/systemd/install-tested-turn-units.py --apply
+```
+
+This verifies the full candidate bundle against the current protected baseline,
+installed candidate provenance and canonical templates; stored hashes alone do
+not authorize modified unit/policy contents. It requires TURN units inactive,
+private units disabled and Debian coturn masked, and checks the actual staged
+unit syntax with `systemd-analyze verify`. It then installs only these fixed unit
+definitions under `/etc/systemd/system` and runs `daemon-reload`:
+
+- `4play-turn-egress.service`
+- `4play-turn.service`
+
+Both definitions are root-owned and contain no secret values. Existing matching
+files are retained; conflicting files/symlinks/unsafe metadata are rejected before
+the first write. On a failed install/reload, only files created by this invocation
+are removed, with device/inode checks to avoid deleting replaced files; existing
+matching units are retained. The installer never runs start, stop or enable.
+
+The root installation step remains pending. No host nft table/UFW rule, app
+credential/environment, nginx, router or public-access change occurs in this step.
+Do not run `systemctl enable --now` manually: reviewed relay activation and
+application secret delivery are separate following steps. The old baseline
+staging remains available but must not replace these candidate unit definitions.
+
+Portable installer regressions:
+
+```bash
+python3 tools/test-tested-turn-units.py
+python3 tools/test-tested-turn-stage.py
+```
 
 ## Regression commands
 
