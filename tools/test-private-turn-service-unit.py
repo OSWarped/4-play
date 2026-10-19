@@ -71,5 +71,29 @@ class ServiceTests(unittest.TestCase):
                         with self.assertRaises(AssertionError): client.close(True)
                 make.return_value.close.assert_called()
 
+    def test_media_rejects_host_namespace_before_reading_config(self):
+        with patch.object(fixture.os, "readlink", return_value="net:[1]"), patch.object(Path, "read_text") as read:
+            with self.assertRaisesRegex(RuntimeError, "host network namespace"):
+                fixture.media_checks(Path("unused"), 42)
+            read.assert_not_called()
+
+    def test_media_rejects_relay_in_another_namespace(self):
+        links = {"/proc/self/ns/net":"net:[2]", "/proc/1/ns/net":"net:[1]", "/proc/42/ns/net":"net:[3]"}
+        with patch.object(fixture.os, "readlink", side_effect=lambda p:links[str(p)]), patch.object(Path, "read_text") as read:
+            with self.assertRaisesRegex(RuntimeError, "outside this private namespace"):
+                fixture.media_checks(Path("unused"), 42)
+            read.assert_not_called()
+
+    def test_media_rejects_production_nat_binding_and_invalid_secrets(self):
+        links = {"/proc/self/ns/net":"net:[2]", "/proc/1/ns/net":"net:[1]", "/proc/42/ns/net":"net:[2]"}
+        from private_turn_bundle import turn_config
+        base = turn_config("192.168.20.68", "45.24.46.155", "a"*64)
+        direct = base.replace("relay-ip=192.168.20.68\n", "relay-ip=45.24.46.155\n").replace(
+            "external-ip=45.24.46.155/192.168.20.68\n", "external-ip=45.24.46.155/45.24.46.155\n")
+        for content in (base, direct.replace("static-auth-secret=" + "a"*64, "static-auth-secret=invalid"),
+                        direct + "\nstatic-auth-secret=" + "b"*64 + "\n"):
+            with patch.object(fixture.os, "readlink", side_effect=lambda p:links[str(p)]), patch.object(Path, "read_text", return_value=content):
+                with self.assertRaises(RuntimeError): fixture.media_checks(Path("unused"), 42)
+
 
 if __name__ == "__main__": unittest.main()

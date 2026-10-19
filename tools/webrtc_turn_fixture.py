@@ -1,12 +1,12 @@
 """Test-only forced-relay media fixture; never import in production publishers.
 
-Substitutes only the local TURN endpoint and candidate-address/range policy for
-the isolated 127.0.0.1 server. The real sender, encoders, SCTP input relay, TURN
-REST credential generation and WAN profile selection execute unchanged.
+Loopback mode substitutes the TURN endpoint and candidate-address/range policy.
+Private-profile mode uses the real WAN validator without address rewriting and
+a simulated public interface inside a disposable namespace. The real sender,
+encoders, SCTP input relay and REST credential generation execute unchanged.
 """
 import argparse
 import importlib.util
-import os
 from pathlib import Path
 import socket
 import sqlite3
@@ -16,32 +16,20 @@ import threading
 import time
 import uuid
 from unittest.mock import patch
+from dataclasses import replace
 
 from webrtc_wan import WanIce
 from webrtc_browser_input import InputAuthorization
 from webrtc_wan_admission import WanAdmission
+from turn_socket_observation import owned_udp_sockets
 
 
-def relay_sockets(pid):
+def relay_sockets(pid, start=62000, end=62031):
     """Observe only this fixture's coturn-owned sockets, not unrelated services."""
-    inodes = set()
-    for fd in Path(f"/proc/{pid}/fd").iterdir():
-        try:
-            target = os.readlink(fd)
-        except FileNotFoundError:
-            continue
-        if target.startswith("socket:["):
-            inodes.add(target[8:-1])
-    sockets = set()
-    for name in ("udp", "udp6"):
-        for line in Path(f"/proc/{pid}/net/{name}").read_text().splitlines()[1:]:
-            fields = line.split()
-            if fields[9] in inodes and 62000 <= int(fields[1].split(":")[1], 16) <= 62031:
-                sockets.add(fields[9])
-    return sockets
+    return set(owned_udp_sockets(pid, start, end))
 
 
-def test_relay_media(port, secret, root, relay_pid):
+def test_relay_media(port, secret, root, relay_pid, *, private_profile=False, reconnect=False):
     spec = importlib.util.spec_from_file_location("relay_shared_fixture", Path(__file__).with_name("test-webrtc-multi-peer.py"))
     shared = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(shared)
@@ -82,7 +70,24 @@ def test_relay_media(port, secret, root, relay_pid):
             assert relay_found, "No real loopback TURN relay candidate"
             super().validate_answer("\r\n".join(mapped), ports)
 
-    policy = LoopbackPolicy("localhost", secret, "45.24.46.155")
+    class PrivateProfilePolicy(WanIce):
+        def configure(self, peer, now=None):
+            super().configure(peer, now)
+            peer.set_property("ice-transport-policy", GstWebRTC.WebRTCICETransportPolicy.RELAY)
+            assert peer.get_property("ice-transport-policy") == GstWebRTC.WebRTCICETransportPolicy.RELAY
+        # Unlike the loopback adapter, inherited candidate validation is used
+        # unchanged: real public fixture address and production relay ports.
+
+    policy = (PrivateProfilePolicy("192.168.20.68", secret, "45.24.46.155") if private_profile
+              else LoopbackPolicy("localhost", secret, "45.24.46.155"))
+    def configure_client(peer):
+        if private_profile:
+            # Exercise UDP relay media, not libnice's additional speculative
+            # TCP allocations. TCP TURN protocol is a separate service check.
+            raw.configure_ice_udp_ports(peer, raw.IceUdpPortRange(61000, 100))
+        policy.configure(peer)
+    relay_start, relay_end = (52000, 52199) if private_profile else (62000, 62031)
+    def allocated_sockets(): return relay_sockets(relay_pid, relay_start, relay_end)
     loop = GLib.MainLoop()
     loop_thread = threading.Thread(target=loop.run, daemon=True)
     loop_thread.start()
@@ -94,7 +99,7 @@ def test_relay_media(port, secret, root, relay_pid):
     publisher = None
     feeder = None
     maintenance = None
-    shared.wait_for(lambda: not relay_sockets(relay_pid), "protocol relay sockets released", timeout=5)
+    shared.wait_for(lambda: not allocated_sockets(), "protocol relay sockets released", timeout=5)
     try:
         video, audio = root / "video.raw", root / "audio.pcm"
         video.touch(); audio.touch()
@@ -102,7 +107,8 @@ def test_relay_media(port, secret, root, relay_pid):
             session_id="forced-relay-check", video_path=str(video), audio_path=str(audio),
             width=304, height=224, fps_num=60, fps_den=1, video_bitrate_kbps=1400,
             audio_bitrate_bps=64000, keyframe_distance=15, answer_file=None, verbose=False,
-            max_peers=3, ice_udp_port_start=61000, ice_udp_port_count=100))
+            max_peers=3, ice_udp_port_start=50000 if private_profile else 61000,
+            ice_udp_port_count=1000 if private_profile else 100))
         database = root / "test-admission.db"
         database.touch(mode=0o600)
         player_hash, viewer_hash = "a"*64, "b"*64
@@ -132,18 +138,18 @@ def test_relay_media(port, secret, root, relay_pid):
 
         feeder = threading.Thread(target=feed, daemon=True)
         feeder.start()
-        auth = InputAuthorization(uuid.uuid4().bytes, receiver.getsockname()[1], 1, str(uuid.uuid4()), time.time_ns() // 1_000_000 + 60_000)
+        auth = InputAuthorization(uuid.uuid4().bytes, receiver.getsockname()[1], 1, str(uuid.uuid4()), time.time_ns() // 1_000_000 + 120_000)
         with patch.object(raw.WanIce, "from_environment", return_value=policy):
             def signal(offer, host, authorization, viewer_key):
                 return publisher.answer_for_offer(offer, host, authorization, viewer_key, wan_media=True, wan_admission=player_guard)
-            client = shared.Client(publisher, auth, configure_peer=policy.configure, signal=signal)
+            client = shared.Client(publisher, auth, configure_peer=configure_client, signal=signal)
         clients.append(client)
         shared.wait_for(lambda: client.counts["video"] > 15 and client.counts["audio"] > 15 and client.channel_open,
                         "forced relay decodes audio/video and opens input", timeout=15)
         server_peer = publisher.pool.peers["player:1"]
         assert server_peer.wan_mode and server_peer.wan_ice is policy
         assert server_peer.webrtc.get_property("ice-transport-policy") == GstWebRTC.WebRTCICETransportPolicy.RELAY
-        assert len(relay_sockets(relay_pid)) >= 2, "No coturn-owned relay sockets observed"
+        assert len(allocated_sockets()) >= 2, "No coturn-owned relay sockets observed"
 
         def receive_buttons(expected):
             deadline = time.monotonic() + 5
@@ -171,14 +177,54 @@ def test_relay_media(port, secret, root, relay_pid):
         before = client.counts["video"]
         shared.wait_for(lambda: client.counts["video"] > before + 15, "relay continues beside LAN spectator")
         print("PASS: simultaneous LAN peer remains host-only; relay media continues")
+        if reconnect:
+            old_peer, old_client = server_peer, client
+            old_client.close()
+            publisher.pool.remove("player:1", old_peer)
+            shared.wait_for(lambda: old_peer.turn_cleanup.done.is_set() and old_client.turn_cleanup.done.is_set(),
+                            "player leave allocations cleaned")
+            assert old_peer.turn_cleanup.released and old_client.turn_cleanup.released
+            auth = replace(auth, peer_id=str(uuid.uuid4()))
+            with patch.object(raw.WanIce, "from_environment", return_value=policy):
+                client = shared.Client(publisher, auth, configure_peer=configure_client, signal=signal)
+            clients.append(client)
+            shared.wait_for(lambda: client.counts["video"] > 15 and client.counts["audio"] > 15 and client.channel_open,
+                            "reconnected player decodes media and opens input", timeout=15)
+            server_peer = publisher.pool.peers["player:1"]
+            assert server_peer is not old_peer and old_peer.closed
+            shared.wait_for(lambda: old_peer.turn_cleanup.done.is_set() and old_client.turn_cleanup.done.is_set(),
+                            "old reconnect allocations cleaned")
+            assert old_peer.turn_cleanup.released and old_client.turn_cleanup.released
+            client.send(1, 1)
+            receive_buttons(1)
+            client.send(2, 0)
+            receive_buttons(0)
+            before = spectator.counts["video"]
+            shared.wait_for(lambda: spectator.counts["video"] > before + 10, "LAN survives player reconnect")
+            print("PASS: player leave/rejoin resumes media/input, releases old allocations and preserves LAN viewing")
         with patch.object(raw.WanIce, "from_environment", return_value=policy):
             def viewer_signal(offer, host, authorization, viewer_key):
                 return publisher.answer_for_offer(offer, host, authorization, viewer_key, wan_media=True, wan_admission=viewer_guard)
-            viewer = shared.Client(publisher, None, "wan-spectator", configure_peer=policy.configure, signal=viewer_signal)
+            viewer = shared.Client(publisher, None, "wan-spectator", configure_peer=configure_client, signal=viewer_signal)
         clients.append(viewer)
         shared.wait_for(lambda: viewer.counts["video"] > 10 and viewer.counts["audio"] > 10,
                         "relayed spectator decodes media")
         viewer_peer = publisher.pool.peers["viewer:wan-spectator"]
+        if reconnect:
+            viewer.close()
+            publisher.pool.remove("viewer:wan-spectator", viewer_peer)
+            shared.wait_for(lambda: viewer_peer.turn_cleanup.done.is_set() and viewer.turn_cleanup.done.is_set(),
+                            "spectator leave allocations cleaned")
+            assert viewer_peer.turn_cleanup.released and viewer.turn_cleanup.released
+            before = client.counts["video"]
+            shared.wait_for(lambda: client.counts["video"] > before + 10, "player survives spectator leave")
+            with patch.object(raw.WanIce, "from_environment", return_value=policy):
+                viewer = shared.Client(publisher, None, "wan-spectator", configure_peer=configure_client, signal=viewer_signal)
+            clients.append(viewer)
+            shared.wait_for(lambda: viewer.counts["video"] > 10 and viewer.counts["audio"] > 10,
+                            "spectator rejoins with decoded media", timeout=15)
+            viewer_peer = publisher.pool.peers["viewer:wan-spectator"]
+            print("PASS: spectator leave/rejoin releases its allocations without interrupting the player")
         with closing(sqlite3.connect(database)) as db:
             db.execute("UPDATE tester_invitations SET revoked=1 WHERE id='player'")
             db.commit()
@@ -207,5 +253,5 @@ def test_relay_media(port, secret, root, relay_pid):
         assert raw.drain_turn_cleanup(GLib), "TURN cleanup tasks did not complete"
         loop.quit()
         loop_thread.join(timeout=2)
-        shared.wait_for(lambda: not relay_sockets(relay_pid), "all coturn relay sockets released before server shutdown")
+        shared.wait_for(lambda: not allocated_sockets(), "all coturn relay sockets released before server shutdown")
         print("PASS: async cleanup released coturn-owned relay ports while relay server remained running")

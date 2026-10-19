@@ -199,18 +199,41 @@ def protocol_checks(config, pid, probe_private_web=True, parent_net=None):
     print("PASS: observed coturn allocation sockets released while the confined service is still running")
 
 
+def media_checks(config, pid, parent_net=None):
+    if os.readlink("/proc/self/ns/net") == (parent_net or os.readlink("/proc/1/ns/net")):
+        raise RuntimeError("Refusing media fixture in the host network namespace")
+    if os.readlink(f"/proc/{pid}/ns/net") != os.readlink("/proc/self/ns/net"):
+        raise RuntimeError("Media relay is outside this private namespace")
+    text = config.read_text()
+    required = ("listening-ip=192.168.20.68", "relay-ip=45.24.46.155", "external-ip=45.24.46.155/45.24.46.155")
+    if any(text.splitlines().count(line) != 1 for line in required):
+        raise RuntimeError("Media fixture requires its explicit simulated-public binding")
+    found = re.findall(r"^static-auth-secret=([a-f0-9]{64})$", text, re.MULTILINE)
+    if len(found) != 1:
+        raise RuntimeError("Invalid fixture credential")
+    from webrtc_turn_fixture import test_relay_media
+    with tempfile.TemporaryDirectory(prefix="4play-confined-media-") as temporary:
+        test_relay_media(3478, found[0], Path(temporary), pid, private_profile=True, reconnect=True)
+    print("PASS: restricted relay decoded audio/video, forwarded input and cleaned reconnect/leave/revoked peers")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol-config", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--media-config", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--turn-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--policy-candidate", action="store_true", help="Test the separately installed, verified local policy-error patch candidate")
+    parser.add_argument("--media", action="store_true", help="Also exercise forced-relay decoded media/input, leave/reconnect and cleanup")
     args = parser.parse_args()
     if sys.platform != "linux" or os.geteuid() != 0:
         parser.error("Run with sudo on the reference Linux host")
-    if args.protocol_config:
+    if args.protocol_config or args.media_config:
         if not args.turn_pid or args.turn_pid < 1:
             parser.error("Fixture process ID required")
-        protocol_checks(args.protocol_config, args.turn_pid)
+        if args.protocol_config:
+            protocol_checks(args.protocol_config, args.turn_pid)
+        else:
+            media_checks(args.media_config, args.turn_pid)
         return
     stage = load("private_turn_stage", ROOT / "deploy/systemd/stage-private-turn.py")
     directory = stage.DESTINATION
@@ -245,9 +268,26 @@ def main():
             raise RuntimeError("Refusing service tests in the host network namespace")
         enter = ["/usr/bin/nsenter", f"--net={net}"]
         subprocess.run(enter + [sys.executable, str(ROOT / "tools/test-private-turn-egress.py"), "--inside"], check=True, timeout=60)
+        if args.media:
+            # libnice ignores loopback-only interfaces. A single private dummy
+            # interface models the publisher NIC; simulated public IP stays on
+            # loopback. All commands are inside the verified private namespace.
+            for command in (
+                ["link", "add", "fixture0", "type", "dummy"],
+                ["link", "set", "fixture0", "up"],
+                ["addr", "del", "192.168.20.68/32", "dev", "lo"],
+                ["addr", "add", "192.168.20.68/32", "dev", "fixture0"],
+            ):
+                subprocess.run(enter + ["/usr/sbin/ip"] + command, check=True, timeout=5)
         with tempfile.TemporaryDirectory(prefix="4play-confined-turn-") as temporary:
             config = Path(temporary) / "turnserver.conf"
             text = turn_config(receipt["local_ip"], receipt["public_ip"], secrets.token_hex(32))
+            if args.media:
+                # This namespace has no router/NAT. Bind the relay to its
+                # simulated public IP so negotiated production-profile relay
+                # candidates actually reach it. Staging config is NOT changed.
+                text = text.replace("relay-ip=192.168.20.68\n", "relay-ip=45.24.46.155\n")
+                text = text.replace("external-ip=45.24.46.155/192.168.20.68\n", "external-ip=45.24.46.155/45.24.46.155\n")
             text = text.replace("/run/4play-turn/turnserver.pid", f"/run/{unit.removesuffix('.service')}/turnserver.pid")
             stage.write_exclusive(config, text.encode())
             command = transient_command(unit, net, config, Path(temporary) / "service.log", binary)
@@ -258,6 +298,8 @@ def main():
             check_process(pid, net, account.pw_uid)
             print("PASS: actual coturn runs non-root with no capabilities, no-new-privileges, private network and mount namespaces")
             subprocess.run(enter + [sys.executable, str(Path(__file__).resolve()), "--protocol-config", str(config), "--turn-pid", str(pid)], check=True, timeout=45)
+            if args.media:
+                subprocess.run(enter + [sys.executable, str(Path(__file__).resolve()), "--media-config", str(config), "--turn-pid", str(pid)], check=True, timeout=60)
     finally:
         # Stop only the randomly named transient validation service, never any
         # production service. RuntimeMaxSec is a second, independent failsafe.

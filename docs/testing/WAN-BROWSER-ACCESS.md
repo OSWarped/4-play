@@ -477,7 +477,9 @@ the upstream binary and `/etc/4play-turn` unchanged. The second checks the
 root-owned candidate receipt/permissions again and selects it only for the
 isolated transient validation unit; all sandbox properties and existing staged
 files are still validated. No production service or host firewall is activated.
-The privileged candidate run is pending. Do not rerun the default baseline and
+The privileged candidate run was reported PASS on the reference host, including
+UDP/TCP authentication, denied private-service access, invalid credentials,
+observed allocation release and actual systemd confinement. Do not rerun the default baseline and
 expect a different result; it intentionally still tests the unchanged upstream
 binary. Both the native fix and the final deployment need review before enabling
 public gameplay. No additional router or UFW rule is needed for these tests.
@@ -496,6 +498,42 @@ retest it and use its actual receipt/hash rather than copying the reference hash
 Still required before public activation: finish confined media/deployment tests,
 credential renewal/ICE restart, secret rotation/private tester enrollment setup,
 explicit forwarding/UFW changes and genuine remote browser acceptance tests.
+
+### Next media gate: not yet passing
+
+`tools/smoke-turn-media-profile.py` runs without sudo in a disposable user/network
+namespace against the installed policy candidate. It uses fresh fixture credentials,
+the production candidate validator and production bandwidth/allocation limits.
+It does **not** exercise nft UID isolation or systemd confinement. No physical
+interface, router, live service, staged credential or host firewall is changed.
+
+```bash
+python3 tools/smoke-turn-media-profile.py
+```
+
+The fixture has one private dummy interface. Its simulated public relay address
+is bound directly on loopback, with a fixture-only public/public external mapping:
+there is no router/NAT in this namespace. This is a routing adaptation, not evidence
+that WAN NAT/forwarding works. Native test receivers use bounded UDP-only ICE;
+TCP TURN protocol coverage remains separate from decoded UDP media coverage.
+
+Observed on 2026-10-19: initial relayed decoded audio/video and SCTP press/release
+pass, and a simultaneous host-only LAN spectator continues. A clean player
+leave/rejoin can pass with the UDP-only receiver. Adding the relayed spectator
+then fails with coturn error 486, `Allocation Bandwidth Quota Reached`, followed
+by the publisher rejecting an answer without a relay candidate. The earlier
+receiver with speculative TCP allocations hit the limit during player reconnect.
+This is an unresolved capacity/accounting/lifecycle gate, not a successful media
+acceptance test. Socket-release PASS alone does not prove bandwidth reservations
+are reusable. Do not raise/remove production quotas to make this fixture pass.
+
+The extended privileged gate is implemented but **not yet accepted**:
+`sudo python3 tools/test-private-turn-service.py --policy-candidate --media`.
+It validates staging unchanged and starts only a throwaway confined unit with a
+fresh credential and the same simulated-public routing adaptation. First resolve
+the smoke failure; then run this command to prove media under the actual UID/nft
+and systemd restrictions. The existing no-`--media` protocol gate remains unchanged.
+The public site must remain staged until this and the other rollout gates pass.
 
 ## Regression commands
 

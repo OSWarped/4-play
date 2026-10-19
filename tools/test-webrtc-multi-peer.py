@@ -76,7 +76,13 @@ class Client:
         self.peer.emit("set-local-description", context["offer"], Gst.Promise.new())
         wait_for(lambda: self.peer.get_property("ice-gathering-state") == GstWebRTC.WebRTCICEGatheringState.COMPLETE, "client ICE gathering")
         signal = signal or publisher.answer_for_offer
-        answer = signal(self.peer.get_property("local-description").sdp.as_text(), None, authorization, viewer_key)
+        try:
+            answer = signal(self.peer.get_property("local-description").sdp.as_text(), None, authorization, viewer_key)
+        except Exception:
+            # Failed constructors never reach the fixture's clients list.
+            # Still release native receiver allocations on a signaling error.
+            self.close()
+            raise
         result, sdp = GstSdp.SDPMessage.new_from_text(answer)
         assert result == GstSdp.SDPResult.OK
         self.peer.emit("set-remote-description", GstWebRTC.WebRTCSessionDescription.new(
