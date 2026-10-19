@@ -15,6 +15,20 @@ const WEBRTC_SESSION_PUBLISHER_ENVIRONMENT_VARIABLE: &str =
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let arguments: Vec<_> = env::args_os().collect();
+    if arguments
+        .iter()
+        .any(|value| value == "--check-wan-turn-credential")
+    {
+        if arguments.len() != 2 {
+            return Err("The TURN credential check accepts no additional arguments".into());
+        }
+        control_plane_server::validate_wan_turn_systemd_credential()?;
+        println!(
+            "PASS: Rust TURN systemd credential validated; no secret printed, listener or database opened"
+        );
+        return Ok(());
+    }
     let bind_address = env::var(BIND_ENVIRONMENT_VARIABLE)
         .unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_owned())
         .parse::<SocketAddr>()?;

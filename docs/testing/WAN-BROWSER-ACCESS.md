@@ -705,7 +705,10 @@ native allocation socket disappear. The persistent shared secret is not printed.
 The advertised public relay address is checked but no public/NAT connectivity is
 claimed by this local probe.
 
-Actual host commissioning is pending. The ingress renderer has passed real UDP/TCP
+The operator reported actual host commissioning PASS at `a794068`: the candidate
+is running host-only with the dedicated ingress/egress tables, non-root confinement,
+local authenticated UDP/TCP payload checks and native allocation release. The
+relay remains disabled at boot. The ingress renderer has also passed real UDP/TCP
 packet tests inside disposable namespaces (including non-loopback veth traffic),
 and the activation/probe guards have portable mocked tests. These do not replace
 the real host checks performed by `--apply`.
@@ -726,6 +729,62 @@ guard and genuine remote browser acceptance are still subsequent reviewed steps.
 python3 tools/test-local-turn-commission.py
 # Additional unprivileged kernel packet validation on the reference host:
 unshare --user --map-root-user python3 tools/test-turn-local-guard.py
+```
+
+### Application TURN credentials through systemd
+
+```bash
+sudo python3 deploy/systemd/install-wan-media-credentials.py --apply
+```
+
+This next root step is pending. It revalidates the protected TURN bundle and the
+presence of its host-only ingress/egress restrictions. It probes the running relay
+with the canonical secret to catch an out-of-sync key, then runs short-lived
+non-root transient checks for **both real Rust and Python readers**. These use
+`LoadCredential`, no capabilities, no-new-privileges, a read-only filesystem/home,
+AF_UNIX-only networking and a 15-second runtime limit. Diagnostic mode opens no
+HTTP listener/database and prints only success/failure, never credential values.
+
+Only after both checks pass does the installer create these secret-free files:
+
+- `/etc/4play-wan-media/4play-control-plane.env` (public TURN hostname)
+- `/etc/4play-wan-media/4play-runtime-host-agent.env` (local TURN address/public IP)
+- `40-4play-wan-media.conf` under each application's systemd `.service.d` directory
+
+Each drop-in loads `4play-turn.conf` from the existing root-only canonical TURN
+config. The process reads it through `CREDENTIALS_DIRECTORY` using the fixed
+`FOURPLAY_WAN_TURN_CREDENTIAL=4play-turn.conf` selector. The persistent secret is
+not copied into arguments or new environment files. `UnsetEnvironment` removes
+any legacy `FOURPLAY_WAN_TURN_SECRET` from the restarted application's environment;
+the original operator environment file is not edited or purged. Direct environment
+secrets remain supported for legacy/test callers, but conflicting sources fail.
+
+Both readers bound file size, require exactly one 64-hex secret, reject traversal,
+symlinks, multiple hard links and group/world permissions, and check the opened
+inode against its preflight metadata. Errors never contain the file contents.
+Service-user isolation is unchanged: do not claim other processes running under
+the same application UID are a separate security boundary.
+
+The installer refuses conflicting files, unexpected service drop-ins and stale
+loaded units. It checks unit syntax and reloads systemd but **does not restart the
+applications**. Newly created files/empty directories are inode-checked and rolled
+back after a failed validation/reload; pre-existing matching files are retained.
+Existing application tokens, sessions, nginx, UFW/router and the live TURN tables
+are not changed. Both app services still need a coordinated restart when games
+are idle before these credentials become live. The host-agent's child publishers
+inherit the credential directory; no environment-clearing launch is used.
+
+Automated evidence: real Rust/Python diagnostic subprocesses with temporary keys
+pass without API tokens, opening databases or printing secrets; malformed/duplicate
+keys, conflicting sources and extra Rust diagnostic arguments fail. POSIX reader
+tests and installation rollback/idempotence tests pass. Actual systemd transient
+credential delivery still requires the operator command above.
+
+```bash
+python3 tools/test-webrtc-wan.py
+python3 tools/test-wan-media-credentials.py
+python3 tools/test-wan-credential-cli.py # requires the Linux release server build
+cargo test -p control-plane-server wan_media --lib
 ```
 
 ## Regression commands

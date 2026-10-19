@@ -1,5 +1,18 @@
 mod browser_seats;
 mod wan_media;
+/// Local deployment check only; never exposes credential contents or starts HTTP.
+pub fn validate_wan_turn_systemd_credential() -> Result<(), String> {
+    if std::env::var("FOURPLAY_WAN_TURN_CREDENTIAL").as_deref() != Ok("4play-turn.conf")
+        || std::env::var_os("FOURPLAY_WAN_TURN_SECRET").is_some()
+    {
+        return Err(
+            "Expected systemd TURN credential without a plaintext environment secret".into(),
+        );
+    }
+    wan_media::WanMedia::from_environment()?
+        .ok_or_else(|| "WAN TURN credential is not configured".to_string())
+        .map(|_| ())
+}
 mod wan_testers;
 pub use wan_testers::WanTesterConfig;
 mod game_imports;

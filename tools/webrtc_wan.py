@@ -12,11 +12,37 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
+import stat
 from urllib.parse import quote
 
 RELAY_START = 52000
 RELAY_END = 52199
 CREDENTIAL_SECONDS = 3600
+
+
+def credential_secret(settings):
+    plain, name = settings.get("FOURPLAY_WAN_TURN_SECRET"), settings.get("FOURPLAY_WAN_TURN_CREDENTIAL")
+    if plain is not None and name is not None:
+        raise ValueError("Configure only one TURN secret source")
+    if name is None:
+        return plain or ""
+    try:
+        directory = Path(settings.get("CREDENTIALS_DIRECTORY", ""))
+        if name != "4play-turn.conf" or not directory.is_absolute(): raise ValueError()
+        path = directory / name
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink > 1 or metadata.st_size > 65536 or (os.name == "posix" and metadata.st_mode & 0o077): raise ValueError()
+        with path.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino): raise ValueError()
+            data = stream.read(65537)
+        if len(data) > 65536: raise ValueError()
+        values = [line.removeprefix("static-auth-secret=") for line in data.decode().splitlines() if line.startswith("static-auth-secret=")]
+        if len(values) != 1 or not re.fullmatch(r"[a-fA-F0-9]{64}", values[0]): raise ValueError()
+        return values[0]
+    except (OSError, ValueError):
+        raise ValueError("TURN systemd credential is missing, unsafe or invalid") from None
 
 
 def request_is_wan(headers, peer_ip):
@@ -38,7 +64,7 @@ class WanIce:
     def from_environment(cls, settings=None):
         settings = os.environ if settings is None else settings
         host = settings.get("FOURPLAY_WAN_TURN_HOST", "")
-        secret = settings.get("FOURPLAY_WAN_TURN_SECRET", "")
+        secret = credential_secret(settings)
         public = settings.get("FOURPLAY_WAN_PUBLIC_IP", "")
         if (len(host) > 253 or not host or any(not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", part) for part in host.split("."))
                 or not re.fullmatch(r"[a-fA-F0-9]{64}", secret)):

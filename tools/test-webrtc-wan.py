@@ -3,14 +3,46 @@ import base64
 import hashlib
 import hmac
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlsplit
 
 from webrtc_ice_ports import IceUdpPortRange, validate_answer_candidates
-from webrtc_wan import WanIce, request_is_wan
+from webrtc_wan import WanIce, request_is_wan, credential_secret
 
 
 class WanTests(unittest.TestCase):
+    def test_systemd_credential_loading_and_conflicting_source_rejection(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "4play-turn.conf"
+            settings = {"FOURPLAY_WAN_TURN_CREDENTIAL": "4play-turn.conf", "CREDENTIALS_DIRECTORY": root}
+            path.write_text("realm=test\nstatic-auth-secret=" + "a"*64 + "\n")
+            path.chmod(0o600)
+            self.assertEqual(credential_secret(settings), "a"*64)
+            with self.assertRaises(ValueError): credential_secret(settings | {"FOURPLAY_WAN_TURN_SECRET": "b"*64})
+            for content in ("none", "static-auth-secret=short", "static-auth-secret=" + "a"*64 + "\nstatic-auth-secret=" + "b"*64, "x"*65537):
+                path.write_text(content)
+                with self.assertRaises(ValueError) as error: credential_secret(settings)
+                self.assertNotIn("a"*64, str(error.exception))
+            for changed in ({"FOURPLAY_WAN_TURN_CREDENTIAL": "../4play-turn.conf"}, {"CREDENTIALS_DIRECTORY": "relative"}):
+                with self.assertRaises(ValueError): credential_secret(settings | changed)
+
+    @unittest.skipUnless(__import__("os").name == "posix", "POSIX file permissions/symlink guard")
+    def test_systemd_credential_rejects_public_permissions_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "4play-turn.conf"
+            settings = {"FOURPLAY_WAN_TURN_CREDENTIAL": "4play-turn.conf", "CREDENTIALS_DIRECTORY": root}
+            path.write_text("static-auth-secret=" + "a"*64)
+            path.chmod(0o644)
+            with self.assertRaises(ValueError): credential_secret(settings)
+            target = Path(root) / "target"
+            path.rename(target); path.symlink_to(target)
+            with self.assertRaises(ValueError): credential_secret(settings)
+            path.unlink(); target.chmod(0o600)
+            __import__("os").link(target, path)
+            with self.assertRaises(ValueError): credential_secret(settings)
+
     def policy(self):
         return WanIce.from_environment({"FOURPLAY_WAN_TURN_HOST": "arcade.example.test",
             "FOURPLAY_WAN_TURN_SECRET": "a" * 64, "FOURPLAY_WAN_PUBLIC_IP": "45.24.46.155"})
