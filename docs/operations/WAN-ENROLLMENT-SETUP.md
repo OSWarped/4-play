@@ -141,3 +141,48 @@ and denial of public admin/raw API paths using the protected nginx candidate.
 Only after those checks should public site activation and precisely scoped TURN
 firewall/router changes proceed. Real remote direct/forced-relay gameplay and
 long-running credential refresh remain acceptance tests, not established results.
+
+### Automated local acceptance check
+
+Operator checkpoint: enrollment configuration installation, application restarts,
+staging 503 and LAN `/client-v4` gameplay have all passed. Run the next check on
+Linux after updating the repository:
+
+```bash
+cd ~/src/4-play
+python3 tools/test-local-wan-edge.py
+sudo python3 tools/check-local-wan-edge.py --run
+```
+
+The first command uses synthetic keys, a temporary Rust server/database and
+temporary nginx; it does not access production settings. The second requires
+sudo to read the installed private snippet and real TLS key. It validates known
+configuration files, starts its **own** nginx on two temporary `127.0.0.1` ports,
+and routes requests through the reviewed candidate to the live application.
+The real certificate is checked for `arcade.blakemilam.com`; validation is not
+disabled. A connection bound to the server's LAN source address exercises actual
+nginx client-IP replacement without allowing remote access to the fixture.
+
+The live check creates exactly one one-hour, one-enrollment test invitation in
+the real invitation database, redeems it in memory, and revokes it in cleanup.
+Its revoked invitation/admission audit records are retained; existing tester
+invitations are not revoked or consumed. A hard kill/power loss can interrupt
+cleanup, so the temporary invitation is bounded to one hour. Do not run this
+repeatedly as a monitor: the invitation store intentionally has a finite limit.
+No invitation, cookie, service token or TURN credential is printed or saved in
+a cookie jar. Requests never include secrets in URLs or process arguments.
+
+Expected checks:
+
+- Client/login assets load; admin and raw API paths return 404.
+- Missing admissions cannot bootstrap or read the catalog/WAN ICE config.
+- Forged direct/proxied edge/client-IP headers do not bypass authentication.
+- A real invitation produces the required secure cookie and permits scoped
+  catalog/WAN ICE reads, while unapproved origins/admin operations are rejected.
+- The temporary invitation is revoked; its cookie immediately loses catalog access.
+- The private nginx exits and public HTTPS still returns staging 503.
+
+The checker never reloads the live nginx, starts/stops application services,
+creates games, changes firewall/router rules or enables public access. On failure,
+stop and report its token-safe output. External media and latency tests remain
+separate even after this local check passes.

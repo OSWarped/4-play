@@ -827,6 +827,7 @@ cargo clippy -p control-plane-server --all-targets -- -D warnings -A clippy::too
 node --test tools/test-wan-tester-ui.cjs
 python3 tools/test-webrtc-wan.py
 python3 tools/test-wan-nginx.py
+python3 tools/test-local-wan-edge.py
 python3 tools/test-webrtc-client-address.py
 python3 tools/test-webrtc-raw-publisher.py
 python3 tools/test-webrtc-multi-peer.py
