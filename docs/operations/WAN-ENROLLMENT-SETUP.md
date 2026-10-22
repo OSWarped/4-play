@@ -186,3 +186,6 @@ The checker never reloads the live nginx, starts/stops application services,
 creates games, changes firewall/router rules or enables public access. On failure,
 stop and report its token-safe output. External media and latency tests remain
 separate even after this local check passes.
+
+The operator confirmed every live local-edge check passed. Next:
+[activate protected HTTPS while media remains closed](WAN-PROTECTED-EDGE-ACTIVATION.md).
