@@ -14,6 +14,11 @@ for completed pieces, activation blockers, and the next masked coturn installati
 step. They are not activated on the reference host. Keep staging 503 until all
 gates pass.
 
+Operator checkpoint (2026-10-21): protected TURN credentials installed, both
+application services restarted, and LAN `/client-v4` gameplay reconfirmed. Next:
+[private enrollment and token rotation walkthrough](WAN-ENROLLMENT-SETUP.md).
+The new helper stages configuration only; public activation is still separate.
+
 ## Verified starting point (2026-10-18)
 
 - Linux host `192.168.20.68`: nginx, control plane, and runtime host agent active.

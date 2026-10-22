@@ -737,7 +737,10 @@ unshare --user --map-root-user python3 tools/test-turn-local-guard.py
 sudo python3 deploy/systemd/install-wan-media-credentials.py --apply
 ```
 
-This next root step is pending. It revalidates the protected TURN bundle and the
+The operator completed this root step on 2026-10-21, including both live TURN
+probes and the real Rust/Python systemd credential checks. Four files were
+installed. Both applications were subsequently restarted and LAN `/client-v4`
+playback passed. Public access remains staged. The installer revalidates the protected TURN bundle and the
 presence of its host-only ingress/egress restrictions. It probes the running relay
 with the canonical secret to catch an out-of-sync key, then runs short-lived
 non-root transient checks for **both real Rust and Python readers**. These use
@@ -778,7 +781,7 @@ Automated evidence: real Rust/Python diagnostic subprocesses with temporary keys
 pass without API tokens, opening databases or printing secrets; malformed/duplicate
 keys, conflicting sources and extra Rust diagnostic arguments fail. POSIX reader
 tests and installation rollback/idempotence tests pass. Actual systemd transient
-credential delivery still requires the operator command above.
+credential delivery also passed in the operator's root-level run on 2026-10-21.
 
 ### Systemd named-user ACL compatibility (2026-10-19)
 
@@ -797,7 +800,7 @@ fail closed. Existing owner-only files remain supported; no source permissions
 are changed. Synthetic ACL fixtures exercise both actual diagnostic executables.
 A user-systemd integration test additionally checks real `LoadCredential` delivery
 without using the production key. The root installer remains the final gate for
-the real service identities; its successful completion is not yet confirmed.
+the real service identities; its successful completion was confirmed on 2026-10-21.
 
 After pulling and rebuilding the release control plane, retry only:
 
