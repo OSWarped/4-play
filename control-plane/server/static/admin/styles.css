@@ -129,6 +129,11 @@ button.danger:hover {
   align-items: center;
 }
 
+.token-creator { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 1rem; }
+.token-creator label { display: grid; gap: 0.35rem; }
+.token-result { border: 1px solid var(--accent); border-radius: 0.8rem; padding: 1rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+.token-result code { display: block; user-select: all; margin: 0.65rem 0; color: var(--accent); }
+
 .eyebrow,
 .label {
   color: var(--accent);

@@ -1,4 +1,5 @@
 //! Opt-in, direct-LAN browser seats. The shared bearer never leaves the server.
+use crate::tester_access::{AccessError, TesterAccess};
 use crate::wan_testers::{GateError, WanGate, WanTesterConfig};
 use axum::{
     Json, Router,
@@ -6,10 +7,11 @@ use axum::{
     extract::{ConnectInfo, State},
     http::{HeaderMap, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use hmac::{Hmac, Mac};
 use ipnet::IpNet;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use std::{
@@ -122,11 +124,125 @@ fn browser_router(
             )
             .route("/client-v2/tester-access.js", get(tester_script))
             .route(
+                "/api/v1/admin/tester-invitations",
+                get(admin_list_invitations).post(admin_issue_invitation),
+            )
+            .route(
+                "/api/v1/admin/tester-invitations/{id}",
+                delete(admin_revoke_invitation),
+            )
+            .route(
                 "/client-v2/api/{*path}",
                 get(proxy).post(proxy).delete(proxy),
             )
             .with_state(state),
     ))
+}
+
+fn admin_authorized(state: &Seats, headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|candidate| {
+            candidate.len() == state.secret.len()
+                && candidate
+                    .bytes()
+                    .zip(state.secret.bytes())
+                    .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+                    == 0
+        })
+}
+
+fn admin_access<'a>(state: &'a Seats, headers: &HeaderMap) -> Result<&'a TesterAccess, Response> {
+    if !admin_authorized(state, headers) {
+        return Err((StatusCode::UNAUTHORIZED, Json(json!({"code":"authentication_required","message":"a valid admin bearer token is required"}))).into_response());
+    }
+    state.wan.as_ref().map(|wan| &wan.access).ok_or_else(|| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"code":"tester_access_disabled","message":"WAN tester access is not configured"}))).into_response()
+    })
+}
+
+#[derive(Deserialize)]
+struct IssueInvitationRequest {
+    lifetime_hours: Option<u64>,
+    max_seats: u32,
+}
+
+async fn admin_list_invitations(State(state): State<Seats>, headers: HeaderMap) -> Response {
+    let access = match admin_access(&state, &headers) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    match access.list().await {
+        Ok(invitations) => Json(json!({"invitations": invitations})).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"code":"tester_storage_unavailable","message":"Tester access storage is unavailable"}))).into_response(),
+    }
+}
+
+async fn admin_issue_invitation(
+    State(state): State<Seats>,
+    headers: HeaderMap,
+    Json(request): Json<IssueInvitationRequest>,
+) -> Response {
+    let access = match admin_access(&state, &headers) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let now = crate::unix_time_ms();
+    let expires = match request.lifetime_hours {
+        None => crate::tester_access::NEVER_EXPIRES_MS,
+        Some(hours) => match hours
+            .checked_mul(3_600_000)
+            .and_then(|duration| now.checked_add(duration))
+        {
+            Some(value) => value,
+            None => return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({"code":"invalid_token_lifetime","message":"Token lifetime is invalid"}),
+                ),
+            )
+                .into_response(),
+        },
+    };
+    match access.issue(now, expires, request.max_seats).await {
+        Ok(invitation) => (StatusCode::CREATED, Json(json!({
+            "id": invitation.id.to_string(),
+            "token": invitation.code,
+            "expires_ms": (expires != crate::tester_access::NEVER_EXPIRES_MS).then_some(expires),
+            "max_seats": request.max_seats,
+        }))).into_response(),
+        Err(AccessError::InvalidSettings) => (StatusCode::BAD_REQUEST, Json(json!({"code":"invalid_token_settings","message":"Choose 1-8 users and a lifetime up to 365 days"}))).into_response(),
+        Err(AccessError::Capacity) => (StatusCode::CONFLICT, Json(json!({"code":"tester_capacity","message":"The invitation limit has been reached"}))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"code":"tester_storage_unavailable","message":"Tester access storage is unavailable"}))).into_response(),
+    }
+}
+
+async fn admin_revoke_invitation(
+    State(state): State<Seats>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let access = match admin_access(&state, &headers) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let id = match Uuid::parse_str(&id) {
+        Ok(value) => value,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"code":"invalid_invitation","message":"Invalid invitation ID"})),
+            )
+                .into_response();
+        }
+    };
+    match access.revoke(id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({"code":"invitation_not_found","message":"Invitation was not found or is already revoked"}))).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"code":"tester_storage_unavailable","message":"Tester access storage is unavailable"}))).into_response(),
+    }
 }
 
 async fn index() -> Response {

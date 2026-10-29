@@ -14,7 +14,8 @@ use tokio_rusqlite::{
 use uuid::Uuid;
 
 const HOUR: u64 = 3_600_000;
-const MAX_INVITE_LIFETIME: u64 = 7 * 24 * HOUR;
+pub const MAX_INVITE_LIFETIME: u64 = 365 * 24 * HOUR;
+pub const NEVER_EXPIRES_MS: u64 = i64::MAX as u64;
 const ADMISSION_LIFETIME: u64 = 8 * HOUR;
 const MAX_SEATS_PER_INVITE: u32 = 8;
 const MAX_ACTIVE_SEATS: i64 = 8;
@@ -73,7 +74,7 @@ pub struct IssuedAdmission {
 #[derive(Debug, Serialize)]
 pub struct InvitationStatus {
     pub id: String,
-    pub expires_ms: u64,
+    pub expires_ms: Option<u64>,
     pub max_seats: u32,
     pub used_seats: u32,
     pub revoked: bool,
@@ -168,8 +169,7 @@ impl TesterAccess {
         expires: u64,
         max_seats: u32,
     ) -> Result<IssuedInvitation, AccessError> {
-        if expires <= now
-            || expires - now > MAX_INVITE_LIFETIME
+        if (expires != NEVER_EXPIRES_MS && (expires <= now || expires - now > MAX_INVITE_LIFETIME))
             || !(1..=MAX_SEATS_PER_INVITE).contains(&max_seats)
         {
             return Err(AccessError::InvalidSettings);
@@ -211,7 +211,11 @@ impl TesterAccess {
             if used >= max_seats { return Ok(Err(AccessError::Denied)); }
             let active: i64 = tx.query_row("SELECT count(*) FROM tester_admissions a JOIN tester_invitations i ON i.id=a.invitation_id WHERE a.expires_ms>?1 AND i.expires_ms>?1 AND i.revoked=0", [now], |r| r.get(0))?;
             if active >= MAX_ACTIVE_SEATS { return Ok(Err(AccessError::Capacity)); }
-            let expiry = expires.min(now.saturating_add(ADMISSION_LIFETIME as i64));
+            let expiry = if expires == NEVER_EXPIRES_MS as i64 {
+                expires
+            } else {
+                expires.min(now.saturating_add(ADMISSION_LIFETIME as i64))
+            };
             tx.execute("UPDATE tester_invitations SET used_seats=used_seats+1 WHERE id=?1", [&id])?;
             tx.execute("INSERT INTO tester_admissions (credential_hash,invitation_id,seat_id,expires_ms) VALUES (?1,?2,?3,?4)", params![credential_hash, id, seat.to_string(), expiry])?;
             tx.commit()?;
@@ -252,8 +256,11 @@ impl TesterAccess {
     /// Safe operator status: no codes, hashes, admission credentials, or seat IDs.
     pub async fn list(&self) -> Result<Vec<InvitationStatus>, AccessError> {
         self.connection.call::<_, _, tokio_rusqlite::rusqlite::Error>(|db| {
-            db.prepare("SELECT id,expires_ms,max_seats,used_seats,revoked FROM tester_invitations ORDER BY created_ms,id")?
-                .query_map([], |r| Ok(InvitationStatus { id: r.get(0)?, expires_ms: r.get::<_, i64>(1)? as u64, max_seats: r.get(2)?, used_seats: r.get(3)?, revoked: r.get(4)? }))?
+            db.prepare("SELECT id,expires_ms,max_seats,used_seats,revoked FROM tester_invitations ORDER BY created_ms DESC,id")?
+                .query_map([], |r| {
+                    let expires = r.get::<_, i64>(1)? as u64;
+                    Ok(InvitationStatus { id: r.get(0)?, expires_ms: (expires != NEVER_EXPIRES_MS).then_some(expires), max_seats: r.get(2)?, used_seats: r.get(3)?, revoked: r.get(4)? })
+                })?
                 .collect::<Result<Vec<_>, _>>()
         }).await.map_err(|_| AccessError::Storage)
     }
@@ -308,6 +315,27 @@ mod tests {
         assert!(!status.contains("hash"));
         assert!(!status.contains(&invite.code));
         assert!(!status.contains(&admission.credential));
+    }
+
+    #[tokio::test]
+    async fn non_expiring_invitation_and_admission_remain_revocable() {
+        let (_dir, access) = fixture().await;
+        let invite = access.issue(1000, NEVER_EXPIRES_MS, 1).await.unwrap();
+        let admission = access.redeem(&invite.code, 2000).await.unwrap();
+        assert_eq!(admission.expires_ms, NEVER_EXPIRES_MS);
+        assert_eq!(access.list().await.unwrap()[0].expires_ms, None);
+        assert_eq!(
+            access
+                .authenticate(&admission.credential, NEVER_EXPIRES_MS - 1)
+                .await
+                .unwrap(),
+            admission.seat_id
+        );
+        assert!(access.revoke(invite.id).await.unwrap());
+        assert_eq!(
+            access.authenticate(&admission.credential, 3000).await,
+            Err(AccessError::Denied)
+        );
     }
 
     #[tokio::test]

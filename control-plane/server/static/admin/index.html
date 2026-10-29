@@ -46,6 +46,30 @@
         </article>
       </section>
 
+      <section class="card" id="user-token-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">Remote access</p><h2>User tokens</h2></div>
+          <button id="refresh-user-tokens" type="button">Refresh tokens</button>
+        </div>
+        <p>Create a one-time invitation token for a remote user. The secret is shown only once; revoking it also signs out browsers enrolled with it.</p>
+        <div class="token-creator">
+          <label>Lifetime
+            <select id="user-token-lifetime">
+              <option value="24">24 hours</option>
+              <option value="168">7 days</option>
+              <option value="720">30 days</option>
+              <option value="2160">90 days</option>
+              <option value="8760">1 year</option>
+              <option value="forever">Never expires</option>
+            </select>
+          </label>
+          <label>Users / browsers <input id="user-token-seats" type="number" min="1" max="8" value="1" /></label>
+          <button id="create-user-token" type="button">Create token</button>
+        </div>
+        <div id="new-user-token" class="token-result" hidden></div>
+        <div id="user-tokens" class="stack muted">Save your Admin token and refresh.</div>
+      </section>
+
       <section class="card" id="game-import-panel">
         <div class="section-heading"><div><p class="eyebrow">Library intake</p><h2>Add a game</h2></div></div>
         <p>Select a game archive or a folder of files you own. MAME identifies required parent sets, BIOS/device ROMs, CHDs, and optional sound samples. Nothing is downloaded or overwritten.</p>

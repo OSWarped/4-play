@@ -3,6 +3,8 @@ const producerDestinationInput = document.querySelector("#producer-destination")
 const saveTokenButton = document.querySelector("#save-token");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
+const refreshUserTokensButton = document.querySelector("#refresh-user-tokens");
+const createUserTokenButton = document.querySelector("#create-user-token");
 
 const state = {
   token: localStorage.getItem("fourplay.adminToken") || "",
@@ -28,6 +30,8 @@ saveTokenButton.addEventListener("click", () => {
 });
 
 refreshButton.addEventListener("click", refresh);
+refreshUserTokensButton.addEventListener("click", loadUserTokens);
+createUserTokenButton.addEventListener("click", createUserToken);
 gameFilter.addEventListener("input", renderGames);
 renderOperationsRunbook();
 const loadGameImport = FourPlayGameImport.bind({
@@ -63,6 +67,7 @@ async function fetchJson(path, protectedApi = true) {
 
 async function refresh() {
   loadGameImport();
+  loadUserTokens();
   setText("#health-status", "Loading…");
   try {
     const [health, hosts, games, sessions, activeSessions, webrtcStatus] = await Promise.all([
@@ -95,6 +100,64 @@ async function refresh() {
     setText("#health-status", "Error");
     setText("#webrtc-status", "Unknown");
     renderSnapshot({ error: String(error) });
+  }
+}
+
+async function tokenRequest(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.body ? {"Content-Type":"application/json"} : {}) } });
+  if (response.status === 204) return null;
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || `Token request failed (${response.status})`);
+  return result;
+}
+
+async function loadUserTokens() {
+  const container = document.querySelector("#user-tokens");
+  try {
+    const result = await tokenRequest("/api/v1/admin/tester-invitations");
+    const invitations = result.invitations || [];
+    container.classList.remove("muted");
+    replaceChildren(container, invitations.map(renderUserToken));
+    if (!invitations.length) container.textContent = "No user tokens have been created.";
+  } catch (error) {
+    container.classList.add("muted");
+    container.textContent = String(error.message || error);
+  }
+}
+
+function renderUserToken(invitation) {
+  const element = item();
+  const expired = invitation.expires_ms !== null && invitation.expires_ms <= Date.now();
+  const status = invitation.revoked ? "Revoked" : expired ? "Expired" : "Active";
+  element.innerHTML = `<h3>Token ${escapeHtml(invitation.id.slice(0, 8))}</h3>
+    <span class="pill ${status === "Active" ? "good" : "bad"}">${status}</span>
+    <span class="pill">${invitation.expires_ms === null ? "Never expires" : `Expires ${escapeHtml(new Date(invitation.expires_ms).toLocaleString())}`}</span>
+    <span class="pill">${escapeHtml(String(invitation.used_seats))} / ${escapeHtml(String(invitation.max_seats))} enrolled</span>`;
+  if (!invitation.revoked) {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "danger"; button.textContent = "Revoke";
+    button.addEventListener("click", async () => {
+      if (!confirm("Revoke this token and all browser access created from it?")) return;
+      try { await tokenRequest(`/api/v1/admin/tester-invitations/${encodeURIComponent(invitation.id)}`, {method:"DELETE"}); await loadUserTokens(); }
+      catch (error) { alert(error.message || error); }
+    });
+    element.append(button);
+  }
+  return element;
+}
+
+async function createUserToken() {
+  const lifetime = document.querySelector("#user-token-lifetime").value;
+  const maxSeats = Number(document.querySelector("#user-token-seats").value);
+  const output = document.querySelector("#new-user-token");
+  try {
+    const result = await tokenRequest("/api/v1/admin/tester-invitations", {method:"POST", body:JSON.stringify({lifetime_hours:lifetime === "forever" ? null : Number(lifetime), max_seats:maxSeats})});
+    output.hidden = false;
+    output.innerHTML = `<strong>Copy this token now—it will not be shown again.</strong><code>${escapeHtml(result.token)}</code><button type="button">Copy token</button>`;
+    output.querySelector("button").addEventListener("click", () => navigator.clipboard.writeText(result.token));
+    await loadUserTokens();
+  } catch (error) {
+    output.hidden = false; output.textContent = String(error.message || error);
   }
 }
 
