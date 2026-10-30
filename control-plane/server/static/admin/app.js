@@ -10,6 +10,10 @@ const gameImportDialog = document.querySelector("#game-import-dialog");
 // Initialize before any event handler can yield to the browser. The real loader
 // is installed below after the import module is bound.
 let loadGameImport = async () => {};
+const viewMeta = {
+  overview: ["Operations", "Overview"], sessions: ["Gameplay", "Sessions"],
+  library: ["Content", "Library"], access: ["Security", "User access"], system: ["Infrastructure", "System"],
+};
 
 const state = {
   token: localStorage.getItem("fourplay.adminToken") || "",
@@ -163,10 +167,6 @@ async function refresh() {
   }
 }
 
-const viewMeta = {
-  overview: ["Operations", "Overview"], sessions: ["Gameplay", "Sessions"],
-  library: ["Content", "Library"], access: ["Security", "User access"], system: ["Infrastructure", "System"],
-};
 function showView(view, updateHash = true) {
   if (!viewMeta[view]) view = "overview";
   document.querySelectorAll("[data-admin-view]").forEach((section) => {

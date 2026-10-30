@@ -2532,6 +2532,10 @@ mod tests {
             script_body.find("let loadGameImport").unwrap()
                 < script_body.find("addEventListener(\"submit\"").unwrap()
         );
+        assert!(
+            script_body.find("const viewMeta").unwrap()
+                < script_body.find("showView(location.hash").unwrap()
+        );
         assert!(script_body.contains("primaryMediaPath"));
         assert!(script_body.contains("loadMediaPreviews"));
         assert!(script_body.contains("Media not uploaded"));
