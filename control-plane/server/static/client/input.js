@@ -188,6 +188,10 @@
         lostpointercapture: (event) => this.up(event),
         contextmenu: (event) => event.preventDefault(),
       };
+      this.guard = (event) => {
+        if (this.running && event.cancelable !== false) event.preventDefault();
+      };
+      this.guardEvents = ["dblclick", "selectstart", "dragstart", "contextmenu", "touchmove", "gesturestart", "gesturechange"];
     }
 
     start() {
@@ -195,6 +199,10 @@
       this.running = true;
       this.panel.innerHTML = TouchControls.markup(this.count);
       this.panel.hidden = false;
+      this.input.surface.classList?.add("touch-gameplay-active");
+      for (const name of this.guardEvents) {
+        this.input.surface.addEventListener(name, this.guard, name === "touchmove" ? { passive: false } : undefined);
+      }
       for (const [name, handler] of Object.entries(this.handlers)) this.panel.addEventListener(name, handler);
     }
 
@@ -249,6 +257,8 @@
       this.reset();
       this.running = false;
       this.panel.hidden = true;
+      this.input.surface.classList?.remove("touch-gameplay-active");
+      for (const name of this.guardEvents) this.input.surface.removeEventListener(name, this.guard);
       for (const [name, handler] of Object.entries(this.handlers)) this.panel.removeEventListener(name, handler);
     }
   }

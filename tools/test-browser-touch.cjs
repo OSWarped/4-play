@@ -20,7 +20,9 @@ function setup(touch = true, count = 2) {
       }));
     },
   };
+  const classes = new Set();
   const surface = { contains: (element) => element === panel || buttons.includes(element),
+    classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) },
     addEventListener: (name, fn) => focusListeners.set(name, fn), removeEventListener: (name) => focusListeners.delete(name) };
   doc.activeElement = panel;
   const env = { document: doc, navigator: { maxTouchPoints: touch ? 5 : 0 },
@@ -32,7 +34,7 @@ function setup(touch = true, count = 2) {
   const button = (codes) => buttons.find((button) => button.dataset.touchKeys === codes);
   const event = (id, target = null) => ({ pointerId: id, target, pointerType: "touch", preventDefault() {}, clientX: 1, clientY: 1 });
   const fire = (name, id, target) => listeners.get(name)(event(id, target));
-  return { input, panel, doc, messages, button, fire, listeners, windowListeners, focusListeners,
+  return { input, panel, surface, doc, messages, button, fire, listeners, windowListeners, focusListeners,
     tick: () => tick(), hit: (target) => { hit = target; }, buttons: () => buttons };
 }
 
@@ -104,4 +106,19 @@ test("backgrounding, rotation, teardown and reconnect cannot retain or revive a 
   assert.equal(s.panel.hidden, true); assert.equal(s.listeners.size, 0); assert.equal(s.windowListeners.size, 0);
   s.input.setTouch(2, ["KeyD"]); assert.equal(s.input.touchKeys.size, 0);
   s.input.start(); s.tick(); assert.equal(s.panel.hidden, false); assert.equal(s.messages.at(-1).axis_x, 0);
+});
+
+test("active touch gameplay suppresses browser gestures and restores them on stop", () => {
+  const s = setup();
+  assert.equal(s.surface.classList.contains("touch-gameplay-active"), true);
+  for (const name of ["dblclick", "selectstart", "dragstart", "contextmenu", "touchmove", "gesturestart", "gesturechange"]) {
+    let prevented = false;
+    s.focusListeners.get(name)({ preventDefault: () => { prevented = true; }, cancelable: true });
+    assert.equal(prevented, true, `${name} should be suppressed during gameplay`);
+  }
+  s.input.stop();
+  assert.equal(s.surface.classList.contains("touch-gameplay-active"), false);
+  for (const name of ["dblclick", "selectstart", "dragstart", "contextmenu", "touchmove", "gesturestart", "gesturechange"]) {
+    assert.equal(s.focusListeners.has(name), false, `${name} listener should be removed`);
+  }
 });

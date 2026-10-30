@@ -356,6 +356,24 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   gap: 0.85rem;
 }
 
+/* While touch controls are active, the player—not the browser—owns gestures.
+   This is deliberately scoped to gameplay so browsing can still zoom/select. */
+.browser-player.touch-gameplay-active {
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.browser-player.touch-gameplay-active *,
+.browser-player.touch-gameplay-active video {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
 .browser-player[hidden] {
   display: none;
 }
