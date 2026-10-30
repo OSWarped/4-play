@@ -598,6 +598,11 @@ dialog::backdrop { background: #050812c9; backdrop-filter: blur(4px); }
 .dialog-card.card { border: 0; }
 .field { display: grid; gap: .4rem; }
 .field span { color: var(--muted); font-size: .86rem; }
+.password-field { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .5rem; }
+.password-field input { min-width: 0; width: 100%; }
+.connection-result { min-height: 1.5rem; color: var(--muted); }
+.connection-result.good { color: var(--accent); }
+.connection-result.bad { color: var(--bad); }
 .token-result code { padding: .7rem; border-radius: .6rem; background: #080d19; }
 .toast-region { position: fixed; right: 1rem; bottom: 1rem; z-index: 100; display: grid; gap: .5rem; width: min(24rem,calc(100% - 2rem)); pointer-events: none; }
 .toast { padding: .85rem 1rem; border: 1px solid var(--border); border-radius: .75rem; background: #19233df2; box-shadow: 0 1rem 3rem #0008; }

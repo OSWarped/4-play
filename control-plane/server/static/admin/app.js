@@ -22,11 +22,11 @@ const state = {
 
 tokenInput.value = state.token;
 
-saveTokenButton.addEventListener("click", () => {
-  state.token = tokenInput.value.trim();
-  localStorage.setItem("fourplay.adminToken", state.token);
-  connectionDialog.close();
-  refresh();
+document.querySelector("#connection-form").addEventListener("submit", connectAdmin);
+document.querySelector("#toggle-token").addEventListener("click", () => {
+  const showing = tokenInput.type === "text";
+  tokenInput.type = showing ? "password" : "text";
+  document.querySelector("#toggle-token").textContent = showing ? "Show" : "Hide";
 });
 
 refreshButton.addEventListener("click", refresh);
@@ -75,6 +75,42 @@ async function fetchJson(path, protectedApi = true) {
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
   return response.json();
+}
+
+async function connectAdmin(event) {
+  event.preventDefault();
+  const result = document.querySelector("#connection-result");
+  const candidate = tokenInput.value.trim();
+  if (!candidate) {
+    result.className = "connection-result bad";
+    result.textContent = "Enter the seat API token first.";
+    return;
+  }
+  saveTokenButton.disabled = true;
+  saveTokenButton.textContent = "Testing…";
+  result.className = "connection-result";
+  result.textContent = "Testing this token against the server…";
+  try {
+    const response = await fetch("/api/v1/games", {headers:{Authorization:`Bearer ${candidate}`}, cache:"no-store"});
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
+    }
+    state.token = candidate;
+    localStorage.setItem("fourplay.adminToken", candidate);
+    result.className = "connection-result good";
+    result.textContent = "Connected. Loading the console…";
+    setConnected(true);
+    window.setTimeout(() => connectionDialog.close(), 250);
+    await refresh();
+  } catch (error) {
+    result.className = "connection-result bad";
+    result.textContent = `Connection failed: ${String(error.message || error)}`;
+    setConnected(false);
+  } finally {
+    saveTokenButton.disabled = false;
+    saveTokenButton.textContent = "Test and connect";
+  }
 }
 
 async function refresh() {
