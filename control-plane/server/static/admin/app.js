@@ -7,6 +7,9 @@ const confirmCreateUserTokenButton = document.querySelector("#confirm-create-use
 const connectionDialog = document.querySelector("#connection-dialog");
 const userTokenDialog = document.querySelector("#user-token-dialog");
 const gameImportDialog = document.querySelector("#game-import-dialog");
+// Initialize before any event handler can yield to the browser. The real loader
+// is installed below after the import module is bound.
+let loadGameImport = async () => {};
 
 const state = {
   token: localStorage.getItem("fourplay.adminToken") || "",
@@ -46,7 +49,7 @@ document.querySelectorAll("[data-view], [data-go-view]").forEach((button) => {
 window.addEventListener("hashchange", () => showView(location.hash.slice(1) || "overview", false));
 showView(location.hash.slice(1) || "overview", false);
 renderOperationsRunbook();
-const loadGameImport = FourPlayGameImport.bind({
+loadGameImport = FourPlayGameImport.bind({
   panel: document.querySelector("#game-import-panel"), refreshed: refresh,
   request: async (path, body, method) => {
     const binary = body instanceof Blob;

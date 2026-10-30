@@ -2528,6 +2528,10 @@ mod tests {
         );
         let script_body = String::from_utf8(script_body).unwrap();
         assert!(script_body.contains("fourplay.adminToken"));
+        assert!(
+            script_body.find("let loadGameImport").unwrap()
+                < script_body.find("addEventListener(\"submit\"").unwrap()
+        );
         assert!(script_body.contains("primaryMediaPath"));
         assert!(script_body.contains("loadMediaPreviews"));
         assert!(script_body.contains("Media not uploaded"));
