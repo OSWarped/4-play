@@ -1,10 +1,12 @@
 const tokenInput = document.querySelector("#api-token");
-const producerDestinationInput = document.querySelector("#producer-destination");
 const saveTokenButton = document.querySelector("#save-token");
 const refreshButton = document.querySelector("#refresh");
 const gameFilter = document.querySelector("#game-filter");
-const refreshUserTokensButton = document.querySelector("#refresh-user-tokens");
 const createUserTokenButton = document.querySelector("#create-user-token");
+const confirmCreateUserTokenButton = document.querySelector("#confirm-create-user-token");
+const connectionDialog = document.querySelector("#connection-dialog");
+const userTokenDialog = document.querySelector("#user-token-dialog");
+const gameImportDialog = document.querySelector("#game-import-dialog");
 
 const state = {
   token: localStorage.getItem("fourplay.adminToken") || "",
@@ -19,20 +21,30 @@ const state = {
 };
 
 tokenInput.value = state.token;
-producerDestinationInput.value = state.producerDestination;
 
 saveTokenButton.addEventListener("click", () => {
   state.token = tokenInput.value.trim();
-  state.producerDestination = producerDestinationInput.value.trim();
   localStorage.setItem("fourplay.adminToken", state.token);
-  localStorage.setItem("fourplay.producerDestination", state.producerDestination);
+  connectionDialog.close();
   refresh();
 });
 
 refreshButton.addEventListener("click", refresh);
-refreshUserTokensButton.addEventListener("click", loadUserTokens);
-createUserTokenButton.addEventListener("click", createUserToken);
+createUserTokenButton.addEventListener("click", () => userTokenDialog.showModal());
+confirmCreateUserTokenButton.addEventListener("click", createUserToken);
 gameFilter.addEventListener("input", renderGames);
+document.querySelector("#open-connection").addEventListener("click", () => connectionDialog.showModal());
+document.querySelector("#open-game-import").addEventListener("click", () => gameImportDialog.showModal());
+document.querySelector("#close-game-import").addEventListener("click", () => gameImportDialog.close());
+document.querySelector("#mobile-menu").addEventListener("click", () => {
+  const open = document.body.classList.toggle("nav-open");
+  document.querySelector("#mobile-menu").setAttribute("aria-expanded", String(open));
+});
+document.querySelectorAll("[data-view], [data-go-view]").forEach((button) => {
+  button.addEventListener("click", () => showView(button.dataset.view || button.dataset.goView));
+});
+window.addEventListener("hashchange", () => showView(location.hash.slice(1) || "overview", false));
+showView(location.hash.slice(1) || "overview", false);
 renderOperationsRunbook();
 const loadGameImport = FourPlayGameImport.bind({
   panel: document.querySelector("#game-import-panel"), refreshed: refresh,
@@ -68,6 +80,8 @@ async function fetchJson(path, protectedApi = true) {
 async function refresh() {
   loadGameImport();
   loadUserTokens();
+  refreshButton.disabled = true;
+  refreshButton.textContent = "Refreshing…";
   setText("#health-status", "Loading…");
   try {
     const [health, hosts, games, sessions, activeSessions, webrtcStatus] = await Promise.all([
@@ -96,11 +110,54 @@ async function refresh() {
     renderGames();
     renderDiagnostics();
     renderSnapshot({ health, hosts, activeSessions, sessions, webrtcStatus });
+    setConnected(true);
+    document.querySelector("#last-updated").textContent = `Updated ${new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}`;
   } catch (error) {
     setText("#health-status", "Error");
     setText("#webrtc-status", "Unknown");
     renderSnapshot({ error: String(error) });
+    setConnected(false);
+    toast(String(error), "bad");
+  } finally {
+    refreshButton.disabled = false;
+    refreshButton.textContent = "Refresh";
   }
+}
+
+const viewMeta = {
+  overview: ["Operations", "Overview"], sessions: ["Gameplay", "Sessions"],
+  library: ["Content", "Library"], access: ["Security", "User access"], system: ["Infrastructure", "System"],
+};
+function showView(view, updateHash = true) {
+  if (!viewMeta[view]) view = "overview";
+  document.querySelectorAll("[data-admin-view]").forEach((section) => {
+    const active = section.dataset.adminView === view;
+    section.hidden = !active; section.classList.toggle("is-active", active);
+  });
+  document.querySelectorAll("#admin-navigation [data-view]").forEach((button) => {
+    if (button.dataset.view === view) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
+  [document.querySelector("#view-eyebrow").textContent, document.querySelector("#view-title").textContent] = viewMeta[view];
+  document.body.classList.remove("nav-open");
+  document.querySelector("#mobile-menu").setAttribute("aria-expanded", "false");
+  if (updateHash && location.hash !== `#${view}`) history.pushState(null, "", `#${view}`);
+  window.scrollTo({top: 0, behavior: "smooth"});
+}
+
+function setConnected(connected) {
+  document.querySelector("#connection-dot").classList.toggle("connected", connected);
+  document.querySelector("#connection-label").textContent = connected ? "Connected" : "Not connected";
+  document.querySelector("#open-connection").textContent = connected ? "Connection" : "Connect";
+  const alert = document.querySelector("#overview-alert");
+  alert.classList.toggle("good", connected);
+  alert.textContent = connected ? "All admin services responded successfully." : "Admin connection failed. Check the saved token and server availability.";
+}
+
+function toast(message, tone = "good") {
+  const element = document.createElement("div");
+  element.className = `toast ${tone}`; element.textContent = message;
+  document.querySelector("#toast-region").append(element);
+  window.setTimeout(() => element.remove(), 4000);
 }
 
 async function tokenRequest(path, options = {}) {
@@ -129,17 +186,18 @@ function renderUserToken(invitation) {
   const element = item();
   const expired = invitation.expires_ms !== null && invitation.expires_ms <= Date.now();
   const status = invitation.revoked ? "Revoked" : expired ? "Expired" : "Active";
-  element.innerHTML = `<h3>Token ${escapeHtml(invitation.id.slice(0, 8))}</h3>
+  element.innerHTML = `<h3>${escapeHtml(invitation.label || `Access ${invitation.id.slice(0, 8)}`)}</h3>
     <span class="pill ${status === "Active" ? "good" : "bad"}">${status}</span>
     <span class="pill">${invitation.expires_ms === null ? "Never expires" : `Expires ${escapeHtml(new Date(invitation.expires_ms).toLocaleString())}`}</span>
-    <span class="pill">${escapeHtml(String(invitation.used_seats))} / ${escapeHtml(String(invitation.max_seats))} enrolled</span>`;
+    <span class="pill">${escapeHtml(String(invitation.used_seats))} / ${escapeHtml(String(invitation.max_seats))} enrolled</span>
+    <p class="muted">Created ${escapeHtml(new Date(invitation.created_ms).toLocaleString())}</p>`;
   if (!invitation.revoked) {
     const button = document.createElement("button");
     button.type = "button"; button.className = "danger"; button.textContent = "Revoke";
     button.addEventListener("click", async () => {
       if (!confirm("Revoke this token and all browser access created from it?")) return;
-      try { await tokenRequest(`/api/v1/admin/tester-invitations/${encodeURIComponent(invitation.id)}`, {method:"DELETE"}); await loadUserTokens(); }
-      catch (error) { alert(error.message || error); }
+      try { await tokenRequest(`/api/v1/admin/tester-invitations/${encodeURIComponent(invitation.id)}`, {method:"DELETE"}); toast("User access revoked"); await loadUserTokens(); }
+      catch (error) { toast(error.message || String(error), "bad"); }
     });
     element.append(button);
   }
@@ -149,15 +207,21 @@ function renderUserToken(invitation) {
 async function createUserToken() {
   const lifetime = document.querySelector("#user-token-lifetime").value;
   const maxSeats = Number(document.querySelector("#user-token-seats").value);
+  const label = document.querySelector("#user-token-label").value.trim();
   const output = document.querySelector("#new-user-token");
   try {
-    const result = await tokenRequest("/api/v1/admin/tester-invitations", {method:"POST", body:JSON.stringify({lifetime_hours:lifetime === "forever" ? null : Number(lifetime), max_seats:maxSeats})});
+    confirmCreateUserTokenButton.disabled = true;
+    const result = await tokenRequest("/api/v1/admin/tester-invitations", {method:"POST", body:JSON.stringify({label, lifetime_hours:lifetime === "forever" ? null : Number(lifetime), max_seats:maxSeats})});
+    userTokenDialog.close();
     output.hidden = false;
     output.innerHTML = `<strong>Copy this token now—it will not be shown again.</strong><code>${escapeHtml(result.token)}</code><button type="button">Copy token</button>`;
-    output.querySelector("button").addEventListener("click", () => navigator.clipboard.writeText(result.token));
+    output.querySelector("button").addEventListener("click", async () => { await navigator.clipboard.writeText(result.token); toast("Invitation copied"); });
     await loadUserTokens();
   } catch (error) {
     output.hidden = false; output.textContent = String(error.message || error);
+    userTokenDialog.close();
+  } finally {
+    confirmCreateUserTokenButton.disabled = false;
   }
 }
 
@@ -198,6 +262,9 @@ function renderHost(host) {
 function renderActiveSessions() {
   const container = document.querySelector("#active-sessions");
   replaceChildren(container, state.activeSessions.map(renderActiveSession));
+  const overview = document.querySelector("#overview-sessions");
+  replaceChildren(overview, state.activeSessions.slice(0, 4).map(renderActiveSession));
+  document.querySelector("#nav-session-count").textContent = String(state.activeSessions.length);
 }
 
 function renderActiveSession(session) {
@@ -221,7 +288,10 @@ function renderActiveSession(session) {
     <div>${slots}</div>
     <button type="button" data-session-id="${escapeHtml(session.id)}">Production notes</button>
   `;
-  element.querySelector("button").addEventListener("click", () => renderProduction(session));
+  element.querySelector("button").addEventListener("click", () => {
+    showView("sessions");
+    renderProduction(session);
+  });
   return element;
 }
 
@@ -848,6 +918,7 @@ function renderProduction(session) {
       </p>
       <span class="pill">player media ${escapeHtml(String(mediaPort))}</span>
       <span class="pill">input ${escapeHtml(String(inputPort))}</span>
+      <label class="field producer-destination-field"><span>Production receiver IP</span><input id="producer-destination" type="text" placeholder="OBS / producer IP" value="${escapeHtml(state.producerDestination)}" /></label>
       <button id="create-spectator-grant" type="button">Create production spectator feed</button>
       <button id="copy-session-summary" type="button">Copy session summary</button>
       <button id="stop-session" class="danger" type="button">Stop session</button>
@@ -963,7 +1034,7 @@ async function saveSessionNotes(sessionId, notes) {
 }
 
 async function createProductionSpectatorGrant(session) {
-  const destination = producerDestinationInput.value.trim();
+  const destination = document.querySelector("#producer-destination")?.value.trim() || "";
   state.producerDestination = destination;
   localStorage.setItem("fourplay.producerDestination", destination);
   const result = document.querySelector("#spectator-grant-result");

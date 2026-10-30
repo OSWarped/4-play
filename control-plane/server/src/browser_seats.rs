@@ -165,6 +165,8 @@ fn admin_access<'a>(state: &'a Seats, headers: &HeaderMap) -> Result<&'a TesterA
 
 #[derive(Deserialize)]
 struct IssueInvitationRequest {
+    #[serde(default)]
+    label: String,
     lifetime_hours: Option<u64>,
     max_seats: u32,
 }
@@ -206,7 +208,7 @@ async fn admin_issue_invitation(
                 .into_response(),
         },
     };
-    match access.issue(now, expires, request.max_seats).await {
+    match access.issue_labeled(now, expires, request.max_seats, &request.label).await {
         Ok(invitation) => (StatusCode::CREATED, Json(json!({
             "id": invitation.id.to_string(),
             "token": invitation.code,

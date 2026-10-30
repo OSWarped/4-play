@@ -2502,7 +2502,9 @@ mod tests {
             Some("text/html; charset=utf-8")
         );
         let index_body = String::from_utf8(index_body).unwrap();
-        assert!(index_body.contains("Admin / Producer Console"));
+        assert!(index_body.contains("4-Play Admin"));
+        assert!(index_body.contains("data-admin-view=\"overview\""));
+        assert!(index_body.contains("data-admin-view=\"access\""));
         assert!(index_body.contains("/admin/asset-upload.js"));
         assert!(index_body.contains("/admin/metadata-provider.js"));
         assert_eq!(provider_status, 200);

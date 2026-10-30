@@ -26,6 +26,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS tester_invitations (
     id TEXT PRIMARY KEY NOT NULL,
     code_hash TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
     created_ms INTEGER NOT NULL,
     expires_ms INTEGER NOT NULL,
     max_seats INTEGER NOT NULL CHECK(max_seats BETWEEN 1 AND 8),
@@ -74,6 +75,8 @@ pub struct IssuedAdmission {
 #[derive(Debug, Serialize)]
 pub struct InvitationStatus {
     pub id: String,
+    pub label: String,
+    pub created_ms: u64,
     pub expires_ms: Option<u64>,
     pub max_seats: u32,
     pub used_seats: u32,
@@ -154,6 +157,14 @@ impl TesterAccess {
             .call::<_, _, tokio_rusqlite::rusqlite::Error>(|db| {
                 db.busy_timeout(std::time::Duration::from_secs(5))?;
                 db.execute_batch(SCHEMA)?;
+                let has_label: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tester_invitations') WHERE name='label')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if !has_label {
+                    db.execute("ALTER TABLE tester_invitations ADD COLUMN label TEXT NOT NULL DEFAULT ''", [])?;
+                }
                 Ok(())
             })
             .await
@@ -169,8 +180,20 @@ impl TesterAccess {
         expires: u64,
         max_seats: u32,
     ) -> Result<IssuedInvitation, AccessError> {
+        self.issue_labeled(now, expires, max_seats, "").await
+    }
+
+    pub async fn issue_labeled(
+        &self,
+        now: u64,
+        expires: u64,
+        max_seats: u32,
+        label: &str,
+    ) -> Result<IssuedInvitation, AccessError> {
         if (expires != NEVER_EXPIRES_MS && (expires <= now || expires - now > MAX_INVITE_LIFETIME))
             || !(1..=MAX_SEATS_PER_INVITE).contains(&max_seats)
+            || label.len() > 80
+            || label.chars().any(char::is_control)
         {
             return Err(AccessError::InvalidSettings);
         }
@@ -179,12 +202,13 @@ impl TesterAccess {
         let id = Uuid::new_v4();
         let code = secret();
         let code_hash = hash(b"4play-tester-invite-v1\0", &code);
+        let label = label.trim().to_owned();
         let inserted = self.connection.call::<_, _, tokio_rusqlite::rusqlite::Error>(move |db| {
             let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let count: i64 = tx.query_row("SELECT count(*) FROM tester_invitations", [], |r| r.get(0))?;
             if count >= MAX_INVITATIONS { return Ok(false); }
-            tx.execute("INSERT INTO tester_invitations (id,code_hash,created_ms,expires_ms,max_seats) VALUES (?1,?2,?3,?4,?5)",
-                       params![id.to_string(), code_hash, created, expiry, max_seats])?;
+            tx.execute("INSERT INTO tester_invitations (id,code_hash,created_ms,expires_ms,max_seats,label) VALUES (?1,?2,?3,?4,?5,?6)",
+                       params![id.to_string(), code_hash, created, expiry, max_seats, label])?;
             tx.commit()?;
             Ok(true)
         }).await.map_err(|_| AccessError::Storage)?;
@@ -256,10 +280,10 @@ impl TesterAccess {
     /// Safe operator status: no codes, hashes, admission credentials, or seat IDs.
     pub async fn list(&self) -> Result<Vec<InvitationStatus>, AccessError> {
         self.connection.call::<_, _, tokio_rusqlite::rusqlite::Error>(|db| {
-            db.prepare("SELECT id,expires_ms,max_seats,used_seats,revoked FROM tester_invitations ORDER BY created_ms DESC,id")?
+            db.prepare("SELECT id,label,created_ms,expires_ms,max_seats,used_seats,revoked FROM tester_invitations ORDER BY created_ms DESC,id")?
                 .query_map([], |r| {
-                    let expires = r.get::<_, i64>(1)? as u64;
-                    Ok(InvitationStatus { id: r.get(0)?, expires_ms: (expires != NEVER_EXPIRES_MS).then_some(expires), max_seats: r.get(2)?, used_seats: r.get(3)?, revoked: r.get(4)? })
+                    let expires = r.get::<_, i64>(3)? as u64;
+                    Ok(InvitationStatus { id: r.get(0)?, label: r.get(1)?, created_ms: r.get::<_,i64>(2)? as u64, expires_ms: (expires != NEVER_EXPIRES_MS).then_some(expires), max_seats: r.get(4)?, used_seats: r.get(5)?, revoked: r.get(6)? })
                 })?
                 .collect::<Result<Vec<_>, _>>()
         }).await.map_err(|_| AccessError::Storage)
@@ -336,6 +360,29 @@ mod tests {
             access.authenticate(&admission.credential, 3000).await,
             Err(AccessError::Denied)
         );
+    }
+
+    #[tokio::test]
+    async fn invitation_labels_are_bounded_and_listed_without_affecting_secrets() {
+        let (_dir, access) = fixture().await;
+        let invite = access
+            .issue_labeled(1000, 1000 + HOUR, 1, "  Family room tablet  ")
+            .await
+            .unwrap();
+        let listed = access.list().await.unwrap();
+        assert_eq!(listed[0].label, "Family room tablet");
+        assert_eq!(listed[0].created_ms, 1000);
+        assert!(
+            !serde_json::to_string(&listed)
+                .unwrap()
+                .contains(&invite.code)
+        );
+        assert!(matches!(
+            access
+                .issue_labeled(1000, 1000 + HOUR, 1, &"x".repeat(81))
+                .await,
+            Err(AccessError::InvalidSettings)
+        ));
     }
 
     #[tokio::test]

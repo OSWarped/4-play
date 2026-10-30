@@ -1,190 +1,66 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>4-Play Admin/Producer</title>
-    <link rel="stylesheet" href="/admin/styles.css" />
-  </head>
-  <body>
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>4-Play Admin</title><link rel="stylesheet" href="/admin/styles.css" /></head>
+<body>
+<div class="admin-shell">
+  <aside class="sidebar" aria-label="Admin navigation">
+    <div class="brand"><span class="brand-mark">4P</span><div><strong>4-Play</strong><small>Administration</small></div></div>
+    <nav id="admin-navigation">
+      <button type="button" data-view="overview" aria-current="page"><span>Overview</span></button>
+      <button type="button" data-view="sessions"><span>Sessions</span><span id="nav-session-count" class="nav-count">0</span></button>
+      <button type="button" data-view="library"><span>Library</span></button>
+      <button type="button" data-view="access"><span>Access</span></button>
+      <button type="button" data-view="system"><span>System</span></button>
+    </nav>
+    <div class="sidebar-footer"><span id="connection-dot" class="status-dot"></span><span id="connection-label">Not connected</span></div>
+  </aside>
+  <div class="workspace">
     <header class="topbar">
-      <div>
-        <p class="eyebrow">4-Play</p>
-        <h1>Admin / Producer Console</h1>
-      </div>
-      <div class="token-panel">
-        <label for="api-token">API token</label>
-        <input id="api-token" type="password" autocomplete="off" placeholder="Bearer token" />
-        <label for="producer-destination">Producer IP</label>
-        <input id="producer-destination" type="text" placeholder="OBS/producer IP" />
-        <button id="save-token" type="button">Save</button>
-        <button id="refresh" type="button">Refresh</button>
-      </div>
+      <button id="mobile-menu" class="icon-button mobile-only" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+      <div><p class="eyebrow" id="view-eyebrow">Operations</p><h1 id="view-title">Overview</h1></div>
+      <div class="topbar-actions"><span id="last-updated" class="muted">Not updated</span><button id="refresh" class="secondary" type="button">Refresh</button><button id="open-connection" type="button">Connect</button></div>
     </header>
-
     <main>
-      <section class="grid summary-grid" aria-label="System summary">
-        <article class="card metric">
-          <span class="label">Health</span>
-          <strong id="health-status">Unknown</strong>
-        </article>
-        <article class="card metric">
-          <span class="label">Runtime hosts</span>
-          <strong id="host-count">0</strong>
-        </article>
-        <article class="card metric">
-          <span class="label">Active sessions</span>
-          <strong id="active-session-count">0</strong>
-        </article>
-        <article class="card metric">
-          <span class="label">Visible games</span>
-          <strong id="game-count">0</strong>
-        </article>
-        <article class="card metric">
-          <span class="label">WebRTC</span>
-          <strong id="webrtc-status">Unknown</strong>
-        </article>
+      <section class="admin-view is-active" data-admin-view="overview">
+        <div id="overview-alert" class="notice" role="status">Connect with an Admin token to load system status.</div>
+        <section class="grid summary-grid" aria-label="System summary">
+          <article class="card metric"><span class="label">Health</span><strong id="health-status">Unknown</strong></article>
+          <article class="card metric"><span class="label">Runtime hosts</span><strong id="host-count">0</strong></article>
+          <article class="card metric"><span class="label">Active sessions</span><strong id="active-session-count">0</strong></article>
+          <article class="card metric"><span class="label">Visible games</span><strong id="game-count">0</strong></article>
+          <article class="card metric"><span class="label">WebRTC</span><strong id="webrtc-status">Unknown</strong></article>
+        </section>
+        <section class="card"><div class="section-heading"><div><p class="eyebrow">Playing now</p><h2>Live sessions</h2></div><button class="quiet" type="button" data-go-view="sessions">Manage sessions</button></div><div id="overview-sessions" class="stack muted">No sessions loaded.</div></section>
       </section>
-
-      <section class="card" id="user-token-panel">
-        <div class="section-heading">
-          <div><p class="eyebrow">Remote access</p><h2>User tokens</h2></div>
-          <button id="refresh-user-tokens" type="button">Refresh tokens</button>
+      <section class="admin-view" data-admin-view="sessions" hidden>
+        <div class="master-detail sessions-layout">
+          <section class="card"><div class="section-heading"><div><p class="eyebrow">Gameplay</p><h2>Active sessions</h2></div></div><div id="active-sessions" class="stack muted">No active sessions loaded.</div></section>
+          <section class="card detail-card"><div class="section-heading"><div><p class="eyebrow">Session workspace</p><h2>Details &amp; production</h2></div></div><div id="production" class="stack"><div class="empty-state"><strong>Select a session</strong><p>Inspect players, create a production feed, take notes, or stop gameplay.</p></div></div></section>
         </div>
-        <p>Create a one-time invitation token for a remote user. The secret is shown only once; revoking it also signs out browsers enrolled with it.</p>
-        <div class="token-creator">
-          <label>Lifetime
-            <select id="user-token-lifetime">
-              <option value="24">24 hours</option>
-              <option value="168">7 days</option>
-              <option value="720">30 days</option>
-              <option value="2160">90 days</option>
-              <option value="8760">1 year</option>
-              <option value="forever">Never expires</option>
-            </select>
-          </label>
-          <label>Users / browsers <input id="user-token-seats" type="number" min="1" max="8" value="1" /></label>
-          <button id="create-user-token" type="button">Create token</button>
+        <section class="card compact-section"><details><summary>Session diagnostics</summary><div id="diagnostics" class="stack muted">No diagnostics loaded.</div></details></section>
+      </section>
+      <section class="admin-view" data-admin-view="library" hidden>
+        <div class="library-toolbar"><input id="game-filter" type="search" placeholder="Search games" aria-label="Search games" /><button id="open-game-import" type="button">Add game</button></div>
+        <div class="master-detail library-layout">
+          <section class="card"><div class="section-heading"><div><p class="eyebrow">Catalog</p><h2>Games</h2></div></div><div id="games" class="game-grid muted">No games loaded.</div></section>
+          <section class="card detail-card"><div class="section-heading"><div><p class="eyebrow">Selected game</p><h2>Game details</h2></div></div><div id="game-editor" class="metadata-editor muted"><div class="empty-state"><strong>Select a game</strong><p>Edit metadata, artwork, player labels, and media.</p></div></div></section>
         </div>
-        <div id="new-user-token" class="token-result" hidden></div>
-        <div id="user-tokens" class="stack muted">Save your Admin token and refresh.</div>
       </section>
-
-      <section class="card" id="game-import-panel">
-        <div class="section-heading"><div><p class="eyebrow">Library intake</p><h2>Add a game</h2></div></div>
-        <p>Select a game archive or a folder of files you own. MAME identifies required parent sets, BIOS/device ROMs, CHDs, and optional sound samples. Nothing is downloaded or overwritten.</p>
-        <fieldset disabled>
-          <label>Choose files <input type="file" id="game-import-files" multiple accept=".zip,.7z,.chd" /></label>
-          <label>Or choose a folder <input type="file" id="game-import-folder" webkitdirectory multiple /></label>
-          <label>Optional WAV sample packs (not QSound/BIOS) <input type="file" id="game-import-samples" multiple accept=".zip" /></label>
-          <label>Game / MAME short name <input id="game-import-name" type="text" list="game-import-names" placeholder="aof, msh, kinst2…" /></label>
-          <datalist id="game-import-names"></datalist>
-          <p class="muted">For a folder, choose one game from the short-name list. Parent and BIOS archives stay available as dependencies; they are not separate catalog entries. Large audits can take time—prefer a quiet maintenance window.</p>
-          <div class="form-actions">
-            <button id="game-import-inspect" type="button">1. Inspect dependencies</button>
-            <button id="game-import-upload" type="button">2. Upload matching files &amp; audit</button>
-            <button id="game-import-install" type="button" disabled>3. Install verified game</button>
-            <button id="game-import-discard" type="button">Discard staged copies</button>
-          </div>
-        </fieldset>
-        <pre id="game-import-result" role="status" style="white-space:pre-wrap;overflow-wrap:anywhere">Save your Admin token and refresh to check upload availability.</pre>
+      <section class="admin-view" data-admin-view="access" hidden>
+        <section class="card" id="user-token-panel"><div class="section-heading"><div><p class="eyebrow">Remote access</p><h2>User access</h2></div><button id="create-user-token" type="button">Create access</button></div><p class="muted">Issue revocable invitations for remote players. Secrets are shown once and never stored in readable form.</p><div id="new-user-token" class="token-result" hidden></div><div id="user-tokens" class="stack muted">Connect to load user access.</div></section>
       </section>
-
-      <section class="layout">
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Operations</p>
-              <h2>Runtime Hosts</h2>
-            </div>
-          </div>
-          <div id="hosts" class="stack muted">No hosts loaded.</div>
-        </article>
-
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Sessions</p>
-              <h2>Active Sessions</h2>
-            </div>
-          </div>
-          <div id="active-sessions" class="stack muted">No active sessions loaded.</div>
-        </article>
-      </section>
-
-      <section class="layout">
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Library</p>
-              <h2>Catalog</h2>
-            </div>
-            <input id="game-filter" type="search" placeholder="Filter games" />
-          </div>
-          <div id="games" class="game-grid muted">No games loaded.</div>
-          <div id="game-editor" class="metadata-editor muted">
-            Select a game to edit its metadata.
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Production</p>
-              <h2>Spectator Feed</h2>
-            </div>
-          </div>
-          <div id="production" class="stack">
-            <p>
-              Select an active session to inspect its media/input ports and open a production
-              spectator workflow.
-            </p>
-            <p class="muted">
-              Production spectator grants do not reserve player slots. Use the generated media
-              target in OBS, ffplay, or another receiver.
-            </p>
-          </div>
-        </article>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Diagnostics</p>
-            <h2>Session Health</h2>
-          </div>
-        </div>
-        <div id="diagnostics" class="stack muted">No diagnostics loaded.</div>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Operations</p>
-            <h2>Phase 3 Runbook</h2>
-          </div>
-        </div>
-        <div id="operations-runbook" class="stack"></div>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Diagnostics</p>
-            <h2>Recent API snapshot</h2>
-          </div>
-        </div>
-        <pre id="snapshot">{}</pre>
+      <section class="admin-view" data-admin-view="system" hidden>
+        <section class="card"><div class="section-heading"><div><p class="eyebrow">Infrastructure</p><h2>Runtime hosts</h2></div></div><div id="hosts" class="stack muted">No hosts loaded.</div></section>
+        <section class="card advanced-section"><details><summary>Operations runbook</summary><div id="operations-runbook" class="stack"></div></details></section>
+        <section class="card advanced-section"><details><summary>Recent API snapshot</summary><pre id="snapshot">{}</pre></details></section>
       </section>
     </main>
-
-    <template id="empty-template">
-      <p class="muted">Nothing to show.</p>
-    </template>
-
-    <script src="/admin/asset-upload.js" defer></script>
-    <script src="/admin/game-import.js" defer></script>
-    <script src="/admin/metadata-provider.js" defer></script>
-    <script src="/admin/app.js" defer></script>
-  </body>
-</html>
+  </div>
+</div>
+<dialog id="connection-dialog"><form method="dialog" class="dialog-card"><div class="section-heading"><div><p class="eyebrow">Connection</p><h2>Admin access</h2></div><button class="icon-button" value="cancel" aria-label="Close">×</button></div><p class="muted">The token stays in this browser and is sent only to this 4-Play server.</p><label class="field"><span>Admin API token</span><input id="api-token" type="password" autocomplete="off" placeholder="Bearer token" /></label><div class="form-actions"><button id="save-token" type="button">Save and connect</button><button class="secondary" value="cancel">Cancel</button></div></form></dialog>
+<dialog id="user-token-dialog"><form method="dialog" class="dialog-card"><div class="section-heading"><div><p class="eyebrow">Remote access</p><h2>Create user access</h2></div><button class="icon-button" value="cancel" aria-label="Close">×</button></div><label class="field"><span>Name or note</span><input id="user-token-label" maxlength="80" placeholder="Mike – tournament tablet" /></label><label class="field"><span>Expiration</span><select id="user-token-lifetime"><option value="24">24 hours</option><option value="168">7 days</option><option value="720">30 days</option><option value="2160">90 days</option><option value="8760">1 year</option><option value="forever">Never expires</option></select></label><label class="field"><span>Browser enrollments</span><input id="user-token-seats" type="number" min="1" max="8" value="1" /></label><p class="muted">Each enrollment authorizes one browser. Clearing browser data consumes another enrollment.</p><div class="form-actions"><button id="confirm-create-user-token" type="button">Create access</button><button class="secondary" value="cancel">Cancel</button></div></form></dialog>
+<dialog id="game-import-dialog" class="wide-dialog"><section class="dialog-card card" id="game-import-panel"><div class="section-heading"><div><p class="eyebrow">Library intake</p><h2>Add a game</h2></div><button id="close-game-import" class="icon-button" type="button" aria-label="Close">×</button></div><p>Select an archive or folder you own. MAME checks parent sets, BIOS/device ROMs, CHDs, and optional sound samples.</p><fieldset disabled><label>Choose files <input type="file" id="game-import-files" multiple accept=".zip,.7z,.chd" /></label><label>Or choose a folder <input type="file" id="game-import-folder" webkitdirectory multiple /></label><label>Optional WAV sample packs <input type="file" id="game-import-samples" multiple accept=".zip" /></label><label>Game / MAME short name <input id="game-import-name" type="text" list="game-import-names" placeholder="aof, msh, kinst2…" /></label><datalist id="game-import-names"></datalist><p class="muted">Choose one short name for a folder. Large audits can take time—prefer a quiet maintenance window.</p><div class="form-actions"><button id="game-import-inspect" type="button">1. Inspect</button><button id="game-import-upload" type="button">2. Upload &amp; audit</button><button id="game-import-install" type="button" disabled>3. Install</button><button id="game-import-discard" class="secondary" type="button">Discard</button></div></fieldset><pre id="game-import-result" role="status">Connect and refresh to check import availability.</pre></section></dialog>
+<div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+<template id="empty-template"><div class="empty-state"><strong>Nothing to show</strong><p>No matching items are available.</p></div></template>
+<script src="/admin/asset-upload.js" defer></script><script src="/admin/game-import.js" defer></script><script src="/admin/metadata-provider.js" defer></script><script src="/admin/app.js" defer></script>
+</body></html>
