@@ -160,7 +160,7 @@
       return Number.isInteger(count) && count >= 0 && count <= 6 ? count : null;
     }
 
-    static markup(count) {
+    static markup(count, floating = false) {
       const button = (label, codes, group, title = label) => `<button type="button" data-touch-keys="${codes}" data-touch-group="${group}" aria-label="${title}" aria-pressed="false">${label}</button>`;
       const cells = [
         ["↖", "KeyW KeyA", "Up left"], ["↑", "KeyW", "Up"], ["↗", "KeyW KeyD", "Up right"],
@@ -168,7 +168,10 @@
         ["↙", "KeyS KeyA", "Down left"], ["↓", "KeyS", "Down"], ["↘", "KeyS KeyD", "Down right"],
       ];
       const actions = ["KeyJ", "KeyK", "KeyL", "KeyM", "Comma", "Period"];
-      return `<div class="touch-dpad" role="group" aria-label="Directional pad">${cells.map(([label, codes, title]) => button(label, codes, "direction", title)).join("")}</div>
+      const direction = floating
+        ? '<div class="touch-stick-zone" data-touch-stick role="group" aria-label="Floating directional control"><div class="touch-stick-ring"><span class="touch-stick-knob"></span></div></div>'
+        : `<div class="touch-dpad" role="group" aria-label="Directional pad">${cells.map(([label, codes, title]) => button(label, codes, "direction", title)).join("")}</div>`;
+      return `${direction}
         <div class="touch-right"><div class="touch-system">${button("Coin", "Digit1", "system")}${button("Start", "Digit2", "system")}</div>
         <div class="touch-attacks" role="group" aria-label="Action buttons">${actions.slice(0, count ?? 0).map((code, index) => button(String(index + 1), code, "attack", `Action ${index + 1}`)).join("")}</div>
         ${count === null ? '<small>Action-button count unavailable. Refresh and rejoin.</small>' : ""}</div>`;
@@ -178,6 +181,7 @@
       this.input = input;
       this.panel = panel;
       this.count = TouchControls.buttonCount(count);
+      this.floating = panel.dataset?.touchLayout === "floating";
       this.active = new Map();
       this.running = false;
       this.handlers = {
@@ -197,7 +201,7 @@
     start() {
       if (this.running || !TouchControls.supported(this.input.env)) return;
       this.running = true;
-      this.panel.innerHTML = TouchControls.markup(this.count);
+      this.panel.innerHTML = TouchControls.markup(this.count, this.floating);
       this.panel.hidden = false;
       this.input.surface.classList?.add("touch-gameplay-active");
       for (const name of this.guardEvents) {
@@ -213,12 +217,23 @@
 
     down(event) {
       const button = this.target(event.target);
-      if (!this.running || !button || (event.pointerType === "mouse" && event.button !== 0)) return;
+      const stick = this.floating && event.target?.closest?.("[data-touch-stick]");
+      if (!this.running || (!button && !stick) || (event.pointerType === "mouse" && event.button !== 0)) return;
       event.preventDefault();
       this.panel.focus({ preventScroll: true });
       try { this.panel.setPointerCapture(event.pointerId); } catch { return; }
-      this.active.set(event.pointerId, { button, group: button.dataset.touchGroup });
-      this.input.setTouch(event.pointerId, button.dataset.touchKeys.split(" "));
+      if (stick) {
+        const rect = stick.getBoundingClientRect();
+        const origin = { x: event.clientX, y: event.clientY };
+        const ring = stick.querySelector(".touch-stick-ring");
+        ring.style.left = `${origin.x - rect.left}px`; ring.style.top = `${origin.y - rect.top}px`;
+        stick.classList.add("is-active");
+        this.active.set(event.pointerId, { button: null, group: "direction", stick, ring, origin });
+        this.input.setTouch(event.pointerId, []);
+      } else {
+        this.active.set(event.pointerId, { button, group: button.dataset.touchGroup });
+        this.input.setTouch(event.pointerId, button.dataset.touchKeys.split(" "));
+      }
       this.paint();
     }
 
@@ -226,6 +241,22 @@
       const held = this.active.get(event.pointerId);
       if (!held) return;
       event.preventDefault();
+      if (held.stick) {
+        const dx = event.clientX - held.origin.x, dy = event.clientY - held.origin.y;
+        const distance = Math.hypot(dx, dy), deadzone = 14, radius = 36;
+        const scale = distance > radius ? radius / distance : 1;
+        held.ring.querySelector(".touch-stick-knob").style.transform = `translate(${dx * scale}px, ${dy * scale}px)`;
+        const codes = [];
+        if (distance >= deadzone) {
+          const threshold = .38;
+          if (dx / distance < -threshold) codes.push("KeyA");
+          if (dx / distance > threshold) codes.push("KeyD");
+          if (dy / distance < -threshold) codes.push("KeyW");
+          if (dy / distance > threshold) codes.push("KeyS");
+        }
+        this.input.setTouch(event.pointerId, codes);
+        return;
+      }
       const hit = this.target(this.input.env.document.elementFromPoint(event.clientX, event.clientY));
       // A thumb can slide through diagonals or action buttons without lifting,
       // but cannot accidentally become Coin/Start or cross to the other hand.
@@ -235,8 +266,13 @@
     }
 
     up(event) {
-      if (!this.active.delete(event.pointerId)) return;
+      const held = this.active.get(event.pointerId);
+      if (!held || !this.active.delete(event.pointerId)) return;
       this.input.setTouch(event.pointerId, []);
+      if (held.stick) {
+        held.stick.classList.remove("is-active");
+        held.ring.querySelector(".touch-stick-knob").style.transform = "translate(0, 0)";
+      }
       try { this.panel.releasePointerCapture(event.pointerId); } catch { /* Already cancelled. */ }
       this.paint();
     }
@@ -248,6 +284,12 @@
 
     reset() {
       const pointers = [...this.active.keys()];
+      for (const held of this.active.values()) {
+        if (held.stick) {
+          held.stick.classList.remove("is-active");
+          held.ring.querySelector(".touch-stick-knob").style.transform = "translate(0, 0)";
+        }
+      }
       this.active.clear();
       for (const id of pointers) { try { this.panel.releasePointerCapture(id); } catch { /* No capture. */ } }
       this.paint();

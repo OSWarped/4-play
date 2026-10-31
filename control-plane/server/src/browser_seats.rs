@@ -116,6 +116,10 @@ fn browser_router(
             .route("/client-v4/", get(minimal_index))
             .route("/client-v4/experience.js", get(minimal_script))
             .route("/client-v4/styles.css", get(minimal_styles))
+            .route("/client-v5", get(floating_index))
+            .route("/client-v5/", get(floating_index))
+            .route("/client-v5/experience.js", get(floating_script))
+            .route("/client-v5/styles.css", get(floating_styles))
             .route("/client-v2/bootstrap", post(bootstrap))
             .route("/client-v2/webrtc-config", get(media_config))
             .route(
@@ -274,12 +278,15 @@ fn grid_html() -> String {
         .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v3/styles.css\" /></head>")
         .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v3/experience.js\" defer></script>\n<script src=\"/client/app.js\"")
 }
-async fn minimal_index() -> Response {
-    let html = grid_html()
+fn minimal_html() -> String {
+    grid_html()
         .replace("data-client-layout=\"grid\"", "data-client-layout=\"grid\" data-client-skin=\"minimal\"")
         .replace("4-Play Arcade | V3", "4-Play Arcade | V4")
         .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v4/styles.css\" /></head>")
-        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v4/experience.js\" defer></script>\n<script src=\"/client/app.js\"");
+        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v4/experience.js\" defer></script>\n<script src=\"/client/app.js\"")
+}
+async fn minimal_index() -> Response {
+    let html = minimal_html();
     protected_response(([("content-type", "text/html; charset=utf-8")], html).into_response())
 }
 async fn minimal_script() -> Response {
@@ -292,6 +299,27 @@ async fn minimal_styles() -> Response {
     super::static_response(
         "text/css; charset=utf-8",
         include_str!("../static/client-v4/styles.css"),
+    )
+}
+
+async fn floating_index() -> Response {
+    let html = minimal_html()
+        .replace("data-client-version=\"2\"", "data-client-version=\"5\"")
+        .replace("4-Play Arcade | V4", "4-Play Arcade | V5")
+        .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v5/styles.css\" /></head>")
+        .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v5/experience.js\" defer></script>\n<script src=\"/client/app.js\"");
+    protected_response(([("content-type", "text/html; charset=utf-8")], html).into_response())
+}
+async fn floating_script() -> Response {
+    super::static_response(
+        "text/javascript; charset=utf-8",
+        include_str!("../static/client-v5/experience.js"),
+    )
+}
+async fn floating_styles() -> Response {
+    super::static_response(
+        "text/css; charset=utf-8",
+        include_str!("../static/client-v5/styles.css"),
     )
 }
 async fn grid_script() -> Response {
@@ -1223,6 +1251,10 @@ mod tests {
             "/client-v4/",
             "/client-v4/experience.js",
             "/client-v4/styles.css",
+            "/client-v5",
+            "/client-v5/",
+            "/client-v5/experience.js",
+            "/client-v5/styles.css",
         ] {
             let response = app
                 .clone()
@@ -1259,6 +1291,17 @@ mod tests {
                 );
                 assert!(
                     text.find("/client-v4/experience.js").unwrap()
+                        < text.find("/client/app.js").unwrap()
+                );
+            }
+            if path.ends_with("v5") || path.ends_with("v5/") {
+                assert!(text.contains("data-client-version=\"5\""));
+                assert!(
+                    text.find("/client-v4/experience.js").unwrap()
+                        < text.find("/client-v5/experience.js").unwrap()
+                );
+                assert!(
+                    text.find("/client-v5/experience.js").unwrap()
                         < text.find("/client/app.js").unwrap()
                 );
             }

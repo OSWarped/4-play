@@ -1,0 +1,55 @@
+/* V5 mobile landscape experiment: toolbar above, controls over the video. */
+@media (orientation: landscape) and (any-pointer: coarse) {
+  body[data-client-version="5"].browser-playing #browser-player {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: calc(100svh - 1rem);
+    padding: .4rem;
+    gap: .35rem;
+  }
+  body[data-client-version="5"].browser-playing .player-toolbar {
+    grid-row: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    min-height: 44px;
+    margin: 0;
+    z-index: 4;
+  }
+  body[data-client-version="5"].browser-playing .player-toolbar > div:first-child { display: none; }
+  body[data-client-version="5"].browser-playing .player-controls { display: flex; flex-wrap: nowrap; width: 100%; gap: .35rem; }
+  body[data-client-version="5"].browser-playing .player-controls button { flex: 1; min-height: 42px; padding: .35rem .45rem; }
+  body[data-client-version="5"].browser-playing .browser-video-stage,
+  body[data-client-version="5"].browser-playing .touch-controls {
+    grid-row: 2;
+    grid-column: 1;
+  }
+  body[data-client-version="5"].browser-playing .browser-video-stage { min-height: 0; }
+  body[data-client-version="5"].browser-playing .browser-player video,
+  body[data-client-version="5"].browser-playing .browser-player:fullscreen video {
+    width: 100%; height: 100%; min-height: 0; max-height: none; aspect-ratio: auto; object-fit: contain;
+  }
+  body[data-client-version="5"].browser-playing .touch-controls {
+    position: relative; z-index: 3; display: grid; grid-template-columns: minmax(45%,1fr) auto;
+    align-items: stretch; padding: .5rem max(.6rem,env(safe-area-inset-right)) .5rem max(.6rem,env(safe-area-inset-left));
+    pointer-events: none;
+  }
+  body[data-client-version="5"].browser-playing .touch-controls[hidden] { display: none; }
+  body[data-client-version="5"].browser-playing .touch-stick-zone { position: relative; min-width: 12rem; pointer-events: auto; }
+  body[data-client-version="5"].browser-playing .touch-stick-ring {
+    position: absolute; left: 28%; top: 62%; width: 7rem; height: 7rem; transform: translate(-50%,-50%);
+    border: 2px solid #d7fff066; border-radius: 50%; background: #07131f38; opacity: .58;
+  }
+  body[data-client-version="5"].browser-playing .touch-stick-zone.is-active .touch-stick-ring { opacity: .9; }
+  body[data-client-version="5"].browser-playing .touch-stick-knob {
+    position: absolute; left: 50%; top: 50%; width: 3.1rem; height: 3.1rem; margin: -1.55rem;
+    border-radius: 50%; background: #9ae3ccbb; border: 2px solid #effff8cc; will-change: transform;
+  }
+  body[data-client-version="5"].browser-playing .touch-right { align-self: end; pointer-events: auto; opacity: .72; }
+  body[data-client-version="5"].browser-playing .touch-right:has(button[aria-pressed="true"]) { opacity: .95; }
+  body[data-client-version="5"].browser-playing .touch-attacks { grid-template-columns: repeat(3,clamp(48px,8vh,62px)); }
+  body[data-client-version="5"].browser-playing .touch-system { margin-bottom: .2rem; }
+  body[data-client-version="5"].browser-playing #browser-input-state,
+  body[data-client-version="5"].browser-playing #browser-media-state,
+  body[data-client-version="5"].browser-playing #browser-receiver-stats { display: none; }
+}

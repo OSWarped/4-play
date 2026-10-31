@@ -3,13 +3,14 @@ const { test } = require("node:test");
 const Input = require("../control-plane/server/static/client/input.js");
 const Touch = Input.TouchControls;
 
-function setup(touch = true, count = 2) {
+function setup(touch = true, count = 2, layout = "fixed") {
   const messages = [], listeners = new Map(), windowListeners = new Map(), focusListeners = new Map();
   let hit = null, buttons = [], tick;
   const doc = { hidden: false, hasFocus: () => true, activeElement: null,
     elementFromPoint: () => hit, addEventListener() {}, removeEventListener() {} };
-  const panel = { hidden: true, captures: new Set(),
-    contains: (element) => buttons.includes(element), focus() { doc.activeElement = this; },
+  let stick = null;
+  const panel = { hidden: true, captures: new Set(), dataset: { touchLayout: layout },
+    contains: (element) => buttons.includes(element) || element === stick, focus() { doc.activeElement = this; },
     addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: (name) => listeners.delete(name),
     setPointerCapture(id) { this.captures.add(id); }, releasePointerCapture(id) { this.captures.delete(id); },
     querySelectorAll: () => buttons,
@@ -18,6 +19,12 @@ function setup(touch = true, count = 2) {
         dataset: { touchKeys: match[1], touchGroup: match[2] }, pressed: "false",
         closest() { return this; }, setAttribute(name, value) { this.pressed = value; },
       }));
+      if (value.includes("data-touch-stick")) {
+        const classes = new Set(), knob = { style: {} }, ring = { style: {}, querySelector: () => knob };
+        stick = { style: {}, classList: { add: n => classes.add(n), remove: n => classes.delete(n), contains: n => classes.has(n) },
+          closest(selector) { return selector === "[data-touch-stick]" ? this : null; },
+          getBoundingClientRect: () => ({ left: 0, top: 0 }), querySelector: () => ring };
+      }
     },
   };
   const classes = new Set();
@@ -32,10 +39,10 @@ function setup(touch = true, count = 2) {
   const input = new Input(channel, surface, env);
   input.bindTouch(panel, count); input.start();
   const button = (codes) => buttons.find((button) => button.dataset.touchKeys === codes);
-  const event = (id, target = null) => ({ pointerId: id, target, pointerType: "touch", preventDefault() {}, clientX: 1, clientY: 1 });
-  const fire = (name, id, target) => listeners.get(name)(event(id, target));
+  const event = (id, target = null, x = 1, y = 1) => ({ pointerId: id, target, pointerType: "touch", preventDefault() {}, clientX: x, clientY: y });
+  const fire = (name, id, target, x, y) => listeners.get(name)(event(id, target, x, y));
   return { input, panel, surface, doc, messages, button, fire, listeners, windowListeners, focusListeners,
-    tick: () => tick(), hit: (target) => { hit = target; }, buttons: () => buttons };
+    tick: () => tick(), hit: (target) => { hit = target; }, buttons: () => buttons, stick: () => stick };
 }
 
 test("capability detection and exact game action counts including six-button layout", () => {
@@ -121,4 +128,18 @@ test("active touch gameplay suppresses browser gestures and restores them on sto
   for (const name of ["dblclick", "selectstart", "dragstart", "contextmenu", "touchmove", "gesturestart", "gesturechange"]) {
     assert.equal(s.focusListeners.has(name), false, `${name} listener should be removed`);
   }
+});
+
+test("floating joystick uses touch origin, deadzone, eight directions, and neutral release", () => {
+  const s = setup(true, 4, "floating"), stick = s.stick();
+  assert.ok(stick); assert.match(Touch.markup(4, true), /touch-stick-zone/);
+  s.fire("pointerdown", 7, stick, 100, 100);
+  assert.equal(s.messages.at(-1).axis_x, 0); assert.equal(s.messages.at(-1).axis_y, 0);
+  s.fire("pointermove", 7, stick, 108, 106);
+  assert.equal(s.messages.at(-1).axis_x, 0); assert.equal(s.messages.at(-1).axis_y, 0);
+  s.fire("pointermove", 7, stick, 135, 65);
+  assert.equal(s.messages.at(-1).axis_x, 1); assert.equal(s.messages.at(-1).axis_y, -1);
+  s.fire("pointerup", 7, stick, 135, 65);
+  assert.equal(s.messages.at(-1).axis_x, 0); assert.equal(s.messages.at(-1).axis_y, 0);
+  assert.equal(stick.classList.contains("is-active"), false);
 });
