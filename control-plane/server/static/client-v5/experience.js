@@ -5,18 +5,15 @@
   const controls = document.querySelector("#touch-controls");
   if (controls) controls.dataset.touchLayout = "floating";
 
-  const games = new Map();
   const logoLoaders = new Map();
-  const originalSetCatalog = window.FourPlayV4?.setCatalog;
-  function addGameLogos() {
-    const cards = [...document.querySelectorAll("#games .game-cover")];
+  function addGameLogos(selection, cards) {
     const connected = new Set(cards);
     for (const [card, loader] of logoLoaders) {
       if (!connected.has(card)) { loader.clear(); logoLoaders.delete(card); }
     }
-    for (const card of cards) {
-      const game = games.get(card.dataset.gameId);
-      if (!game?.metadata?.logo_path || logoLoaders.has(card)) continue;
+    cards.forEach((card, index) => {
+      const game = selection.games[index];
+      if (!game?.metadata?.logo_path || logoLoaders.has(card)) return;
       const logo = document.createElement("img");
       logo.className = "v5-game-logo"; logo.alt = ""; logo.hidden = true;
       card.append(logo);
@@ -28,18 +25,16 @@
         logo.onerror = () => { logo.hidden = true; card.classList.remove("has-game-logo"); };
         logo.src = url;
       }, "logo");
-    }
+    });
   }
-  if (window.FourPlayV4) {
-    window.FourPlayV4.setCatalog = (catalog, sessions) => {
-      games.clear();
-      for (const game of catalog) games.set(game.id, game);
-      const result = originalSetCatalog?.(catalog, sessions);
-      queueMicrotask(addGameLogos);
+  if (window.FourPlayV2) {
+    const originalUpdateCovers = window.FourPlayV2.updateCovers;
+    window.FourPlayV2.updateCovers = (selection, cards) => {
+      const result = originalUpdateCovers?.(selection, cards);
+      addGameLogos(selection, cards);
       return result;
     };
   }
-  new MutationObserver(addGameLogos).observe(document.querySelector("#games"), { childList: true });
 
   const toolbar = document.querySelector(".v4-toolbar");
   const brand = document.createElement("div");
