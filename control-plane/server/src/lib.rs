@@ -398,6 +398,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/admin/capture", get(admin_capture))
         .route("/admin/capture.js", get(admin_capture_script))
         .route("/admin/styles.css", get(admin_styles))
+        .route("/admin/app-logo.png", get(admin_logo))
         .route("/client", get(client_index))
         .route("/client/", get(client_index))
         .route("/client/app.js", get(client_script))
@@ -516,6 +517,14 @@ async fn admin_styles() -> Response {
         "text/css; charset=utf-8",
         include_str!("../static/admin/styles.css"),
     )
+}
+
+async fn admin_logo() -> Response {
+    (
+        [("content-type", "image/png")],
+        Body::from(include_bytes!("../static/client-v5/app-logo.png").as_slice()),
+    )
+        .into_response()
 }
 
 async fn client_index() -> Response {
@@ -2493,6 +2502,8 @@ mod tests {
             request_bytes(service.clone(), Method::GET, "/admin/capture").await;
         let (capture_script_status, capture_script_content_type, capture_script_body) =
             request_bytes(service.clone(), Method::GET, "/admin/capture.js").await;
+        let (logo_status, logo_content_type, logo_body) =
+            request_bytes(service.clone(), Method::GET, "/admin/app-logo.png").await;
         let (styles_status, styles_content_type, styles_body) =
             request_bytes(service, Method::GET, "/admin/styles.css").await;
 
@@ -2507,6 +2518,10 @@ mod tests {
         assert!(index_body.contains("data-admin-view=\"access\""));
         assert!(index_body.contains("/admin/asset-upload.js"));
         assert!(index_body.contains("/admin/metadata-provider.js"));
+        assert!(index_body.contains("/admin/app-logo.png"));
+        assert_eq!(logo_status, 200);
+        assert_eq!(logo_content_type.as_deref(), Some("image/png"));
+        assert!(logo_body.starts_with(b"\x89PNG\r\n\x1a\n"));
         assert_eq!(provider_status, 200);
         assert!(
             String::from_utf8(provider_body)
