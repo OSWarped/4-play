@@ -304,7 +304,7 @@ async fn minimal_styles() -> Response {
 
 async fn floating_index() -> Response {
     let html = minimal_html()
-        .replace("data-client-version=\"2\"", "data-client-version=\"5\"")
+        .replace("data-client-skin=\"minimal\"", "data-client-skin=\"minimal\" data-client-generation=\"5\"")
         .replace("4-Play Arcade | V4", "4-Play Arcade | V5")
         .replace("</head>", "<link rel=\"stylesheet\" href=\"/client-v5/styles.css\" /></head>")
         .replace("<script src=\"/client/app.js\"", "<script src=\"/client-v5/experience.js\" defer></script>\n<script src=\"/client/app.js\"");
@@ -1295,7 +1295,8 @@ mod tests {
                 );
             }
             if path.ends_with("v5") || path.ends_with("v5/") {
-                assert!(text.contains("data-client-version=\"5\""));
+                assert!(text.contains("data-client-version=\"2\""));
+                assert!(text.contains("data-client-generation=\"5\""));
                 assert!(
                     text.find("/client-v4/experience.js").unwrap()
                         < text.find("/client-v5/experience.js").unwrap()
