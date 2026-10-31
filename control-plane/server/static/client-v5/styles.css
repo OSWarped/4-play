@@ -52,13 +52,11 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { backgroun
 .v5-attract header small { letter-spacing: .22em; color: #d6e2deaa; }
 .v5-attract-brand { display: block; width: clamp(7rem,12vw,11rem); max-height: 7rem; object-fit: contain; }
 .v5-attract-copy { position: absolute; left: max(7vw,env(safe-area-inset-left)); bottom: max(10vh,env(safe-area-inset-bottom)); max-width: min(42rem,80vw); }
-.v5-attract-kicker { margin: 0 0 .8rem; color: var(--v5-mint); font-weight: 850; letter-spacing: .18em; font-size: .78rem; }
-.v5-attract-kicker.is-live { color: var(--v5-live); }
 .v5-attract h1 { margin: 0; font-size: clamp(2.7rem,7vw,6.7rem); line-height: .94; letter-spacing: -.045em; text-wrap: balance; }
 .v5-attract-game-logo { display: block; width: auto; height: auto; max-width: min(38rem,72vw); max-height: 28vh; object-fit: contain; object-position: left center; filter: drop-shadow(0 .6rem 1.2rem #000b); }
 .v5-attract-game-logo[hidden] { display: none; }
-.v5-attract-meta { min-height: 1.4em; margin: 1rem 0 1.5rem; color: #d7e1de; font-size: clamp(.95rem,1.6vw,1.2rem); }
-.v5-attract button { min-height: 48px; padding: .8rem 1.25rem; color: #07110d; background: var(--v5-mint); border: 0; font-weight: 800; }
+.v5-attract-meta { max-width: 38rem; margin: 1.25rem 0 0; color: #d7e1de; font-size: clamp(.95rem,1.6vw,1.2rem); line-height: 1.55; text-wrap: pretty; }
+.v5-attract-meta[hidden] { display: none; }
 .v5-attract-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--v5-mint); }
 .v5-attract.is-changing .v5-attract-progress { animation: v5-progress 10s linear both; }
 .v5-attract.is-changing .v5-attract-copy { animation: v5-copy-in 420ms ease-out both; }

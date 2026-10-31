@@ -6,6 +6,7 @@
   if (controls) controls.dataset.touchLayout = "floating";
 
   const logoLoaders = new Map();
+  const games = new Map();
   function addGameLogos(selection, cards) {
     const connected = new Set(cards);
     for (const [card, loader] of logoLoaders) {
@@ -13,6 +14,7 @@
     }
     cards.forEach((card, index) => {
       const game = selection.games[index];
+      if (game) games.set(game.id, game);
       if (!game?.metadata?.logo_path || logoLoaders.has(card)) return;
       const logo = document.createElement("img");
       logo.className = "v5-game-logo"; logo.alt = ""; logo.hidden = true;
@@ -49,13 +51,10 @@
   attract.innerHTML = `
     <img class="v5-attract-art" alt="" />
     <div class="v5-attract-wash"></div>
-    <header><img class="v5-attract-brand" src="/client-v5/app-logo.png" alt="4-Play" /><small>CONNECTED ARCADE</small></header>
     <div class="v5-attract-copy">
-      <p class="v5-attract-kicker">FEATURED GAME</p>
       <img class="v5-attract-game-logo" alt="" hidden />
       <h1>4-Play Arcade</h1>
       <p class="v5-attract-meta"></p>
-      <button type="button">Tap to browse</button>
     </div>
     <div class="v5-attract-progress" aria-hidden="true"></div>`;
   body.append(attract);
@@ -63,19 +62,21 @@
   const art = attract.querySelector(".v5-attract-art");
   const title = attract.querySelector("h1");
   const gameLogo = attract.querySelector(".v5-attract-game-logo");
-  const kicker = attract.querySelector(".v5-attract-kicker");
   const meta = attract.querySelector(".v5-attract-meta");
   let idleTimer = null, rotation = null, slide = 0, visible = false, gamepadState = "";
   const idleMs = new URLSearchParams(location.search).get("attract") === "1" ? 1500 : 45000;
 
   function slides() {
-    return [...document.querySelectorAll("#games .game-cover")].map(card => ({
-      title: card.querySelector(".cover-name")?.textContent?.trim() || "4-Play Arcade",
-      image: card.querySelector(".cover-art:not([hidden])")?.src || "",
-      logo: card.querySelector(".v5-game-logo:not([hidden])")?.src || "",
-      live: card.dataset.live === "true",
-      details: [...card.querySelectorAll(".cover-footer .pill")].map(node => node.textContent.trim()).filter(Boolean).join(" · "),
-    })).sort((a, b) => Number(b.live) - Number(a.live));
+    return [...document.querySelectorAll("#games .game-cover")].map(card => {
+      const game = games.get(card.dataset.gameId);
+      return {
+        title: card.querySelector(".cover-name")?.textContent?.trim() || "4-Play Arcade",
+        image: card.querySelector(".cover-art:not([hidden])")?.src || "",
+        logo: card.querySelector(".v5-game-logo:not([hidden])")?.src || "",
+        live: card.dataset.live === "true",
+        description: game?.metadata?.description?.trim() || "",
+      };
+    }).sort((a, b) => Number(b.live) - Number(a.live));
   }
 
   function renderSlide() {
@@ -84,14 +85,13 @@
     const value = available[slide++ % available.length];
     art.hidden = !value.image;
     if (value.image) art.src = value.image;
-    kicker.textContent = value.live ? "PLAYING NOW" : "FEATURED GAME";
-    kicker.classList.toggle("is-live", value.live);
     title.textContent = value.title;
     title.hidden = Boolean(value.logo);
     gameLogo.hidden = !value.logo;
     gameLogo.alt = value.logo ? value.title : "";
     if (value.logo) gameLogo.src = value.logo;
-    meta.textContent = value.live ? `${value.details || "Live session"} · Join the game` : value.details;
+    meta.textContent = value.description;
+    meta.hidden = !value.description;
     attract.classList.remove("is-changing");
     requestAnimationFrame(() => attract.classList.add("is-changing"));
   }
@@ -113,13 +113,12 @@
     idleTimer = setTimeout(enterAttract, idleMs);
   }
   function activity(event) {
-    if (visible && event?.target !== attract.querySelector("button")) event?.preventDefault?.();
+    if (visible) event?.preventDefault?.();
     exitAttract();
   }
   for (const name of ["pointerdown", "keydown", "touchstart", "wheel"]) {
     window.addEventListener(name, activity, { capture: true, passive: name !== "keydown" });
   }
-  attract.querySelector("button").addEventListener("click", exitAttract);
   document.addEventListener("visibilitychange", () => document.hidden ? exitAttract() : activity());
 
   // Browsers do not emit ordinary DOM events for controller activity.
