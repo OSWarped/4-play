@@ -120,6 +120,7 @@ fn browser_router(
             .route("/client-v5/", get(floating_index))
             .route("/client-v5/experience.js", get(floating_script))
             .route("/client-v5/styles.css", get(floating_styles))
+            .route("/client-v5/app-logo.png", get(floating_logo))
             .route("/client-v2/bootstrap", post(bootstrap))
             .route("/client-v2/webrtc-config", get(media_config))
             .route(
@@ -321,6 +322,13 @@ async fn floating_styles() -> Response {
         "text/css; charset=utf-8",
         include_str!("../static/client-v5/styles.css"),
     )
+}
+async fn floating_logo() -> Response {
+    (
+        [("content-type", "image/png")],
+        Body::from(include_bytes!("../static/client-v5/app-logo.png").as_slice()),
+    )
+        .into_response()
 }
 async fn grid_script() -> Response {
     super::static_response(
@@ -1255,6 +1263,7 @@ mod tests {
             "/client-v5/",
             "/client-v5/experience.js",
             "/client-v5/styles.css",
+            "/client-v5/app-logo.png",
         ] {
             let response = app
                 .clone()
@@ -1262,7 +1271,12 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let limit = if path.ends_with(".png") { 10 * 1024 * 1024 } else { 1024 * 1024 };
+            let bytes = to_bytes(response.into_body(), limit).await.unwrap();
+            if path.ends_with(".png") {
+                assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+                continue;
+            }
             let text = String::from_utf8(bytes.to_vec()).unwrap();
             assert!(!text.contains(SECRET));
             if path.ends_with("v2") || path.ends_with("v2/") {
