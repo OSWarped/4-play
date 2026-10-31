@@ -18,7 +18,7 @@
   }
   body[data-client-generation="5"].browser-playing .player-toolbar > div:first-child { display: none; }
   body[data-client-generation="5"].browser-playing .player-controls { display: flex; flex-wrap: nowrap; width: 100%; gap: .35rem; }
-  body[data-client-generation="5"].browser-playing .player-controls button { flex: 1; min-height: 42px; padding: .35rem .45rem; }
+  body[data-client-generation="5"].browser-playing .player-controls button { flex: 1; min-height: 46px; padding: .45rem .55rem; }
   body[data-client-generation="5"].browser-playing .browser-video-stage,
   body[data-client-generation="5"].browser-playing .touch-controls {
     grid-row: 2;
@@ -47,8 +47,10 @@
   }
   body[data-client-generation="5"].browser-playing .touch-right { align-self: end; pointer-events: auto; opacity: .72; }
   body[data-client-generation="5"].browser-playing .touch-right:has(button[aria-pressed="true"]) { opacity: .95; }
-  body[data-client-generation="5"].browser-playing .touch-attacks { grid-template-columns: repeat(3,clamp(48px,8vh,62px)); }
-  body[data-client-generation="5"].browser-playing .touch-system { margin-bottom: .2rem; }
+  body[data-client-generation="5"].browser-playing .touch-attacks { grid-template-columns: repeat(3,clamp(54px,10vh,70px)); gap: .5rem; }
+  body[data-client-generation="5"].browser-playing .touch-attacks button { font-size: 1rem; }
+  body[data-client-generation="5"].browser-playing .touch-system { margin-bottom: .35rem; gap: .45rem; }
+  body[data-client-generation="5"].browser-playing .touch-system button { min-width: 58px; min-height: 46px; padding: .45rem .65rem; }
   body[data-client-generation="5"].browser-playing #browser-input-state,
   body[data-client-generation="5"].browser-playing #browser-media-state,
   body[data-client-generation="5"].browser-playing #browser-receiver-stats { display: none; }
