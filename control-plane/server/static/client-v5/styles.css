@@ -1,18 +1,20 @@
 /* V5: modern arcade presentation over the proven V4 interaction model. */
 body[data-client-generation="5"] {
-  --v5-canvas: #080b0e; --v5-surface: #11161b; --v5-raised: #171e24;
-  --v5-text: #f2f5f4; --v5-muted: #8c9995; --v5-mint: #72e0b8; --v5-live: #ffb454;
+  --v5-canvas: #080b12; --v5-surface: #111620; --v5-raised: #171e29;
+  --v5-text: #fff4d6; --v5-muted: #9ba6b8; --v5-primary: #2f72ff;
+  --v5-primary-hover: #5b91ff; --v5-accent: #ffc83d; --v5-live: #ff4938;
   background: var(--v5-canvas); color: var(--v5-text);
 }
-body[data-client-generation="5"] .topbar { background: #080b0ef2; border-color: #ffffff0d; }
+body[data-client-generation="5"] .topbar { background: #080b12f2; border-color: #ffffff0d; }
 body[data-client-generation="5"] .v4-toolbar { max-width: 1720px; }
 .v5-brand { flex: 0 0 auto; width: clamp(4.4rem,7vw,6.2rem); height: 44px; margin-right: .35rem; }
 .v5-brand img { display: block; width: 100%; height: 100%; object-fit: contain; }
 body[data-client-generation="5"] #game-filter { background: #12181d; border: 1px solid #ffffff12; box-shadow: none; }
-body[data-client-generation="5"] #game-filter:focus { border-color: #72e0b877; outline: 2px solid #72e0b822; }
+body[data-client-generation="5"] #game-filter:focus { border-color: #2f72ff99; outline: 2px solid #2f72ff2e; }
 body[data-client-generation="5"] .v4-toolbar > button,
 body[data-client-generation="5"] .v4-filters summary { background: transparent; border-color: #ffffff18; }
-body[data-client-generation="5"] .v4-toolbar > button[aria-pressed="true"] { background: var(--v5-mint); color: #07110d; }
+body[data-client-generation="5"] .v4-toolbar > button[aria-pressed="true"] { background: var(--v5-primary); color: #fff; }
+body[data-client-generation="5"] .v4-toolbar > button[aria-pressed="true"]:hover { background: var(--v5-primary-hover); }
 body[data-client-generation="5"] main { padding-top: 1.5rem; }
 body[data-client-generation="5"] .game-rail { gap: clamp(.8rem,1.6vw,1.35rem); }
 body[data-client-generation="5"] .game-cover {
@@ -23,7 +25,7 @@ body[data-client-generation="5"] .game-cover::before { border-radius: .45rem; ba
 body[data-client-generation="5"] .game-cover .cover-art { border-radius: .45rem; }
 body[data-client-generation="5"] .game-cover::after {
   content: ""; display: block; position: absolute; inset: 45% 0 0; z-index: 1;
-  background: linear-gradient(transparent,#080b0ed9); pointer-events: none;
+  background: linear-gradient(transparent,#080b12d9); pointer-events: none;
 }
 body[data-client-generation="5"] .game-cover .cover-name {
   position: absolute; left: .75rem; right: .75rem; bottom: .65rem; z-index: 2;
@@ -42,12 +44,15 @@ body[data-client-generation="5"] .game-cover[data-live="true"]::before { box-sha
 body[data-client-generation="5"] .v4-game-panel { background: #10161b; border-color: #ffffff12; }
 body[data-client-generation="5"] .v4-game-panel #start-game,
 body[data-client-generation="5"] .v4-game-panel [data-inline-join],
-body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { background: var(--v5-mint); color: #07110d; }
+body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { background: var(--v5-primary); color: #fff; }
+body[data-client-generation="5"] .v4-game-panel #start-game:hover,
+body[data-client-generation="5"] .v4-game-panel [data-inline-join]:hover,
+body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin]:hover { background: var(--v5-primary-hover); }
 
-.v5-attract { position: fixed; inset: 0; z-index: 1000; overflow: hidden; color: #fff; background: #080b0e; }
+.v5-attract { position: fixed; inset: 0; z-index: 1000; overflow: hidden; color: #fff; background: #080b12; }
 .v5-attract[hidden] { display: none; }
 .v5-attract-art { position: absolute; inset: -3%; width: 106%; height: 106%; object-fit: cover; filter: saturate(.88) contrast(1.04); transform: scale(1.025); }
-.v5-attract-wash { position: absolute; inset: 0; background: linear-gradient(90deg,#06090bea 0%,#080b0ea8 43%,#080b0e20 75%), linear-gradient(0deg,#080b0ea8,transparent 52%); }
+.v5-attract-wash { position: absolute; inset: 0; background: linear-gradient(90deg,#060813ea 0%,#080b12a8 43%,#080b1220 75%), linear-gradient(0deg,#080b12a8,transparent 52%); }
 .v5-attract header { position: absolute; top: max(1.5rem,env(safe-area-inset-top)); left: max(1.5rem,env(safe-area-inset-left)); display: flex; align-items: center; gap: .8rem; }
 .v5-attract header small { letter-spacing: .22em; color: #d6e2deaa; }
 .v5-attract-brand { display: block; width: clamp(7rem,12vw,11rem); max-height: 7rem; object-fit: contain; }
@@ -57,7 +62,7 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { backgroun
 .v5-attract-game-logo[hidden] { display: none; }
 .v5-attract-meta { max-width: 38rem; margin: 1.25rem 0 0; color: #d7e1de; font-size: clamp(.95rem,1.6vw,1.2rem); line-height: 1.55; text-wrap: pretty; }
 .v5-attract-meta[hidden] { display: none; }
-.v5-attract-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--v5-mint); }
+.v5-attract-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--v5-accent); }
 .v5-attract.is-changing .v5-attract-progress { animation: v5-progress 10s linear both; }
 .v5-attract.is-changing .v5-attract-copy { animation: v5-copy-in 420ms ease-out both; }
 @keyframes v5-progress { from { width: 0; } to { width: 100%; } }
@@ -112,7 +117,7 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { backgroun
   body[data-client-generation="5"].browser-playing .touch-stick-zone.is-active .touch-stick-ring { opacity: .9; }
   body[data-client-generation="5"].browser-playing .touch-stick-knob {
     position: absolute; left: 50%; top: 50%; width: 3.1rem; height: 3.1rem; margin: -1.55rem;
-    border-radius: 50%; background: #9ae3ccbb; border: 2px solid #effff8cc; will-change: transform;
+    border-radius: 50%; background: #2f72ffb8; border: 2px solid #ffc83dcc; will-change: transform;
   }
   body[data-client-generation="5"].browser-playing .touch-right { align-self: end; pointer-events: auto; opacity: .72; }
   body[data-client-generation="5"].browser-playing .touch-right:has(button[aria-pressed="true"]) { opacity: .95; }
