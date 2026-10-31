@@ -1,3 +1,61 @@
+/* V5: modern arcade presentation over the proven V4 interaction model. */
+body[data-client-generation="5"] {
+  --v5-canvas: #080b0e; --v5-surface: #11161b; --v5-raised: #171e24;
+  --v5-text: #f2f5f4; --v5-muted: #8c9995; --v5-mint: #72e0b8; --v5-live: #ffb454;
+  background: var(--v5-canvas); color: var(--v5-text);
+}
+body[data-client-generation="5"] .topbar { background: #080b0ef2; border-color: #ffffff0d; }
+body[data-client-generation="5"] .v4-toolbar { max-width: 1720px; }
+.v5-brand { display: flex; align-items: baseline; gap: .12rem; margin-right: .65rem; letter-spacing: .08em; }
+.v5-brand span, .v5-attract-brand span { color: var(--v5-canvas); background: var(--v5-mint); font-weight: 950; line-height: 1; padding: .28rem .4rem; border-radius: .25rem; }
+.v5-brand strong { font-size: .9rem; letter-spacing: .16em; }
+body[data-client-generation="5"] #game-filter { background: #12181d; border: 1px solid #ffffff12; box-shadow: none; }
+body[data-client-generation="5"] #game-filter:focus { border-color: #72e0b877; outline: 2px solid #72e0b822; }
+body[data-client-generation="5"] .v4-toolbar > button,
+body[data-client-generation="5"] .v4-filters summary { background: transparent; border-color: #ffffff18; }
+body[data-client-generation="5"] .v4-toolbar > button[aria-pressed="true"] { background: var(--v5-mint); color: #07110d; }
+body[data-client-generation="5"] main { padding-top: 1.5rem; }
+body[data-client-generation="5"] .game-rail { gap: clamp(.8rem,1.6vw,1.35rem); }
+body[data-client-generation="5"] .game-cover {
+  background: transparent; border: 0; border-radius: .45rem; overflow: visible;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+body[data-client-generation="5"] .game-cover::before { border-radius: .45rem; background: #12191f; box-shadow: 0 .65rem 1.5rem #0005; }
+body[data-client-generation="5"] .game-cover .cover-art { border-radius: .45rem; }
+body[data-client-generation="5"] .game-cover .cover-name { min-height: 0; padding: .7rem .1rem .2rem; color: var(--v5-text); font-size: .92rem; font-weight: 680; }
+body[data-client-generation="5"] .game-cover .cover-footer { top: .45rem; right: .45rem; }
+body[data-client-generation="5"] .game-cover:hover,
+body[data-client-generation="5"] .game-cover:focus-visible { transform: translateY(-4px); }
+body[data-client-generation="5"] .game-cover[data-live="true"]::before { box-shadow: 0 0 0 2px var(--v5-live), 0 .8rem 2rem #0008; }
+body[data-client-generation="5"] .game-cover[data-live="true"] .cover-footer::before { color: #1b1004; background: var(--v5-live); }
+body[data-client-generation="5"] .v4-game-panel { background: #10161b; border-color: #ffffff12; }
+body[data-client-generation="5"] .v4-game-panel #start-game,
+body[data-client-generation="5"] .v4-game-panel [data-inline-join],
+body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin] { background: var(--v5-mint); color: #07110d; }
+
+.v5-attract { position: fixed; inset: 0; z-index: 1000; overflow: hidden; color: #fff; background: #080b0e; }
+.v5-attract[hidden] { display: none; }
+.v5-attract-art { position: absolute; inset: -3%; width: 106%; height: 106%; object-fit: cover; filter: saturate(.88) contrast(1.04); transform: scale(1.025); }
+.v5-attract-wash { position: absolute; inset: 0; background: linear-gradient(90deg,#06090bea 0%,#080b0ea8 43%,#080b0e20 75%), linear-gradient(0deg,#080b0ea8,transparent 52%); }
+.v5-attract header { position: absolute; top: max(1.5rem,env(safe-area-inset-top)); left: max(1.5rem,env(safe-area-inset-left)); display: flex; align-items: center; gap: .8rem; }
+.v5-attract header small { letter-spacing: .22em; color: #d6e2deaa; }
+.v5-attract-brand { display: flex; align-items: baseline; gap: .2rem; font-size: 1.35rem; letter-spacing: .14em; }
+.v5-attract-copy { position: absolute; left: max(7vw,env(safe-area-inset-left)); bottom: max(10vh,env(safe-area-inset-bottom)); max-width: min(42rem,80vw); }
+.v5-attract-kicker { margin: 0 0 .8rem; color: var(--v5-mint); font-weight: 850; letter-spacing: .18em; font-size: .78rem; }
+.v5-attract-kicker.is-live { color: var(--v5-live); }
+.v5-attract h1 { margin: 0; font-size: clamp(2.7rem,7vw,6.7rem); line-height: .94; letter-spacing: -.045em; text-wrap: balance; }
+.v5-attract-meta { min-height: 1.4em; margin: 1rem 0 1.5rem; color: #d7e1de; font-size: clamp(.95rem,1.6vw,1.2rem); }
+.v5-attract button { min-height: 48px; padding: .8rem 1.25rem; color: #07110d; background: var(--v5-mint); border: 0; font-weight: 800; }
+.v5-attract-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--v5-mint); }
+.v5-attract.is-changing .v5-attract-progress { animation: v5-progress 10s linear both; }
+.v5-attract.is-changing .v5-attract-copy { animation: v5-copy-in 420ms ease-out both; }
+@keyframes v5-progress { from { width: 0; } to { width: 100%; } }
+@keyframes v5-copy-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-client-generation="5"] .game-cover, .v5-attract * { animation: none !important; transition: none !important; }
+}
+
 /* V5 mobile landscape experiment: toolbar above, controls over the video. */
 @media (orientation: landscape) and (any-pointer: coarse) {
   body[data-client-generation="5"].browser-playing #browser-player {
