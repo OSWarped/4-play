@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 const CONTROLLER_PROFILE_NAME: &str = "4play-session";
 const CONTROL_SCRIPT_NAME: &str = "4play-runtime-control.lua";
 const STOP_REQUEST_NAME: &str = "stop-mame.request";
+const NARC_INITIALIZATION_RESET_SECONDS: u32 = 4;
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const GRACEFUL_STOP_POLL: Duration = Duration::from_millis(20);
 
@@ -46,7 +47,10 @@ impl MameProcess {
         remove_if_present(&stop_request_path)?;
         fs::write(
             &control_script_path,
-            runtime_control_script(&stop_request_path),
+            runtime_control_script(
+                &stop_request_path,
+                narc_requires_initialization_reset(&config.rom),
+            ),
         )?;
 
         let mut command = headless_command(&config.binary, &config.rom);
@@ -179,11 +183,30 @@ fn headless_command(binary: &Path, rom: &str) -> Command {
     command
 }
 
-fn runtime_control_script(stop_request_path: &Path) -> String {
+fn narc_requires_initialization_reset(rom: &str) -> bool {
+    matches!(
+        rom,
+        "narc" | "narc1" | "narc2" | "narc3" | "narc4" | "narc6"
+    )
+}
+
+fn runtime_control_script(stop_request_path: &Path, initialization_reset: bool) -> String {
+    let reset_seconds = initialization_reset
+        .then_some(NARC_INITIALIZATION_RESET_SECONDS)
+        .unwrap_or(0);
     format!(
         r#"local stop_request_path = [[{}]]
+local initialization_reset_seconds = {}
+local initialization_reset_requested = false
 
 emu.register_periodic(function()
+    if initialization_reset_seconds > 0
+        and not initialization_reset_requested
+        and manager.machine.time.seconds >= initialization_reset_seconds then
+        initialization_reset_requested = true
+        manager.machine:soft_reset()
+    end
+
     local request = io.open(stop_request_path, "r")
     if request then
         request:close()
@@ -192,7 +215,8 @@ emu.register_periodic(function()
     end
 end)
 "#,
-        stop_request_path.display()
+        stop_request_path.display(),
+        reset_seconds
     )
 }
 
@@ -266,25 +290,24 @@ fn validate_path(path: &Path, label: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{controller_profile, headless_command, runtime_control_script};
+    use super::{
+        controller_profile, headless_command, narc_requires_initialization_reset,
+        runtime_control_script,
+    };
     use std::path::Path;
 
     #[test]
     fn headless_launch_explicitly_opts_in_to_noncritical_warning_acknowledgment() {
         let command = headless_command(Path::new("mame"), "tmnt");
         let environment: Vec<_> = command.get_envs().collect();
-        assert!(
-            environment
-                .iter()
-                .any(|(key, value)| *key == "FOURPLAY_MAME_ACK_WARNINGS"
-                    && *value == Some(std::ffi::OsStr::new("1")))
-        );
-        assert!(
-            environment
-                .iter()
-                .any(|(key, value)| *key == "SDL_VIDEODRIVER"
-                    && *value == Some(std::ffi::OsStr::new("offscreen")))
-        );
+        assert!(environment
+            .iter()
+            .any(|(key, value)| *key == "FOURPLAY_MAME_ACK_WARNINGS"
+                && *value == Some(std::ffi::OsStr::new("1"))));
+        assert!(environment
+            .iter()
+            .any(|(key, value)| *key == "SDL_VIDEODRIVER"
+                && *value == Some(std::ffi::OsStr::new("offscreen"))));
     }
 
     #[test]
@@ -296,12 +319,10 @@ mod tests {
             } else {
                 ""
             };
-            assert!(
-                command
-                    .get_envs()
-                    .any(|(key, value)| key == "FOURPLAY_MAME_ACK_UNDUMPED"
-                        && value == Some(std::ffi::OsStr::new(expected)))
-            );
+            assert!(command
+                .get_envs()
+                .any(|(key, value)| key == "FOURPLAY_MAME_ACK_UNDUMPED"
+                    && value == Some(std::ffi::OsStr::new(expected))));
         }
     }
 
@@ -326,10 +347,27 @@ mod tests {
 
     #[test]
     fn runtime_control_script_requests_a_scheduled_machine_exit() {
-        let script = runtime_control_script(Path::new("/tmp/session-7/stop-mame.request"));
+        let script = runtime_control_script(Path::new("/tmp/session-7/stop-mame.request"), false);
 
         assert!(script.contains("/tmp/session-7/stop-mame.request"));
         assert!(script.contains("emu.register_periodic"));
         assert!(script.contains("manager.machine:exit()"));
+        assert!(script.contains("local initialization_reset_seconds = 0"));
+    }
+
+    #[test]
+    fn narc_roms_receive_one_initialization_reset() {
+        for rom in ["narc", "narc1", "narc2", "narc3", "narc4", "narc6"] {
+            assert!(narc_requires_initialization_reset(rom));
+        }
+        for rom in ["narc2000", "nbajam", "tmnt", ""] {
+            assert!(!narc_requires_initialization_reset(rom));
+        }
+
+        let script = runtime_control_script(Path::new("/tmp/stop"), true);
+        assert!(script.contains("local initialization_reset_seconds = 4"));
+        assert!(script.contains("and not initialization_reset_requested"));
+        assert!(script.contains("initialization_reset_requested = true"));
+        assert!(script.contains("manager.machine:soft_reset()"));
     }
 }
