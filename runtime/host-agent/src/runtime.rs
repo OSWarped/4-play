@@ -467,6 +467,8 @@ impl RuntimeSupervisor {
             .arg(fps_num(assignment.runtime_profile.refresh_hz).to_string())
             .arg("--fps-den")
             .arg("1000")
+            .arg("--video-bitrate-kbps")
+            .arg(webrtc_video_bitrate_kbps(&assignment.runtime_profile).to_string())
             .arg("--http-signal")
             .arg(&session.bind_address)
             .arg("--answer-file")
@@ -485,6 +487,14 @@ impl RuntimeSupervisor {
             session.bind_address
         );
         Ok(child)
+    }
+}
+
+fn webrtc_video_bitrate_kbps(profile: &control_protocol::GameRuntimeProfile) -> u32 {
+    match profile.width.saturating_mul(profile.height) {
+        0..=49_152 => 700,
+        49_153..=80_000 => 1_000,
+        _ => 1_400,
     }
 }
 
@@ -688,7 +698,22 @@ fn format_exit_status(status: ExitStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{input_debug_value_enabled, normalize_preview_asset_prefix, preview_enabled_value};
+    use super::{input_debug_value_enabled, normalize_preview_asset_prefix, preview_enabled_value, webrtc_video_bitrate_kbps};
+    use control_protocol::GameRuntimeProfile;
+
+    fn profile(width: u32, height: u32) -> GameRuntimeProfile {
+        GameRuntimeProfile {
+            width, height, refresh_hz: 60.0, rotation_degrees: 0,
+            max_players: 2, buttons_per_player: 3, supports_save_state: false,
+        }
+    }
+
+    #[test]
+    fn webrtc_bitrate_tracks_frame_size() {
+        assert_eq!(webrtc_video_bitrate_kbps(&profile(256, 192)), 700);
+        assert_eq!(webrtc_video_bitrate_kbps(&profile(288, 216)), 1_000);
+        assert_eq!(webrtc_video_bitrate_kbps(&profile(640, 480)), 1_400);
+    }
 
     #[test]
     fn input_debug_accepts_common_truthy_values() {

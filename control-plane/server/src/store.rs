@@ -733,6 +733,9 @@ impl RuntimeHostStore {
                     Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
                 };
                 apply_metadata_to_profile(&mut runtime_profile, &metadata);
+                if public_tester {
+                    apply_wan_streaming_limit(&mut runtime_profile);
+                }
                 let runtime_profile_json = match serde_json::to_string(&runtime_profile) {
                     Ok(value) => value,
                     Err(_) => return Ok(Err(AllocationRejection::InvalidRuntimeProfile)),
@@ -2278,6 +2281,21 @@ fn apply_metadata_to_profile(profile: &mut GameRuntimeProfile, metadata: &GameMe
     }
 }
 
+fn apply_wan_streaming_limit(profile: &mut GameRuntimeProfile) {
+    const MAX_WAN_WIDTH: u32 = 256;
+    if profile.width <= MAX_WAN_WIDTH {
+        return;
+    }
+    let scaled_height = (u64::from(profile.height) * u64::from(MAX_WAN_WIDTH))
+        .div_ceil(u64::from(profile.width));
+    profile.width = MAX_WAN_WIDTH;
+    profile.height = u32::try_from(scaled_height)
+        .unwrap_or(u32::MAX)
+        .clamp(64, 1080)
+        .div_ceil(2)
+        * 2;
+}
+
 fn parse_session_state(state: &str) -> Result<SessionState, StoreError> {
     match state {
         "requested" => Ok(SessionState::Requested),
@@ -2546,6 +2564,20 @@ impl Error for StoreError {}
 #[cfg(test)]
 mod deletion_tests {
     use super::*;
+
+    #[test]
+    fn wan_streaming_limit_preserves_aspect_without_upscaling() {
+        let mut blitz = GameRuntimeProfile {
+            width: 288, height: 216, refresh_hz: 57.0, rotation_degrees: 0,
+            max_players: 4, buttons_per_player: 3, supports_save_state: true,
+        };
+        apply_wan_streaming_limit(&mut blitz);
+        assert_eq!((blitz.width, blitz.height), (256, 192));
+
+        let mut vertical = GameRuntimeProfile { width: 224, height: 256, ..blitz };
+        apply_wan_streaming_limit(&mut vertical);
+        assert_eq!((vertical.width, vertical.height), (224, 256));
+    }
 
     #[tokio::test]
     async fn game_deletion_blocks_active_sessions_then_cascades_owned_records() {
