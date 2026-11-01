@@ -36,6 +36,32 @@ def candidate():
     return Path(__file__).with_name("arcade-public.conf.example").read_bytes()
 
 
+def previous_candidate():
+    """The immediately previous managed public config, accepted only for upgrade."""
+    current = candidate()
+    current = current.replace(
+        b"""    location = /client-v5/app-logo.png {
+        proxy_read_timeout 5m;
+        send_timeout 5m;
+        proxy_pass http://127.0.0.1:8080;
+    }
+""",
+        b"    location = /client-v5/app-logo.png { proxy_pass http://127.0.0.1:8080; }\n",
+    )
+    current = current.replace(
+        b"""    # Artwork can be several megabytes. Cellular clients may legitimately take
+    # longer than the short API timeout without indicating a dead upstream.
+    location ^~ /client-v2/api/assets/ {
+        proxy_read_timeout 5m;
+        send_timeout 5m;
+        proxy_pass http://127.0.0.1:8080;
+    }
+""",
+        b"",
+    )
+    return current
+
+
 def preflight():
     for parent in (staging.SITE.parent, staging.ENABLED.parent):
         setup.delivery.stage.protected_ancestors(parent)
@@ -44,7 +70,7 @@ def preflight():
     if metadata.st_size > 65536:
         raise ValueError("Unexpected managed site size")
     previous = staging.SITE.read_bytes()
-    if previous not in (staging.render(True).encode(), candidate()):
+    if previous not in (staging.render(True).encode(), candidate(), previous_candidate()):
         raise ValueError("Unknown/customized arcade configuration")
     if not staging.ENABLED.is_symlink() or staging.ENABLED.readlink() != staging.SITE or staging.ENABLED.lstat().st_uid != 0:
         raise ValueError("Unknown enabled arcade site")
