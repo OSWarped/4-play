@@ -7,8 +7,11 @@ const confirmCreateUserTokenButton = document.querySelector("#confirm-create-use
 const connectionDialog = document.querySelector("#connection-dialog");
 const userTokenDialog = document.querySelector("#user-token-dialog");
 const gameImportDialog = document.querySelector("#game-import-dialog");
+const gameDetailsDialog = document.querySelector("#game-details-dialog");
 const deleteGameDialog = document.querySelector("#delete-game-dialog");
 let pendingDeletionGame = null;
+let gameDetailsOpener = null;
+let gameDetailsScrollY = 0;
 // Initialize before any event handler can yield to the browser. The real loader
 // is installed below after the import module is bound.
 let loadGameImport = async () => {};
@@ -45,6 +48,14 @@ gameFilter.addEventListener("input", renderGames);
 document.querySelector("#open-connection").addEventListener("click", () => connectionDialog.showModal());
 document.querySelector("#open-game-import").addEventListener("click", () => gameImportDialog.showModal());
 document.querySelector("#close-game-import").addEventListener("click", () => gameImportDialog.close());
+document.querySelector("#close-game-details").addEventListener("click", requestCloseGameDetails);
+gameDetailsDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  requestCloseGameDetails();
+});
+gameDetailsDialog.addEventListener("click", (event) => {
+  if (event.target === gameDetailsDialog) requestCloseGameDetails();
+});
 document.querySelector("#delete-game-form").addEventListener("submit", confirmDeleteGame);
 document.querySelector("#mobile-menu").addEventListener("click", () => {
   const open = document.body.classList.toggle("nav-open");
@@ -566,7 +577,10 @@ function renderGame(game) {
   const element = item();
   const metadata = game.metadata || {};
   const previewPath = primaryMediaPath(metadata);
-  element.classList.add("clickable");
+  element.classList.add("clickable", "game-card");
+  element.tabIndex = 0;
+  element.setAttribute("role", "button");
+  element.setAttribute("aria-label", `Edit ${game.display_name || game.id}`);
   element.innerHTML = `
     ${previewPath ? mediaPreview(previewPath, game.display_name || game.id, "game-thumbnail") : ""}
     <h3>${escapeHtml(game.display_name || game.id)}</h3>
@@ -574,15 +588,21 @@ function renderGame(game) {
     <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
     <span class="pill">${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))} players</span>
     <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
-    <button type="button">Edit metadata</button>
   `;
-  element.querySelector("button").addEventListener("click", () => renderGameEditor(game));
+  const open = () => renderGameEditor(game, element);
+  element.addEventListener("click", open);
+  element.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  });
   return element;
 }
 
 let cleanupMetadataProvider = null;
 window.addEventListener("pagehide", () => cleanupMetadataProvider?.());
-function renderGameEditor(game) {
+function renderGameEditor(game, opener = gameDetailsOpener) {
   cleanupMetadataProvider?.();
   const metadata = game.metadata || {};
   const slotCount = metadata.player_count || game.availability?.[0]?.profile?.max_players || 1;
@@ -669,22 +689,27 @@ function renderGameEditor(game) {
           ${renderPlayerSlotFields(metadata.player_slots || [], slotCount)}
         </div>
       </details>
-      <div class="form-actions">
-        <button type="submit">Save metadata</button>
-        <button id="cancel-metadata-edit" type="button">Cancel</button>
+      <section class="danger-zone">
+        <div><strong>Danger zone</strong><p class="muted">Permanently remove this game, its records, owned ROMs, and media.</p></div>
         <button id="open-delete-game" class="danger" type="button">Delete game…</button>
+      </section>
+      <div class="form-actions metadata-actions">
+        <button type="submit">Save metadata</button>
+        <button id="cancel-metadata-edit" class="secondary" type="button">Close</button>
       </div>
       <div id="metadata-result"></div>
     </form>
   `;
   const form = editor.querySelector("#metadata-form");
+  form.dataset.dirty = "false";
+  const markMetadataDirty = (event) => {
+    if (event.target.matches("[name]")) form.dataset.dirty = "true";
+  };
+  form.addEventListener("input", markMetadataDirty);
+  form.addEventListener("change", markMetadataDirty);
   cleanupMetadataProvider = FourPlayMetadataEditor.bind(form, game, { post: postJson, fetch, headers: authHeaders, escapeHtml });
   form.addEventListener("submit", (event) => saveGameMetadata(event, game));
-  editor.querySelector("#cancel-metadata-edit").addEventListener("click", () => {
-    cleanupMetadataProvider?.();
-    editor.classList.add("muted");
-    editor.textContent = "Select a game to edit its metadata.";
-  });
+  editor.querySelector("#cancel-metadata-edit").addEventListener("click", requestCloseGameDetails);
   editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
   editor.querySelector("#open-delete-game").addEventListener("click", () => openGameDeletion(game));
   const uploadPath = form.querySelector("#asset-upload-path");
@@ -700,6 +725,27 @@ function renderGameEditor(game) {
   uploadFile.addEventListener("change", suggestUploadPath);
   uploadField.addEventListener("change", suggestUploadPath);
   loadMediaPreviews(editor);
+  if (!gameDetailsDialog.open) {
+    gameDetailsOpener = opener || document.activeElement;
+    gameDetailsScrollY = window.scrollY;
+    gameDetailsDialog.showModal();
+  }
+}
+
+function requestCloseGameDetails() {
+  const form = gameDetailsDialog.querySelector("#metadata-form");
+  if (form?.dataset.dirty === "true" && !window.confirm("Discard your unsaved game changes?")) return;
+  closeGameDetails();
+}
+
+function closeGameDetails() {
+  cleanupMetadataProvider?.();
+  cleanupMetadataProvider = null;
+  gameDetailsDialog.querySelector("#metadata-form")?.setAttribute("data-dirty", "false");
+  if (gameDetailsDialog.open) gameDetailsDialog.close();
+  window.scrollTo({ top: gameDetailsScrollY, behavior: "auto" });
+  gameDetailsOpener?.focus?.({ preventScroll: true });
+  gameDetailsOpener = null;
 }
 
 async function openGameDeletion(game) {
@@ -755,7 +801,7 @@ async function confirmDeleteGame(event) {
     await deleteJson(`/api/v1/admin/games/${encodeURIComponent(game.id)}/deletion`, { confirmation: game.id });
     pendingDeletionGame = null;
     deleteGameDialog.close();
-    document.querySelector("#game-editor").innerHTML = `<div class="empty-state"><strong>Select a game</strong><p>Edit metadata, artwork, player labels, and media.</p></div>`;
+    closeGameDetails();
     toast(`${game.display_name || game.id} was permanently deleted.`);
     await refresh();
   } catch (error) {
@@ -899,6 +945,7 @@ async function saveGameMetadata(event, game) {
     if (index >= 0) {
       state.games[index] = updated;
     }
+    form.dataset.dirty = "false";
     renderGames();
     renderGameEditor(updated);
     document.querySelector("#metadata-result").innerHTML = `
@@ -937,6 +984,7 @@ async function uploadAsset(form) {
     }
     await putRaw(`/api/v1/assets/${encodeAssetPath(path)}`, file);
     form.elements[field].value = path;
+    form.dataset.dirty = "true";
     result.innerHTML = `
       <div class="item">
         <h3>Asset uploaded</h3>

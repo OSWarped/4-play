@@ -589,11 +589,13 @@ code {
 .notice { padding: .8rem 1rem; border: 1px solid rgba(255,200,61,.28); border-radius: .8rem; color: var(--warn); background: rgba(255,200,61,.07); }
 .notice.good { border-color: rgba(47,114,255,.3); color: var(--accent-2); background: rgba(47,114,255,.08); }
 .master-detail { display: grid; gap: 1rem; grid-template-columns: minmax(20rem,.72fr) minmax(28rem,1.28fr); align-items: start; }
-.library-layout { grid-template-columns: minmax(20rem,.85fr) minmax(30rem,1.15fr); }
 .detail-card { position: sticky; top: 6.75rem; max-height: calc(100vh - 8rem); overflow: auto; }
-.library-toolbar { display: flex; justify-content: flex-end; gap: .7rem; }
+.library-toolbar { position: sticky; top: 5.5rem; z-index: 9; display: flex; justify-content: flex-end; gap: .7rem; padding: .75rem; border: 1px solid var(--border); border-radius: .85rem; background: rgba(12,16,26,.92); backdrop-filter: blur(12px); box-shadow: 0 .75rem 2rem rgba(0,0,0,.18); }
 .library-toolbar input { width: min(24rem,100%); }
-.library-layout .game-grid { grid-template-columns: repeat(auto-fill,minmax(12rem,1fr)); max-height: calc(100vh - 12rem); overflow: auto; }
+.library-catalog .game-grid { grid-template-columns: repeat(auto-fill,minmax(13rem,1fr)); }
+.game-card { cursor: pointer; min-width: 0; transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+.game-card:hover, .game-card:focus-visible { transform: translateY(-2px); border-color: rgba(47,114,255,.65); box-shadow: 0 .8rem 2rem rgba(0,0,0,.22); outline: none; }
+.game-card > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .compact-section, .advanced-section { padding: 0; }
 .compact-section summary, .advanced-section summary { cursor: pointer; padding: 1rem; font-weight: 700; }
 .compact-section details > div, .advanced-section details > div, .advanced-section details > pre { margin: 0 1rem 1rem; }
@@ -607,6 +609,14 @@ button.quiet { border-color: transparent; color: var(--accent); }
 dialog { width: min(32rem,calc(100% - 2rem)); padding: 0; color: var(--text); border: 1px solid var(--border); border-radius: 1rem; background: var(--panel); box-shadow: 0 2rem 7rem #000b; }
 dialog::backdrop { background: #050812c9; backdrop-filter: blur(4px); }
 .wide-dialog { width: min(54rem,calc(100% - 2rem)); }
+.game-details-dialog { width: min(78rem,calc(100% - 2rem)); height: min(90dvh,60rem); max-height: 90dvh; }
+.game-details-shell { position: relative; height: 100%; overflow: auto; padding: 1.25rem clamp(1rem,3vw,2rem); }
+.game-details-close { position: sticky; top: 0; z-index: 8; margin-left: auto; background: var(--panel); box-shadow: 0 .4rem 1.2rem #0005; }
+.game-details-dialog .metadata-editor { margin-top: -2.7rem; }
+.game-details-dialog .metadata-form { border: 0; padding: 0; background: transparent; }
+.metadata-actions { position: sticky; bottom: -1.25rem; z-index: 7; margin: 0 -1rem -1.25rem; padding: 1rem; border-top: 1px solid var(--border); background: rgba(12,16,26,.96); backdrop-filter: blur(12px); }
+.danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; border: 1px solid rgba(255,73,56,.3); border-radius: .8rem; background: rgba(255,73,56,.06); }
+.danger-zone p { margin: .25rem 0 0; }
 .dialog-card { display: grid; gap: 1rem; padding: 1.25rem; margin: 0; border: 0; }
 .dialog-card.card { border: 0; }
 .field { display: grid; gap: .4rem; }
@@ -627,9 +637,8 @@ dialog::backdrop { background: #050812c9; backdrop-filter: blur(4px); }
   .sidebar { position: fixed; left: 0; width: min(18rem,85vw); transform: translateX(-105%); transition: transform 160ms ease; box-shadow: 1rem 0 4rem #0008; }
   body.nav-open .sidebar { transform: translateX(0); }
   .mobile-only { display: inline-grid; place-items: center; }
-  .master-detail, .library-layout { grid-template-columns: 1fr; }
+  .master-detail { grid-template-columns: 1fr; }
   .detail-card { position: static; max-height: none; }
-  .library-layout .game-grid { max-height: none; }
 }
 @media (max-width: 650px) {
   .workspace .topbar { display: grid; grid-template-columns: auto 1fr; gap: .75rem; }
@@ -640,5 +649,10 @@ dialog::backdrop { background: #050812c9; backdrop-filter: blur(4px); }
   .metric { min-width: 0; }
   .metric strong { font-size: clamp(1.35rem,8vw,2rem); }
   .library-toolbar { display: grid; grid-template-columns: 1fr auto; }
+  .library-catalog { padding: .8rem; }
+  .library-catalog .game-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .65rem; }
+  .game-details-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .game-details-shell { padding: 1rem; }
+  .danger-zone { align-items: stretch; flex-direction: column; }
   .section-heading { align-items: flex-start; flex-wrap: wrap; }
 }
