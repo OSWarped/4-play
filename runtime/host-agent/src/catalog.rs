@@ -168,7 +168,13 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .height
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
-    let (width, height) = if matches!(display.rotation_degrees % 360, 90 | 270) {
+    let (width, height) = if entry.rom_name.starts_with("tekken3") {
+        // System 12 advertises a 640x480 main display, but feeding that raw
+        // frame size through both software streaming encoders overwhelms the
+        // reference host and back-pressures MAME. 320x240 preserves Tekken's
+        // 4:3 presentation while reducing the raw/encode workload by 75%.
+        (320, 240)
+    } else if matches!(display.rotation_degrees % 360, 90 | 270) {
         (native_height, native_width)
     } else {
         (native_width, native_height)
@@ -213,7 +219,7 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
 
 #[cfg(test)]
 mod tests {
-    use super::{CatalogEntry, parse_mame_game};
+    use super::{parse_mame_game, CatalogEntry};
 
     #[test]
     fn parses_mame_runtime_profile() {
@@ -249,6 +255,30 @@ mod tests {
     #[test]
     fn selects_primary_screen_instead_of_auxiliary_display() {
         let xml = r#"<mame>
+            <machine name="multiscreen">
+                <description>Multi-screen Game</description>
+                <display tag=":led" rotate="180" width="768" height="128" refresh="60.0" />
+                <display tag="screen" rotate="0" width="640" height="480" refresh="60.0" />
+                <input players="2"><control type="joy" buttons="4" /></input>
+                <driver savestate="unsupported" />
+            </machine>
+        </mame>"#;
+        let game = parse_mame_game(
+            &CatalogEntry {
+                id: "multiscreen".to_owned(),
+                rom_name: "multiscreen".to_owned(),
+            },
+            xml,
+        )
+        .unwrap();
+
+        assert_eq!(game.profile.width, 640);
+        assert_eq!(game.profile.height, 480);
+    }
+
+    #[test]
+    fn bounds_tekken3_streaming_resolution() {
+        let xml = r#"<mame>
             <machine name="tekken3ua">
                 <description>Tekken 3</description>
                 <display tag=":led" rotate="180" width="768" height="128" refresh="60.0" />
@@ -266,8 +296,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.profile.width, 640);
-        assert_eq!(game.profile.height, 480);
+        assert_eq!(game.profile.width, 320);
+        assert_eq!(game.profile.height, 240);
     }
 
     #[test]
