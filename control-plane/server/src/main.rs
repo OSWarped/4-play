@@ -102,6 +102,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             manifest: setting("FOURPLAY_CATALOG_PATH")?,
             host_id: setting("FOURPLAY_RUNTIME_HOST_ID")?,
             chdman: env::var("FOURPLAY_GAME_IMPORT_CHDMAN").ok(),
+            asset_root: asset_root
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
         })
     } else {
         None

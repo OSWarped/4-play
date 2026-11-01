@@ -1963,6 +1963,11 @@ impl ApiError {
                 "catalog_game_unavailable",
                 "catalog game has no online runtime host",
             ),
+            StoreError::GameBusy => Self::new(
+                StatusCode::CONFLICT,
+                "catalog_game_busy",
+                "Stop all sessions for this game before deleting it.",
+            ),
             StoreError::SessionNotFound => Self::new(
                 StatusCode::NOT_FOUND,
                 "session_not_found",
@@ -2516,6 +2521,7 @@ mod tests {
         assert!(index_body.contains("4-Play Admin"));
         assert!(index_body.contains("data-admin-view=\"overview\""));
         assert!(index_body.contains("data-admin-view=\"access\""));
+        assert!(index_body.contains("id=\"delete-game-dialog\""));
         assert!(index_body.contains("/admin/asset-upload.js"));
         assert!(index_body.contains("/admin/metadata-provider.js"));
         assert!(index_body.contains("/admin/app-logo.png"));

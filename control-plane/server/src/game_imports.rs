@@ -28,6 +28,7 @@ pub struct GameImportConfig {
     pub manifest: String,
     pub host_id: String,
     pub chdman: Option<String>,
+    pub asset_root: Option<String>,
 }
 
 #[derive(Clone)]
@@ -48,6 +49,10 @@ pub(crate) fn routes() -> Router<AppState> {
             put(chunk).layer(DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
         .route("/api/v1/admin/game-imports/{job}/{action}", post(action))
+        .route(
+            "/api/v1/admin/games/{game}/deletion",
+            get(deletion_plan).delete(delete_game),
+        )
 }
 
 pub(crate) async fn script() -> Response {
@@ -227,6 +232,110 @@ async fn action(
     Ok(Json(result))
 }
 
+async fn deletion_plan(
+    State(state): State<AppState>,
+    service: Service,
+    Path(game_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let config = config(service)?;
+    let game = state
+        .runtime_hosts
+        .get_catalog_game(
+            game_id.clone(),
+            crate::unix_time_ms(),
+            state.offline_after_ms,
+        )
+        .await
+        .map_err(ApiError::store)?;
+    if !game
+        .availability
+        .iter()
+        .any(|item| item.runtime_host_id == config.host_id)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "game_not_on_import_host",
+            "This game is not installed on the runtime host managed by Admin imports.",
+        ));
+    }
+    let (sessions, active_sessions) = state
+        .runtime_hosts
+        .game_deletion_counts(game_id.clone())
+        .await
+        .map_err(ApiError::store)?;
+    let mut result = run(
+        config,
+        "delete-plan",
+        json!({"game":game_id,"rom_name":game.rom_name}),
+        vec![],
+    )
+    .await?;
+    result["records"] = json!({"sessions":sessions,"active_sessions":active_sessions});
+    result["blocked"] = json!(active_sessions > 0);
+    Ok(Json(result))
+}
+
+async fn delete_game(
+    State(state): State<AppState>,
+    service: Service,
+    Path(game_id): Path<String>,
+    Json(request): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    if request.get("confirmation").and_then(Value::as_str) != Some(game_id.as_str()) {
+        return Err(ApiError::bad_request(
+            "game_delete_confirmation",
+            "Type the exact game ID to confirm permanent deletion.",
+        ));
+    }
+    let config = config(service)?;
+    let game = state
+        .runtime_hosts
+        .get_catalog_game(
+            game_id.clone(),
+            crate::unix_time_ms(),
+            state.offline_after_ms,
+        )
+        .await
+        .map_err(ApiError::store)?;
+    if !game
+        .availability
+        .iter()
+        .any(|item| item.runtime_host_id == config.host_id)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "game_not_on_import_host",
+            "This game is not installed on the runtime host managed by Admin imports.",
+        ));
+    }
+    let (_, active_sessions) = state
+        .runtime_hosts
+        .game_deletion_counts(game_id.clone())
+        .await
+        .map_err(ApiError::store)?;
+    if active_sessions > 0 {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "catalog_game_busy",
+            "Stop all sessions for this game before deleting it.",
+        ));
+    }
+    let mut result = run(
+        config,
+        "delete-game",
+        json!({"game":game_id,"rom_name":game.rom_name,"confirmation":request["confirmation"]}),
+        vec![],
+    )
+    .await?;
+    let deleted_sessions = state
+        .runtime_hosts
+        .delete_game_records(game_id.clone())
+        .await
+        .map_err(ApiError::store)?;
+    result["deleted"] = json!({"game":game_id,"sessions":deleted_sessions});
+    Ok(Json(result))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +350,7 @@ mod tests {
         for path in [
             "/api/v1/admin/game-imports",
             "/api/v1/admin/game-imports/invalid",
+            "/api/v1/admin/games/aliens/deletion",
         ] {
             let response = app
                 .clone()
@@ -268,6 +378,18 @@ mod tests {
             serde_json::from_slice::<Value>(&bytes).unwrap()["enabled"],
             false
         );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/admin/games/aliens/deletion")
+                    .header("authorization", "Bearer test-seat-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let response = app
             .oneshot(
                 Request::builder()

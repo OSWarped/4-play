@@ -580,6 +580,72 @@ impl RuntimeHostStore {
             .await
     }
 
+    pub async fn game_deletion_counts(&self, game_id: String) -> Result<(u64, u64), StoreError> {
+        let (sessions, active) = self
+            .connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Option<(i64, i64)>> {
+                    let exists = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM games WHERE id = ?1)",
+                        [&game_id],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if !exists {
+                        return Ok(None);
+                    }
+                    let sessions = connection.query_row(
+                        "SELECT COUNT(*) FROM sessions WHERE game_id = ?1",
+                        [&game_id],
+                        |row| row.get::<_, i64>(0),
+                    )?;
+                    let active = connection.query_row(
+                        "SELECT COUNT(*) FROM sessions WHERE game_id = ?1 AND state NOT IN
+                     ('stopped','allocation_failed','launch_failed','runtime_lost','terminated')",
+                        [&game_id],
+                        |row| row.get::<_, i64>(0),
+                    )?;
+                    Ok(Some((sessions, active)))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+            .ok_or(StoreError::GameNotFound)?;
+        Ok((
+            u64::try_from(sessions).map_err(|_| StoreError::data("negative session count"))?,
+            u64::try_from(active).map_err(|_| StoreError::data("negative active session count"))?,
+        ))
+    }
+
+    pub async fn delete_game_records(&self, game_id: String) -> Result<u64, StoreError> {
+        self.connection
+            .call(
+                move |connection| -> tokio_rusqlite::rusqlite::Result<Result<u64, StoreError>> {
+                    let transaction = connection.transaction()?;
+                    let active = transaction.query_row(
+                        "SELECT COUNT(*) FROM sessions WHERE game_id = ?1 AND state NOT IN
+                     ('stopped','allocation_failed','launch_failed','runtime_lost','terminated')",
+                        [&game_id],
+                        |row| row.get::<_, i64>(0),
+                    )?;
+                    if active > 0 {
+                        return Ok(Err(StoreError::GameBusy));
+                    }
+                    let sessions = transaction
+                        .execute("DELETE FROM sessions WHERE game_id = ?1", [&game_id])?
+                        as u64;
+                    let deleted =
+                        transaction.execute("DELETE FROM games WHERE id = ?1", [&game_id])?;
+                    if deleted == 0 {
+                        return Ok(Err(StoreError::GameNotFound));
+                    }
+                    transaction.commit()?;
+                    Ok(Ok(sessions))
+                },
+            )
+            .await
+            .map_err(StoreError::database)?
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn allocate_session(
         &self,
@@ -2351,6 +2417,7 @@ pub enum StoreError {
     NotFound,
     GameNotFound,
     GameUnavailable,
+    GameBusy,
     SessionNotFound,
     SeatBusy,
     PortsExhausted,
@@ -2440,6 +2507,7 @@ impl fmt::Display for StoreError {
             Self::NotFound => write!(formatter, "runtime host was not found"),
             Self::GameNotFound => write!(formatter, "catalog game was not found"),
             Self::GameUnavailable => write!(formatter, "catalog game has no online runtime host"),
+            Self::GameBusy => write!(formatter, "catalog game has a nonterminal session"),
             Self::SessionNotFound => write!(formatter, "session was not found"),
             Self::SeatBusy => write!(formatter, "seat already has a nonterminal session"),
             Self::PublicCapacity => write!(formatter, "public tester resource limit reached"),
@@ -2470,3 +2538,77 @@ impl fmt::Display for StoreError {
 }
 
 impl Error for StoreError {}
+
+#[cfg(test)]
+mod deletion_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn game_deletion_blocks_active_sessions_then_cascades_owned_records() {
+        let store = RuntimeHostStore::in_memory().await.unwrap();
+        store.connection.call(|connection| -> tokio_rusqlite::rusqlite::Result<()> {
+            connection.execute_batch(r#"
+                INSERT INTO runtime_hosts VALUES ('host','Host','1','{}','online',1,1,0);
+                INSERT INTO games VALUES ('game','Game','game','{}');
+                INSERT INTO runtime_profiles VALUES ('host','game','{}');
+                INSERT INTO sessions
+                    (id,game_id,seat_id,destination_address,runtime_host_id,runtime_host_address,
+                     runtime_profile_json,state,grant_token,grant_expires_unix_ms,media_udp_port,
+                     input_udp_port,player_slots_json,created_unix_ms,updated_unix_ms)
+                VALUES ('session','game','seat','127.0.0.1','host','127.0.0.1','{}','active',
+                        'grant',2,30000,31000,'[]',1,1);
+                INSERT INTO session_events (session_id,state,occurred_unix_ms) VALUES ('session','active',1);
+                INSERT INTO session_notes VALUES ('session','notes',1);
+                INSERT INTO spectator_grants
+                    (id,session_id,seat_id,destination_address,runtime_host_id,runtime_host_address,
+                     media_udp_port,expires_unix_ms,created_unix_ms)
+                VALUES ('spectator','session','viewer','127.0.0.1','host','127.0.0.1',30001,2,1);
+            "#)?;
+            Ok(())
+        }).await.unwrap();
+
+        assert_eq!(
+            store.game_deletion_counts("game".into()).await.unwrap(),
+            (1, 1)
+        );
+        assert!(matches!(
+            store.delete_game_records("game".into()).await,
+            Err(StoreError::GameBusy)
+        ));
+        store
+            .connection
+            .call(|connection| -> tokio_rusqlite::rusqlite::Result<()> {
+                connection.execute(
+                    "UPDATE sessions SET state = 'stopped' WHERE id = 'session'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(store.delete_game_records("game".into()).await.unwrap(), 1);
+        let counts = store
+            .connection
+            .call(|connection| -> tokio_rusqlite::rusqlite::Result<Vec<i64>> {
+                let mut values = Vec::new();
+                for table in [
+                    "games",
+                    "runtime_profiles",
+                    "sessions",
+                    "session_events",
+                    "session_notes",
+                    "spectator_grants",
+                ] {
+                    values.push(connection.query_row(
+                        &format!("SELECT COUNT(*) FROM {table}"),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?);
+                }
+                Ok(values)
+            })
+            .await
+            .unwrap();
+        assert_eq!(counts, vec![0; 6]);
+    }
+}

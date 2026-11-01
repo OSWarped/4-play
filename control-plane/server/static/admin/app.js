@@ -7,6 +7,8 @@ const confirmCreateUserTokenButton = document.querySelector("#confirm-create-use
 const connectionDialog = document.querySelector("#connection-dialog");
 const userTokenDialog = document.querySelector("#user-token-dialog");
 const gameImportDialog = document.querySelector("#game-import-dialog");
+const deleteGameDialog = document.querySelector("#delete-game-dialog");
+let pendingDeletionGame = null;
 // Initialize before any event handler can yield to the browser. The real loader
 // is installed below after the import module is bound.
 let loadGameImport = async () => {};
@@ -43,6 +45,7 @@ gameFilter.addEventListener("input", renderGames);
 document.querySelector("#open-connection").addEventListener("click", () => connectionDialog.showModal());
 document.querySelector("#open-game-import").addEventListener("click", () => gameImportDialog.showModal());
 document.querySelector("#close-game-import").addEventListener("click", () => gameImportDialog.close());
+document.querySelector("#delete-game-form").addEventListener("submit", confirmDeleteGame);
 document.querySelector("#mobile-menu").addEventListener("click", () => {
   const open = document.body.classList.toggle("nav-open");
   document.querySelector("#mobile-menu").setAttribute("aria-expanded", String(open));
@@ -669,6 +672,7 @@ function renderGameEditor(game) {
       <div class="form-actions">
         <button type="submit">Save metadata</button>
         <button id="cancel-metadata-edit" type="button">Cancel</button>
+        <button id="open-delete-game" class="danger" type="button">Delete game…</button>
       </div>
       <div id="metadata-result"></div>
     </form>
@@ -682,6 +686,7 @@ function renderGameEditor(game) {
     editor.textContent = "Select a game to edit its metadata.";
   });
   editor.querySelector("#upload-asset").addEventListener("click", () => uploadAsset(form));
+  editor.querySelector("#open-delete-game").addEventListener("click", () => openGameDeletion(game));
   const uploadPath = form.querySelector("#asset-upload-path");
   const uploadFile = form.querySelector("#asset-upload-file");
   const uploadField = form.querySelector("#asset-upload-field");
@@ -695,6 +700,78 @@ function renderGameEditor(game) {
   uploadFile.addEventListener("change", suggestUploadPath);
   uploadField.addEventListener("change", suggestUploadPath);
   loadMediaPreviews(editor);
+}
+
+async function openGameDeletion(game) {
+  pendingDeletionGame = game;
+  const plan = document.querySelector("#delete-game-plan");
+  const result = document.querySelector("#delete-game-result");
+  const confirmation = document.querySelector("#delete-game-confirmation");
+  const submit = document.querySelector("#confirm-delete-game");
+  plan.className = "stack muted";
+  plan.textContent = "Loading deletion preview…";
+  result.textContent = "";
+  confirmation.value = "";
+  confirmation.placeholder = game.id;
+  document.querySelector("#delete-game-confirm-label").textContent = `Type ${game.id} to confirm`;
+  submit.disabled = true;
+  deleteGameDialog.showModal();
+  try {
+    const value = await tokenRequest(`/api/v1/admin/games/${encodeURIComponent(game.id)}/deletion`);
+    const files = value.files || [];
+    plan.className = "stack";
+    plan.innerHTML = `
+      <div class="notice"><strong>This cannot be undone.</strong> The catalog entry, game records, primary ROM/CHD files, and game-specific pictures will be removed.</div>
+      <div class="item"><strong>${escapeHtml(game.display_name || game.id)}</strong>
+        <p class="muted">${escapeHtml(String(value.records?.sessions || 0))} historical sessions · ${escapeHtml(formatBytes(value.bytes || 0))}</p>
+        ${files.length ? `<ul>${files.map(file => `<li>${escapeHtml(file.kind)}: ${escapeHtml(file.path)} (${escapeHtml(formatBytes(file.bytes || 0))})</li>`).join("")}</ul>` : `<p class="muted">No owned files were found; records and the manifest entry will still be removed.</p>`}
+      </div>
+      <p class="muted">Preserved: ${escapeHtml((value.preserves || []).join(", "))}. This protects other games that share dependencies.</p>
+      ${value.blocked ? `<p class="notice">Deletion is blocked while this game has an active or stopping session.</p>` : ""}`;
+    submit.disabled = Boolean(value.blocked);
+  } catch (error) {
+    plan.className = "stack";
+    plan.innerHTML = `<p class="notice">${escapeHtml(String(error.message || error))}</p>`;
+  }
+}
+
+async function confirmDeleteGame(event) {
+  event.preventDefault();
+  if (!pendingDeletionGame) return;
+  const confirmation = document.querySelector("#delete-game-confirmation");
+  const result = document.querySelector("#delete-game-result");
+  const submit = document.querySelector("#confirm-delete-game");
+  if (confirmation.value !== pendingDeletionGame.id) {
+    result.className = "connection-result bad";
+    result.textContent = `Type ${pendingDeletionGame.id} exactly.`;
+    return;
+  }
+  submit.disabled = true;
+  submit.textContent = "Deleting…";
+  result.className = "connection-result";
+  result.textContent = "Removing catalog, records, ROMs, and media…";
+  try {
+    const game = pendingDeletionGame;
+    await deleteJson(`/api/v1/admin/games/${encodeURIComponent(game.id)}/deletion`, { confirmation: game.id });
+    pendingDeletionGame = null;
+    deleteGameDialog.close();
+    document.querySelector("#game-editor").innerHTML = `<div class="empty-state"><strong>Select a game</strong><p>Edit metadata, artwork, player labels, and media.</p></div>`;
+    toast(`${game.display_name || game.id} was permanently deleted.`);
+    await refresh();
+  } catch (error) {
+    result.className = "connection-result bad";
+    result.textContent = String(error.message || error);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Permanently delete";
+  }
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
 function primaryMediaPath(metadata) {

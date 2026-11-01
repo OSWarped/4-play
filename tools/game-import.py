@@ -86,6 +86,7 @@ class Importer:
         self.roms = Path(config['rom_root']).resolve(strict=True)
         self.samples = Path(config['sample_root']).resolve(strict=True)
         self.manifest = Path(config['manifest']).resolve(strict=True)
+        self.assets = Path(config['asset_root']).resolve(strict=True) if config.get('asset_root') else None
         self.stage = Path(config['stage_root'])
         self.stage.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.stage = self.stage.resolve(strict=True)
@@ -396,11 +397,85 @@ class Importer:
         self.save(job)
         return job
 
+    @staticmethod
+    def deletion_size(path):
+        if path.is_symlink():
+            raise ValueError('Refusing to delete a symlink')
+        if path.is_file():
+            return path.stat().st_size
+        total = 0
+        for child in path.rglob('*'):
+            if child.is_symlink():
+                raise ValueError('Refusing to delete a directory containing symlinks')
+            if child.is_file():
+                total += child.stat().st_size
+        return total
+
+    def deletion_plan(self, game, rom_name):
+        safe_name(game); safe_name(rom_name)
+        manifest = json.loads(self.manifest.read_text(encoding='utf-8'))
+        entries = [entry for entry in manifest.get('games', []) if entry.get('id') == game]
+        if len(entries) > 1 or (entries and entries[0].get('rom_name') != rom_name):
+            raise ValueError('Catalog manifest conflicts with the expected game and ROM')
+        rom_is_shared = any(entry.get('id') != game and entry.get('rom_name') == rom_name
+                            for entry in manifest['games'])
+        candidates = [] if rom_is_shared else [
+            ('rom', self.roms / f'{rom_name}.zip'), ('rom', self.roms / f'{rom_name}.7z'),
+            ('chd', self.roms / rom_name)]
+        if self.assets:
+            candidates.append(('media', self.assets / 'media' / game))
+        files = []
+        for kind, path in candidates:
+            if not path.exists():
+                continue
+            root = self.assets if kind == 'media' else self.roms
+            if path.resolve().parent != root.resolve() and not (kind == 'media' and path.resolve().parent == (root / 'media').resolve()):
+                raise ValueError('Deletion target escaped its configured root')
+            files.append({'kind': kind, 'path': str(path.relative_to(root)), 'bytes': self.deletion_size(path)})
+        preserves = ['shared parent ROMs', 'BIOS/device ROMs', 'shared samples']
+        if rom_is_shared:
+            preserves.append('primary ROM/CHD referenced by another catalog entry')
+        return {'game': game, 'rom_name': rom_name, 'manifest_present': bool(entries), 'files': files,
+                'bytes': sum(item['bytes'] for item in files),
+                'preserves': preserves}
+
+    def delete_game(self, game, rom_name, confirmation):
+        if confirmation != game:
+            raise ValueError('Typed confirmation must exactly match the game ID')
+        with locked(self.manifest.with_name(self.manifest.name + '.import.lock')):
+            plan = self.deletion_plan(game, rom_name)
+            manifest = json.loads(self.manifest.read_text(encoding='utf-8'))
+            backup = None
+            if plan['manifest_present']:
+                backup = self.manifest.with_name(self.manifest.name + f'.before-delete-{uuid.uuid4()}.bak')
+                with open(backup, 'x', encoding='utf-8') as stream:
+                    json.dump(manifest, stream, indent=2)
+                manifest['games'] = [entry for entry in manifest['games'] if entry.get('id') != game]
+                atomic_json(self.manifest, manifest)
+        removed = []
+        for item in plan['files']:
+            root = self.assets if item['kind'] == 'media' else self.roms
+            path = root / item['path']
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+            removed.append(item)
+        plan['removed'] = removed
+        plan['manifest_backup'] = backup.name if backup else None
+        return plan
+
 
 def main():
     config, action = json.loads(sys.argv[1]), sys.argv[2]
     request = json.loads(sys.stdin.buffer.readline(CHUNK))
     importer = Importer(config)
+    if action in ('delete-plan', 'delete-game'):
+        with locked(importer.stage / '.intake.lock'):
+            result = (importer.deletion_plan(request['game'], request['rom_name']) if action == 'delete-plan'
+                      else importer.delete_game(request['game'], request['rom_name'], request.get('confirmation')))
+        print(json.dumps(result))
+        return
     job_id = request.get('job')
     if action == 'start':
         with locked(importer.stage / '.intake.lock'):

@@ -37,10 +37,12 @@ class Imports(unittest.TestCase):
         self.root = Path(self.temp.name)
         for name in ['roms', 'samples']:
             (self.root / name).mkdir()
+        (self.root / 'assets/media').mkdir(parents=True)
         self.manifest = self.root / 'catalog.json'
         self.manifest.write_text(json.dumps({'schema_version': 1, 'games': [{'id': 'existing', 'rom_name': 'existing'}]}))
         self.engine = FakeImporter(dict(rom_root=str(self.root/'roms'), sample_root=str(self.root/'samples'),
-            stage_root=str(self.root/'staged'), manifest=str(self.manifest), mame='fake', ini='fake', chdman='fake'))
+            stage_root=str(self.root/'staged'), manifest=str(self.manifest), asset_root=str(self.root/'assets'),
+            mame='fake', ini='fake', chdman='fake'))
     def tearDown(self):
         self.temp.cleanup()
     def upload(self, job, path='fighter.zip', kind='rom', data=b'PK\x03\x04test'):
@@ -124,6 +126,52 @@ class Imports(unittest.TestCase):
         self.engine.discard(job['id'])
         self.assertFalse(list(self.engine.folder(job['id']).glob('*.part')))
         self.assertEqual((self.root/'roms/keep.zip').read_bytes(),b'keep')
+
+    def test_delete_plan_and_delete_remove_only_game_owned_files(self):
+        self.manifest.write_text(json.dumps({'schema_version': 1, 'games': [
+            {'id': 'fighter', 'rom_name': 'fighter'}, {'id': 'existing', 'rom_name': 'existing'}]}))
+        (self.root/'roms/fighter.zip').write_bytes(b'game')
+        (self.root/'roms/parent.zip').write_bytes(b'shared parent')
+        (self.root/'samples/fighter.zip').write_bytes(b'shared samples')
+        (self.root/'roms/fighter').mkdir()
+        (self.root/'roms/fighter/fightdisk.chd').write_bytes(b'MComprHD')
+        (self.root/'assets/media/fighter').mkdir()
+        (self.root/'assets/media/fighter/logo.png').write_bytes(b'png')
+        plan = self.engine.deletion_plan('fighter', 'fighter')
+        self.assertEqual({item['kind'] for item in plan['files']}, {'rom', 'chd', 'media'})
+        with self.assertRaises(ValueError): self.engine.delete_game('fighter', 'fighter', 'wrong')
+        result = self.engine.delete_game('fighter', 'fighter', 'fighter')
+        self.assertEqual(len(result['removed']), 3)
+        self.assertFalse((self.root/'roms/fighter.zip').exists())
+        self.assertFalse((self.root/'roms/fighter').exists())
+        self.assertFalse((self.root/'assets/media/fighter').exists())
+        self.assertTrue((self.root/'roms/parent.zip').exists())
+        self.assertTrue((self.root/'samples/fighter.zip').exists())
+        self.assertEqual([entry['id'] for entry in json.loads(self.manifest.read_text())['games']], ['existing'])
+        self.assertTrue(list(self.root.glob('catalog.json.before-delete-*.bak')))
+        retry = self.engine.deletion_plan('fighter', 'fighter')
+        self.assertFalse(retry['manifest_present'])
+        self.assertEqual(retry['files'], [])
+
+    def test_delete_rejects_symlinked_media_tree(self):
+        self.manifest.write_text(json.dumps({'schema_version': 1, 'games': [{'id': 'fighter', 'rom_name': 'fighter'}]}))
+        outside = self.root/'outside.png'; outside.write_bytes(b'keep')
+        media = self.root/'assets/media/fighter'; media.mkdir()
+        try:
+            (media/'escape.png').symlink_to(outside)
+        except OSError:
+            self.skipTest('symlinks unavailable')
+        with self.assertRaises(ValueError): self.engine.deletion_plan('fighter', 'fighter')
+        self.assertEqual(outside.read_bytes(), b'keep')
+
+    def test_delete_preserves_primary_rom_referenced_by_another_entry(self):
+        self.manifest.write_text(json.dumps({'schema_version': 1, 'games': [
+            {'id': 'fighter', 'rom_name': 'fighter'}, {'id': 'fighter-alt', 'rom_name': 'fighter'}]}))
+        archive = self.root/'roms/fighter.zip'; archive.write_bytes(b'shared')
+        plan = self.engine.deletion_plan('fighter', 'fighter')
+        self.assertFalse(any(item['kind'] == 'rom' for item in plan['files']))
+        self.engine.delete_game('fighter', 'fighter', 'fighter')
+        self.assertTrue(archive.exists())
 
 
 if __name__ == '__main__':
