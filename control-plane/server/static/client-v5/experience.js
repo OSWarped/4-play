@@ -6,9 +6,33 @@
   if (controls) controls.dataset.touchLayout = "floating";
 
   const logoLoaders = new Map();
+  const logoQueue = [];
+  let activeLogoLoads = 0;
   const games = new Map();
+  function pumpLogoQueue() {
+    while (activeLogoLoads < 2 && logoQueue.length) {
+      const task = logoQueue.shift();
+      if (!task.card.isConnected || logoLoaders.get(task.card) !== task.loader) continue;
+      activeLogoLoads += 1;
+      task.loader.load(task.game, window.FourPlayV2.headers, url => {
+        if (!url || logoLoaders.get(task.card) !== task.loader) return;
+        task.logo.onload = () => {
+          task.logo.hidden = false;
+          task.card.classList.add("has-game-logo");
+        };
+        task.logo.onerror = () => {
+          task.logo.hidden = true;
+          task.card.classList.remove("has-game-logo");
+        };
+        task.logo.src = url;
+      }, "logo").finally(() => {
+        activeLogoLoads -= 1;
+        pumpLogoQueue();
+      });
+    }
+  }
   function addGameLogos(selection, cards) {
-    const connected = new Set(Array.from(cards).filter((_, index) => Math.abs(index - selection.index) <= 3));
+    const connected = new Set(cards);
     for (const [card, loader] of logoLoaders) {
       if (!connected.has(card)) {
         loader.clear();
@@ -20,21 +44,15 @@
     cards.forEach((card, index) => {
       const game = selection.games[index];
       if (game) games.set(game.id, game);
-      // Match the cover-art window. Cached thumbnails keep these seven nearby
-      // logos compact without requesting the whole logo library at startup.
-      if (Math.abs(index - selection.index) > 3 || !game?.metadata?.logo_path || logoLoaders.has(card)) return;
+      if (!game?.metadata?.logo_path || logoLoaders.has(card)) return;
       const logo = document.createElement("img");
       logo.className = "v5-game-logo"; logo.alt = ""; logo.hidden = true;
       card.append(logo);
       const loader = new window.FourPlayCarousel.ArtworkLoader(window.FourPlayV2.artworkEnvironment);
       logoLoaders.set(card, loader);
-      loader.load(game, window.FourPlayV2.headers, url => {
-        if (!url) return;
-        logo.onload = () => { logo.hidden = false; card.classList.add("has-game-logo"); };
-        logo.onerror = () => { logo.hidden = true; card.classList.remove("has-game-logo"); };
-        logo.src = url;
-      }, "logo");
+      logoQueue.push({ card, game, loader, logo });
     });
+    pumpLogoQueue();
   }
   if (window.FourPlayV2) {
     const originalUpdateCovers = window.FourPlayV2.updateCovers;
