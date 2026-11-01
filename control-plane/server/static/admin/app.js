@@ -351,8 +351,15 @@ function renderActiveSession(session) {
 function renderGames() {
   const query = gameFilter.value.trim().toLowerCase();
   const filtered = state.games.filter((game) => {
-    const haystack = `${game.display_name} ${game.id} ${game.metadata?.genre || ""}`.toLowerCase();
+    const haystack = `${game.metadata?.sort_title || ""} ${game.display_name} ${game.id} ${game.metadata?.genre || ""}`.toLowerCase();
     return haystack.includes(query);
+  }).sort((left, right) => {
+    const leftName = left.display_name || left.id;
+    const rightName = right.display_name || right.id;
+    const leftSortTitle = left.metadata?.sort_title || leftName;
+    const rightSortTitle = right.metadata?.sort_title || rightName;
+    return leftSortTitle.localeCompare(rightSortTitle, undefined, { numeric: true, sensitivity: "base" })
+      || leftName.localeCompare(rightName, undefined, { numeric: true, sensitivity: "base" });
   });
   const container = document.querySelector("#games");
   replaceChildren(container, filtered.map(renderGame));
@@ -587,7 +594,6 @@ function renderGame(game) {
     <span class="pill">${escapeHtml(game.id)}</span>
     <span class="pill">${escapeHtml(metadata.genre || "unknown genre")}</span>
     <span class="pill">${escapeHtml(String(metadata.player_count || game.availability?.[0]?.profile?.max_players || "?"))} players</span>
-    <p class="muted">${escapeHtml(metadata.description || "No description yet.")}</p>
   `;
   const open = () => renderGameEditor(game, element);
   element.addEventListener("click", open);

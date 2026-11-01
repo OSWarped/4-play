@@ -595,7 +595,6 @@ code {
 .library-catalog .game-grid { grid-template-columns: repeat(auto-fill,minmax(13rem,1fr)); }
 .game-card { cursor: pointer; min-width: 0; transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
 .game-card:hover, .game-card:focus-visible { transform: translateY(-2px); border-color: rgba(47,114,255,.65); box-shadow: 0 .8rem 2rem rgba(0,0,0,.22); outline: none; }
-.game-card > p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .compact-section, .advanced-section { padding: 0; }
 .compact-section summary, .advanced-section summary { cursor: pointer; padding: 1rem; font-weight: 700; }
 .compact-section details > div, .advanced-section details > div, .advanced-section details > pre { margin: 0 1rem 1rem; }
