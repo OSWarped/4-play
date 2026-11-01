@@ -170,10 +170,10 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
     let (width, height) = if entry.rom_name.starts_with("spidman") {
         // Sega System 32's 416x224 framebuffer is wider than most 2D games.
-        // A proportional 320x172 stream keeps audio and video real-time on
-        // the reference host while retaining substantially more detail than
-        // the general 256-wide performance profile.
-        (320, 172)
+        // The initial proportional 320x172 profile reached about 47 fps on
+        // the reference host. 288x156 removes another 21% of the raw pixel
+        // workload while preserving the game's unusually wide aspect ratio.
+        (288, 156)
     } else if entry.rom_name.starts_with("blitz") {
         // Seattle games sit near the limit of the reference host when the
         // browser's software WebRTC encoder and legacy stream run together.
@@ -355,8 +355,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.profile.width, 320);
-        assert_eq!(game.profile.height, 172);
+        assert_eq!(game.profile.width, 288);
+        assert_eq!(game.profile.height, 156);
         assert_eq!(game.profile.refresh_hz, 60.0);
     }
 
