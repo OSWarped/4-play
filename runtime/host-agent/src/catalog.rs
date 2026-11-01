@@ -168,7 +168,13 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .height
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
-    let (width, height) = if entry.rom_name.starts_with("blitz") {
+    let (width, height) = if entry.rom_name.starts_with("spidman") {
+        // Sega System 32's 416x224 framebuffer is wider than most 2D games.
+        // A proportional 320x172 stream keeps audio and video real-time on
+        // the reference host while retaining substantially more detail than
+        // the general 256-wide performance profile.
+        (320, 172)
+    } else if entry.rom_name.starts_with("blitz") {
         // Hardware H.264 offload gives Seattle games enough headroom to use
         // the same sharper 4:3 streaming profile as other demanding 3D games.
         (320, 240)
@@ -326,6 +332,30 @@ mod tests {
         assert_eq!(game.profile.width, 320);
         assert_eq!(game.profile.height, 240);
         assert_eq!(game.profile.refresh_hz, 57.0);
+    }
+
+    #[test]
+    fn bounds_spiderman_streaming_resolution() {
+        let xml = r#"<mame>
+            <machine name="spidmanu">
+                <description>Spider-Man: The Videogame</description>
+                <display tag="mainpcb:screen" rotate="0" width="416" height="224" refresh="60.0" />
+                <input players="4"><control type="joy" buttons="3" /></input>
+                <driver savestate="supported" />
+            </machine>
+        </mame>"#;
+        let game = parse_mame_game(
+            &CatalogEntry {
+                id: "spidmanu".to_owned(),
+                rom_name: "spidmanu".to_owned(),
+            },
+            xml,
+        )
+        .unwrap();
+
+        assert_eq!(game.profile.width, 320);
+        assert_eq!(game.profile.height, 172);
+        assert_eq!(game.profile.refresh_hz, 60.0);
     }
 
     #[test]

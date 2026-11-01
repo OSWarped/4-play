@@ -644,6 +644,23 @@ function renderGameEditor(game, opener = gameDetailsOpener) {
       ${metadataInput("Player count", "player_count", metadata.player_count, "number", "1-16")}
       ${metadataTextarea("Description", "description", metadata.description)}
       ${metadataTextarea("Control notes", "control_notes", metadata.control_notes)}
+      <fieldset class="stream-profile-editor">
+        <legend>Streaming performance</legend>
+        <p class="muted">Override the captured video size for demanding games. Changes apply to newly started sessions.</p>
+        <label>
+          <span>Preset</span>
+          <select id="stream-profile-preset">
+            <option value="automatic">Automatic (game default)</option>
+            <option value="balanced">Balanced (320 pixels wide)</option>
+            <option value="performance">Performance (256 pixels wide)</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <div class="metadata-grid">
+          ${metadataInput("Stream width", "stream_width", metadata.stream_width, "number", "even, 64-1920")}
+          ${metadataInput("Stream height", "stream_height", metadata.stream_height, "number", "even, 64-1080")}
+        </div>
+      </fieldset>
       <div class="metadata-grid">
         ${metadataInput("Artwork path", "artwork_path", metadata.artwork_path, "text", "media/game/artwork.png")}
         ${metadataInput("Marquee path", "marquee_path", metadata.marquee_path, "text", "media/game/marquee.png")}
@@ -713,6 +730,7 @@ function renderGameEditor(game, opener = gameDetailsOpener) {
   };
   form.addEventListener("input", markMetadataDirty);
   form.addEventListener("change", markMetadataDirty);
+  bindStreamProfileEditor(form, game);
   cleanupMetadataProvider = FourPlayMetadataEditor.bind(form, game, { post: postJson, fetch, headers: authHeaders, escapeHtml });
   form.addEventListener("submit", (event) => saveGameMetadata(event, game));
   editor.querySelector("#cancel-metadata-edit").addEventListener("click", requestCloseGameDetails);
@@ -1041,7 +1059,7 @@ function metadataFromForm(form) {
       metadata[field] = value;
     }
   }
-  for (const field of ["release_year", "player_count"]) {
+  for (const field of ["release_year", "player_count", "stream_width", "stream_height"]) {
     const value = String(data.get(field) || "").trim();
     if (value) {
       metadata[field] = Number(value);
@@ -1049,6 +1067,41 @@ function metadataFromForm(form) {
   }
   metadata.player_slots = playerSlotsFromForm(data, metadata.player_count);
   return metadata;
+}
+
+function bindStreamProfileEditor(form, game) {
+  const preset = form.querySelector("#stream-profile-preset");
+  const width = form.elements.stream_width;
+  const height = form.elements.stream_height;
+  const native = game.availability?.[0]?.profile || {};
+  const currentWidth = Number(width.value);
+  const currentHeight = Number(height.value);
+  const dimensionsFor = (targetWidth) => {
+    const sourceWidth = Number(native.width) || targetWidth;
+    const sourceHeight = Number(native.height) || Math.round(targetWidth * 0.75);
+    const scaledWidth = Math.min(targetWidth, sourceWidth);
+    return [scaledWidth, Math.max(64, Math.round((scaledWidth * sourceHeight / sourceWidth) / 2) * 2)];
+  };
+  const balanced = dimensionsFor(320);
+  const performance = dimensionsFor(256);
+  if (!currentWidth && !currentHeight) preset.value = "automatic";
+  else if (currentWidth === balanced[0] && currentHeight === balanced[1]) preset.value = "balanced";
+  else if (currentWidth === performance[0] && currentHeight === performance[1]) preset.value = "performance";
+  else preset.value = "custom";
+  preset.addEventListener("change", () => {
+    if (preset.value === "automatic") {
+      width.value = "";
+      height.value = "";
+    } else if (preset.value === "balanced" || preset.value === "performance") {
+      const dimensions = preset.value === "balanced" ? balanced : performance;
+      width.value = dimensions[0];
+      height.value = dimensions[1];
+    }
+    form.dataset.dirty = "true";
+  });
+  for (const input of [width, height]) {
+    input.addEventListener("input", () => { preset.value = "custom"; });
+  }
 }
 
 function playerSlotsFromForm(data, playerCount) {

@@ -1793,6 +1793,26 @@ fn validate_game_metadata(metadata: &GameMetadata) -> Result<(), ApiError> {
             "player count must be between 1 and 16",
         ));
     }
+    match (metadata.stream_width, metadata.stream_height) {
+        (None, None) => {}
+        (Some(width), Some(height))
+            if (64..=1920).contains(&width)
+                && (64..=1080).contains(&height)
+                && width % 2 == 0
+                && height % 2 == 0 => {}
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request(
+                "invalid_stream_dimensions",
+                "stream width and height must be even values between 64x64 and 1920x1080",
+            ));
+        }
+        _ => {
+            return Err(ApiError::bad_request(
+                "incomplete_stream_dimensions",
+                "stream width and height must be set or cleared together",
+            ));
+        }
+    }
     for (field, value) in [
         ("artwork_path", metadata.artwork_path.as_deref()),
         ("marquee_path", metadata.marquee_path.as_deref()),
@@ -3583,7 +3603,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn game_metadata_can_be_updated_and_overrides_player_count() {
+    async fn game_metadata_can_override_player_count_and_stream_dimensions() {
         let service = app().await.unwrap();
         register_host_and_catalog(&service).await;
 
@@ -3605,6 +3625,8 @@ mod tests {
                     "release_year": 1989,
                     "manufacturer": "Konami",
                     "player_count": 3,
+                    "stream_width": 256,
+                    "stream_height": 180,
                     "artwork_path": "media/tmnt/artwork.png",
                     "marquee_path": "media/tmnt/marquee.png",
                     "screenshot_path": "media/tmnt/screen.png",
@@ -3617,6 +3639,8 @@ mod tests {
         assert_eq!(update_status, 200);
         assert_eq!(updated_game["metadata"]["player_count"], 3);
         assert_eq!(updated_game["availability"][0]["profile"]["max_players"], 3);
+        assert_eq!(updated_game["availability"][0]["profile"]["width"], 256);
+        assert_eq!(updated_game["availability"][0]["profile"]["height"], 180);
 
         let (_, created) = request_json(
             service,
@@ -3627,6 +3651,8 @@ mod tests {
         .await;
         assert_eq!(created["player_slots"].as_array().unwrap().len(), 3);
         assert_eq!(created["runtime_profile"]["max_players"], 3);
+        assert_eq!(created["runtime_profile"]["width"], 256);
+        assert_eq!(created["runtime_profile"]["height"], 180);
     }
 
     #[tokio::test]

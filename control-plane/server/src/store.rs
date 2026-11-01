@@ -2272,6 +2272,10 @@ fn apply_metadata_to_profile(profile: &mut GameRuntimeProfile, metadata: &GameMe
     if let Some(player_count) = metadata.player_count {
         profile.max_players = player_count.max(1);
     }
+    if let (Some(width), Some(height)) = (metadata.stream_width, metadata.stream_height) {
+        profile.width = width;
+        profile.height = height;
+    }
 }
 
 fn parse_session_state(state: &str) -> Result<SessionState, StoreError> {

@@ -132,6 +132,12 @@ pub struct GameMetadata {
     pub screenshot_path: Option<String>,
     pub logo_path: Option<String>,
     pub control_notes: Option<String>,
+    /// Optional per-game output dimensions applied when a session is allocated.
+    /// Both values must be present together; otherwise the discovered profile is used.
+    #[serde(default)]
+    pub stream_width: Option<u32>,
+    #[serde(default)]
+    pub stream_height: Option<u32>,
     #[serde(default)]
     pub player_slots: Vec<GamePlayerSlotMetadata>,
 }
@@ -671,6 +677,8 @@ mod tests {
                 screenshot_path: Some("media/tmnt/screen.png".to_owned()),
                 logo_path: Some("media/tmnt/logo.png".to_owned()),
                 control_notes: Some("Jump and attack.".to_owned()),
+                stream_width: Some(320),
+                stream_height: Some(224),
                 player_slots: vec![GamePlayerSlotMetadata {
                     player_number: 2,
                     label: Some("Donatello".to_owned()),
@@ -685,6 +693,8 @@ mod tests {
         assert_eq!(value["metadata"]["player_count"], 4);
         assert_eq!(value["metadata"]["marquee_path"], "media/tmnt/marquee.png");
         assert_eq!(value["metadata"]["release_year"], 1989);
+        assert_eq!(value["metadata"]["stream_width"], 320);
+        assert_eq!(value["metadata"]["stream_height"], 224);
         assert_eq!(value["metadata"]["player_slots"][0]["player_number"], 2);
         assert_eq!(value["metadata"]["player_slots"][0]["label"], "Donatello");
     }
