@@ -175,9 +175,11 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         // the general 256-wide performance profile.
         (320, 172)
     } else if entry.rom_name.starts_with("blitz") {
-        // Hardware H.264 offload gives Seattle games enough headroom to use
-        // the same sharper 4:3 streaming profile as other demanding 3D games.
-        (320, 240)
+        // Seattle games sit near the limit of the reference host when the
+        // browser's software WebRTC encoder and legacy stream run together.
+        // 288x216 is a middle profile: 19% fewer pixels than 320x240 while
+        // retaining 27% more detail than the known-good 256x192 fallback.
+        (288, 216)
     } else if entry.rom_name.starts_with("tekken3") {
         // System 12 advertises a 640x480 main display, but feeding that raw
         // frame size through both software streaming encoders overwhelms the
@@ -329,8 +331,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.profile.width, 320);
-        assert_eq!(game.profile.height, 240);
+        assert_eq!(game.profile.width, 288);
+        assert_eq!(game.profile.height, 216);
         assert_eq!(game.profile.refresh_hz, 57.0);
     }
 

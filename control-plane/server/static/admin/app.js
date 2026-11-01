@@ -651,7 +651,8 @@ function renderGameEditor(game, opener = gameDetailsOpener) {
           <span>Preset</span>
           <select id="stream-profile-preset">
             <option value="automatic">Automatic (game default)</option>
-            <option value="balanced">Balanced (320 pixels wide)</option>
+            <option value="quality">Quality (320 pixels wide)</option>
+            <option value="balanced">Balanced (288 pixels wide)</option>
             <option value="performance">Performance (256 pixels wide)</option>
             <option value="custom">Custom</option>
           </select>
@@ -1082,9 +1083,11 @@ function bindStreamProfileEditor(form, game) {
     const scaledWidth = Math.min(targetWidth, sourceWidth);
     return [scaledWidth, Math.max(64, Math.round((scaledWidth * sourceHeight / sourceWidth) / 2) * 2)];
   };
-  const balanced = dimensionsFor(320);
+  const quality = dimensionsFor(320);
+  const balanced = dimensionsFor(288);
   const performance = dimensionsFor(256);
   if (!currentWidth && !currentHeight) preset.value = "automatic";
+  else if (currentWidth === quality[0] && currentHeight === quality[1]) preset.value = "quality";
   else if (currentWidth === balanced[0] && currentHeight === balanced[1]) preset.value = "balanced";
   else if (currentWidth === performance[0] && currentHeight === performance[1]) preset.value = "performance";
   else preset.value = "custom";
@@ -1092,8 +1095,8 @@ function bindStreamProfileEditor(form, game) {
     if (preset.value === "automatic") {
       width.value = "";
       height.value = "";
-    } else if (preset.value === "balanced" || preset.value === "performance") {
-      const dimensions = preset.value === "balanced" ? balanced : performance;
+    } else if (["quality", "balanced", "performance"].includes(preset.value)) {
+      const dimensions = { quality, balanced, performance }[preset.value];
       width.value = dimensions[0];
       height.value = dimensions[1];
     }
