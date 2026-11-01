@@ -168,17 +168,18 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .height
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
-    let (width, height) = if entry.rom_name.starts_with("tekken3") {
-        // System 12 advertises a 640x480 main display, but feeding that raw
-        // frame size through both software streaming encoders overwhelms the
-        // reference host and back-pressures MAME. 320x240 preserves Tekken's
-        // 4:3 presentation while reducing the raw/encode workload by 75%.
-        (320, 240)
-    } else if matches!(display.rotation_degrees % 360, 90 | 270) {
-        (native_height, native_width)
-    } else {
-        (native_width, native_height)
-    };
+    let (width, height) =
+        if entry.rom_name.starts_with("tekken3") || entry.rom_name.starts_with("blitz") {
+            // These 3D systems advertise a 640x480 main display, but feeding that
+            // raw frame size through both software streaming encoders overwhelms
+            // the reference host and back-pressures MAME. 320x240 preserves their
+            // 4:3 presentation while reducing the raw/encode workload by 75%.
+            (320, 240)
+        } else if matches!(display.rotation_degrees % 360, 90 | 270) {
+            (native_height, native_width)
+        } else {
+            (native_width, native_height)
+        };
     let refresh_hz = display
         .refresh_hz
         .filter(|value| value.is_finite() && *value > 0.0)
@@ -298,6 +299,30 @@ mod tests {
 
         assert_eq!(game.profile.width, 320);
         assert_eq!(game.profile.height, 240);
+    }
+
+    #[test]
+    fn bounds_blitz_streaming_resolution() {
+        let xml = r#"<mame>
+            <machine name="blitz2k">
+                <description>NFL Blitz 2000 Gold Edition</description>
+                <display tag="screen" rotate="0" width="640" height="480" refresh="57.0" />
+                <input players="4"><control type="joy" buttons="3" /></input>
+                <driver savestate="supported" />
+            </machine>
+        </mame>"#;
+        let game = parse_mame_game(
+            &CatalogEntry {
+                id: "blitz2k".to_owned(),
+                rom_name: "blitz2k".to_owned(),
+            },
+            xml,
+        )
+        .unwrap();
+
+        assert_eq!(game.profile.width, 320);
+        assert_eq!(game.profile.height, 240);
+        assert_eq!(game.profile.refresh_hz, 57.0);
     }
 
     #[test]
