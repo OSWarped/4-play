@@ -72,6 +72,71 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin]:hover { bac
   body[data-client-generation="5"] .game-cover, .v5-attract * { animation: none !important; transition: none !important; }
 }
 
+/* Floating controls remain usable in portrait without consuming another
+   screen-height row below the video. Empty overlay space never captures taps. */
+@media (orientation: portrait) and (any-pointer: coarse) {
+  body[data-client-generation="5"].browser-playing #browser-player {
+    display: grid;
+    grid-template-rows: auto minmax(0,1fr);
+    padding: .5rem;
+    gap: .4rem;
+  }
+  body[data-client-generation="5"].browser-playing .player-toolbar {
+    grid-row: 1;
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
+  }
+  body[data-client-generation="5"].browser-playing .browser-video-stage,
+  body[data-client-generation="5"].browser-playing .touch-controls {
+    grid-row: 2;
+    grid-column: 1;
+  }
+  body[data-client-generation="5"].browser-playing .touch-controls {
+    z-index: 3;
+    display: grid;
+    grid-template-columns: minmax(45%,1fr) auto;
+    align-items: end;
+    padding: .75rem;
+    pointer-events: none;
+  }
+  body[data-client-generation="5"].browser-playing .touch-controls[hidden] { display: none; }
+  body[data-client-generation="5"].browser-playing .touch-stick-zone {
+    position: relative;
+    align-self: end;
+    width: 100%;
+    height: min(42svh,22rem);
+    pointer-events: auto;
+    touch-action: none;
+  }
+  body[data-client-generation="5"].browser-playing .touch-stick-ring {
+    position: absolute;
+    left: 35%;
+    top: 65%;
+    width: 7rem;
+    height: 7rem;
+    transform: translate(-50%,-50%);
+    border: 2px solid #d7fff066;
+    border-radius: 50%;
+    background: #07131f38;
+    opacity: .68;
+  }
+  body[data-client-generation="5"].browser-playing .touch-stick-zone.is-active .touch-stick-ring { opacity: .95; }
+  body[data-client-generation="5"].browser-playing .touch-stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3.1rem;
+    height: 3.1rem;
+    margin: -1.55rem;
+    border: 2px solid #ffc83dcc;
+    border-radius: 50%;
+    background: #2f72ffb8;
+    will-change: transform;
+  }
+  body[data-client-generation="5"].browser-playing .touch-right { pointer-events: auto; }
+}
+
 /* V5 mobile landscape experiment: toolbar above, controls over the video. */
 @media (orientation: landscape) and (any-pointer: coarse) {
   body[data-client-generation="5"].browser-playing #browser-player {
@@ -88,11 +153,17 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin]:hover { bac
     align-items: center;
     min-height: 44px;
     margin: 0;
-    z-index: 4;
+    position: relative;
+    z-index: 10;
+    pointer-events: auto;
+    isolation: isolate;
   }
   body[data-client-generation="5"].browser-playing .player-toolbar > div:first-child { display: none; }
   body[data-client-generation="5"].browser-playing .player-controls { display: flex; flex-wrap: nowrap; width: 100%; gap: .35rem; }
-  body[data-client-generation="5"].browser-playing .player-controls button { flex: 1; min-height: 46px; padding: .45rem .55rem; }
+  body[data-client-generation="5"].browser-playing .player-controls button {
+    position: relative; z-index: 11; flex: 1; min-height: 46px; padding: .45rem .55rem;
+    pointer-events: auto; touch-action: manipulation;
+  }
   body[data-client-generation="5"].browser-playing .browser-video-stage,
   body[data-client-generation="5"].browser-playing .touch-controls {
     grid-row: 2;
@@ -109,7 +180,9 @@ body[data-client-generation="5"] .v4-game-panel [data-inline-rejoin]:hover { bac
     pointer-events: none;
   }
   body[data-client-generation="5"].browser-playing .touch-controls[hidden] { display: none; }
-  body[data-client-generation="5"].browser-playing .touch-stick-zone { position: relative; min-width: 12rem; pointer-events: auto; }
+  body[data-client-generation="5"].browser-playing .touch-stick-zone {
+    position: relative; align-self: end; min-width: 12rem; height: 78%; pointer-events: auto; touch-action: none;
+  }
   body[data-client-generation="5"].browser-playing .touch-stick-ring {
     position: absolute; left: 28%; top: 62%; width: 7rem; height: 7rem; transform: translate(-50%,-50%);
     border: 2px solid #d7fff066; border-radius: 50%; background: #07131f38; opacity: .58;
