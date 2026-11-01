@@ -8,14 +8,17 @@
   const logoLoaders = new Map();
   const games = new Map();
   function addGameLogos(selection, cards) {
-    const connected = new Set(cards);
+    const connected = new Set(Array.from(cards).filter((_, index) => Math.abs(index - selection.index) <= 1));
     for (const [card, loader] of logoLoaders) {
       if (!connected.has(card)) { loader.clear(); logoLoaders.delete(card); }
     }
     cards.forEach((card, index) => {
       const game = selection.games[index];
       if (game) games.set(game.id, game);
-      if (!game?.metadata?.logo_path || logoLoaders.has(card)) return;
+      // Covers already load for the selected card and three neighbors on each
+      // side. Limit the optional logo overlay to the closest three cards so a
+      // cellular client does not request the whole logo library at startup.
+      if (Math.abs(index - selection.index) > 1 || !game?.metadata?.logo_path || logoLoaders.has(card)) return;
       const logo = document.createElement("img");
       logo.className = "v5-game-logo"; logo.alt = ""; logo.hidden = true;
       card.append(logo);

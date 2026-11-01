@@ -52,7 +52,11 @@ server {
     location = /client-v5/ { proxy_pass http://127.0.0.1:8080; }
     location = /client-v5/experience.js { proxy_pass http://127.0.0.1:8080; }
     location = /client-v5/styles.css { proxy_pass http://127.0.0.1:8080; }
-    location = /client-v5/app-logo.png { proxy_pass http://127.0.0.1:8080; }
+    location = /client-v5/app-logo.png {
+        proxy_read_timeout 5m;
+        send_timeout 5m;
+        proxy_pass http://127.0.0.1:8080;
+    }
     location = /client-v4 { proxy_pass http://127.0.0.1:8080; }
     location = /client-v4/ { proxy_pass http://127.0.0.1:8080; }
     location = /client-v4/experience.js { proxy_pass http://127.0.0.1:8080; }
@@ -70,6 +74,13 @@ server {
     }
     # The Rust facade authenticates, authorizes, and allowlists scoped operations.
     # This is NOT a proxy for the raw /api/v1 endpoints.
+    # Artwork can be several megabytes. Cellular clients may legitimately take
+    # longer than the short API timeout without indicating a dead upstream.
+    location ^~ /client-v2/api/assets/ {
+        proxy_read_timeout 5m;
+        send_timeout 5m;
+        proxy_pass http://127.0.0.1:8080;
+    }
     location ^~ /client-v2/api/ { proxy_pass http://127.0.0.1:8080; }
     location / { return 404; }
 }
