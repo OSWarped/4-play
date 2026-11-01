@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), vm = require("node:vm");
-const { GameSelection, assetUrl, artworkPaths, ArtworkLoader, displayTitle, centeredLeft, bindRail, loadBrand } = require("../control-plane/server/static/client/carousel.js");
+const { GameSelection, assetUrl, thumbnailAssetUrl, artworkPaths, ArtworkLoader, displayTitle, centeredLeft, bindRail, loadBrand } = require("../control-plane/server/static/client/carousel.js");
 const games = [
   { id: "aliens", display_name: "Aliens", metadata: { genre: "Run and gun", release_year: 1990 } },
   { id: "kinst", display_name: "Killer Instinct", metadata: { genre: "Fighting", manufacturer: "Rare" } },
@@ -31,6 +31,8 @@ test("filter searches metadata, ignores unknown IDs and safely resets removed se
 
 test("asset paths are same-origin encoded relative paths, never tokens or external requests", () => {
   assert.equal(assetUrl("media/Space & Fight/art.png"), "/api/v1/assets/media/Space%20%26%20Fight/art.png");
+  assert.equal(thumbnailAssetUrl("media/Space & Fight/art.png"),
+    "/api/v1/assets/thumbnails/media/Space%20%26%20Fight/art.png.webp");
   for (const path of ["https://evil/image", "../image", "/image", "a\\b", "a//b", "a/./b", "a\n/b"]) {
     assert.throws(() => assetUrl(path));
   }
@@ -75,7 +77,7 @@ test("non-images, oversized images, missing files and invalid paths retain the f
   const s = fixture(async () => { throw new Error("offline"); });
   await s.loader.load({ metadata: { artwork_path: "../bad", screenshot_path: "valid.png" } }, {}, s.apply);
   assert.deepEqual(s.applied, [null]);
-  assert.equal(s.requests.length, 1);
+  assert.equal(s.requests.length, 2);
 });
 
 test("shipped featured view updates selection, roving focus, scroll and empty-state actions", () => {
@@ -134,7 +136,7 @@ test("logos, marquees and covers have independent image priorities", async () =>
   assert.deepEqual(artworkPaths(game, "photo"), ["scene.png", "poster.png"]);
   const s = fixture(async () => response());
   await s.loader.load(game, {}, s.apply, "logo");
-  assert.equal(s.requests[0][0], "/api/v1/assets/logo.png");
+  assert.equal(s.requests[0][0], "/api/v1/assets/thumbnails/logo.png.webp");
 });
 
 test("a decoded logo replaces marquee/title, and failed or missing logos restore fallbacks", () => {

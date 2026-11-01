@@ -118,6 +118,10 @@
     return `/api/v1/assets/${parts.map(encodeURIComponent).join("/")}`;
   }
 
+  function thumbnailAssetUrl(path) {
+    return assetUrl(`thumbnails/${path}.webp`);
+  }
+
   class ArtworkLoader {
     constructor(env = root) { this.env = env; this.version = 0; this.url = null; this.controller = null; }
     clear() {
@@ -133,25 +137,33 @@
       const controller = this.controller = new this.env.AbortController();
       apply(null);
       for (const path of artworkPaths(game, role)) {
-        try {
-          const response = await this.env.fetch(assetUrl(path), { headers, signal: controller.signal });
-          if (version !== this.version || controller.signal.aborted) return;
-          if (!response.ok) continue;
-          const blob = await response.blob();
-          if (version !== this.version) return;
-          if (!blob.type.startsWith("image/") || blob.size > 16 * 1024 * 1024) continue;
-          this.url = this.env.URL.createObjectURL(blob);
-          apply(this.url);
-          return;
-        } catch (error) {
-          if (controller.signal.aborted || version !== this.version) return;
-          // Missing/invalid artwork must never block browsing or launching.
+        // Compact cached thumbnails keep cellular browsing practical. The
+        // original remains a compatibility fallback while a thumbnail is
+        // being generated or when the host lacks an image converter.
+        let urls;
+        try { urls = [thumbnailAssetUrl(path), assetUrl(path)]; }
+        catch { continue; }
+        for (const url of urls) {
+          try {
+            const response = await this.env.fetch(url, { headers, signal: controller.signal });
+            if (version !== this.version || controller.signal.aborted) return;
+            if (!response.ok) continue;
+            const blob = await response.blob();
+            if (version !== this.version) return;
+            if (!blob.type.startsWith("image/") || blob.size > 16 * 1024 * 1024) continue;
+            this.url = this.env.URL.createObjectURL(blob);
+            apply(this.url);
+            return;
+          } catch (error) {
+            if (controller.signal.aborted || version !== this.version) return;
+            // Missing/invalid artwork must never block browsing or launching.
+          }
         }
       }
     }
   }
 
-  const api = { GameSelection, displayTitle, artworkPaths, loadBrand, assetUrl, ArtworkLoader, cardCenter, centeredLeft, bindRail };
+  const api = { GameSelection, displayTitle, artworkPaths, loadBrand, assetUrl, thumbnailAssetUrl, ArtworkLoader, cardCenter, centeredLeft, bindRail };
   root.FourPlayCarousel = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

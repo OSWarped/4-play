@@ -734,6 +734,9 @@ async fn get_asset(
     };
     let relative_path = safe_relative_asset_path(&asset_path)?;
     let full_path = asset_root.join(&relative_path);
+    if relative_path.starts_with("thumbnails") {
+        generate_thumbnail_if_needed(asset_root, &relative_path).await;
+    }
     let bytes = tokio::fs::read(&full_path).await.map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ApiError::new(
@@ -749,11 +752,85 @@ async fn get_asset(
             )
         }
     })?;
+    let cache_control = if relative_path.starts_with("thumbnails") {
+        "private, max-age=86400"
+    } else {
+        "private, max-age=300"
+    };
     Ok((
-        [(CONTENT_TYPE, content_type_for_asset(&relative_path))],
+        [
+            (CONTENT_TYPE, content_type_for_asset(&relative_path)),
+            (axum::http::header::CACHE_CONTROL, cache_control),
+        ],
         Body::from(bytes),
     )
         .into_response())
+}
+
+async fn generate_thumbnail_if_needed(asset_root: &Path, relative_path: &Path) {
+    let Ok(thumbnail_relative) = relative_path.strip_prefix("thumbnails") else {
+        return;
+    };
+    let Some(thumbnail_name) = thumbnail_relative.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let Some(source_name) = thumbnail_name.strip_suffix(".webp") else {
+        return;
+    };
+    if source_name.is_empty() {
+        return;
+    }
+    let mut source_relative = thumbnail_relative.to_path_buf();
+    source_relative.set_file_name(source_name);
+    let source = asset_root.join(source_relative);
+    let destination = asset_root.join(relative_path);
+    let Ok(source_metadata) = tokio::fs::metadata(&source).await else {
+        return;
+    };
+    if !source_metadata.is_file() || source_metadata.len() > MAX_ASSET_UPLOAD_BYTES as u64 {
+        return;
+    }
+    if let Ok(destination_metadata) = tokio::fs::metadata(&destination).await
+        && destination_metadata.is_file()
+        && destination_metadata.len() > 0
+        && destination_metadata.modified().ok() >= source_metadata.modified().ok()
+    {
+        return;
+    }
+    let Some(parent) = destination.parent() else {
+        return;
+    };
+    if tokio::fs::create_dir_all(parent).await.is_err() {
+        return;
+    }
+    let temporary = parent.join(format!(".thumbnail-{}.webp", uuid::Uuid::new_v4()));
+    let status = tokio::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-y", "-i"])
+        .arg(&source)
+        .args([
+            "-vf",
+            "scale=480:360:force_original_aspect_ratio=decrease",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libwebp",
+            "-quality",
+            "72",
+            "-compression_level",
+            "6",
+        ])
+        .arg(&temporary)
+        .status()
+        .await;
+    if status.is_ok_and(|status| status.success())
+        && tokio::fs::metadata(&temporary)
+            .await
+            .is_ok_and(|metadata| metadata.len() > 0)
+    {
+        let _ = tokio::fs::rename(&temporary, &destination).await;
+    } else {
+        let _ = tokio::fs::remove_file(&temporary).await;
+    }
 }
 
 async fn put_asset(
