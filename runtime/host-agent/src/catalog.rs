@@ -34,6 +34,8 @@ struct MameMachine {
 
 #[derive(Debug, Deserialize)]
 struct MameDisplay {
+    #[serde(rename = "@tag")]
+    tag: Option<String>,
     #[serde(rename = "@width")]
     width: Option<u32>,
     #[serde(rename = "@height")]
@@ -154,16 +156,23 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .ok_or_else(|| format!("MAME XML did not contain machine {}", entry.rom_name))?;
     let display = machine
         .displays
-        .first()
+        .iter()
+        .find(|display| display.tag.as_deref() == Some("screen"))
+        .or_else(|| machine.displays.first())
         .ok_or_else(|| format!("{} has no display metadata", entry.rom_name))?;
-    let width = display
+    let native_width = display
         .width
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display width", entry.rom_name))?;
-    let height = display
+    let native_height = display
         .height
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
+    let (width, height) = if matches!(display.rotation_degrees % 360, 90 | 270) {
+        (native_height, native_width)
+    } else {
+        (native_width, native_height)
+    };
     let refresh_hz = display
         .refresh_hz
         .filter(|value| value.is_finite() && *value > 0.0)
@@ -235,5 +244,53 @@ mod tests {
         assert_eq!(game.profile.max_players, 4);
         assert_eq!(game.profile.buttons_per_player, 2);
         assert!(game.profile.supports_save_state);
+    }
+
+    #[test]
+    fn selects_primary_screen_instead_of_auxiliary_display() {
+        let xml = r#"<mame>
+            <machine name="tekken3ua">
+                <description>Tekken 3</description>
+                <display tag=":led" rotate="180" width="768" height="128" refresh="60.0" />
+                <display tag="screen" rotate="0" width="640" height="480" refresh="60.0" />
+                <input players="2"><control type="joy" buttons="4" /></input>
+                <driver savestate="unsupported" />
+            </machine>
+        </mame>"#;
+        let game = parse_mame_game(
+            &CatalogEntry {
+                id: "tekken3ua".to_owned(),
+                rom_name: "tekken3ua".to_owned(),
+            },
+            xml,
+        )
+        .unwrap();
+
+        assert_eq!(game.profile.width, 640);
+        assert_eq!(game.profile.height, 480);
+    }
+
+    #[test]
+    fn swaps_dimensions_for_rotated_displays() {
+        let xml = r#"<mame>
+            <machine name="dkong">
+                <description>Donkey Kong</description>
+                <display tag="screen" rotate="270" width="256" height="224" refresh="60.606061" />
+                <input players="2"><control type="joy" buttons="1" /></input>
+                <driver savestate="supported" />
+            </machine>
+        </mame>"#;
+        let game = parse_mame_game(
+            &CatalogEntry {
+                id: "dkong".to_owned(),
+                rom_name: "dkong".to_owned(),
+            },
+            xml,
+        )
+        .unwrap();
+
+        assert_eq!(game.profile.width, 224);
+        assert_eq!(game.profile.height, 256);
+        assert_eq!(game.profile.rotation_degrees, 270);
     }
 }

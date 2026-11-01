@@ -471,6 +471,8 @@ fn run(args: RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
         working_directory: session.working_directory.clone(),
         video_path: session.video_path(),
         audio_path: session.audio_path(),
+        width: session.config.width,
+        height: session.config.height,
         controller_device_ids,
         autosave: args.autosave,
     };

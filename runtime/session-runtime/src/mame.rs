@@ -19,6 +19,8 @@ pub struct MameConfig {
     pub working_directory: PathBuf,
     pub video_path: PathBuf,
     pub audio_path: PathBuf,
+    pub width: u32,
+    pub height: u32,
     pub controller_device_ids: Vec<(u8, String)>,
     pub autosave: bool,
 }
@@ -72,6 +74,12 @@ impl MameProcess {
             .arg("-autoboot_delay")
             .arg("0")
             .arg("-skip_gameinfo")
+            // Movie/raw recording uses MAME's snapshot bitmap, whose natural
+            // size can differ from listxml metadata and can change by game.
+            // Pin it to the dimensions consumed by the media bridge so raw
+            // frame boundaries remain stable.
+            .arg("-snapsize")
+            .arg(format!("{}x{}", config.width, config.height))
             .arg("-rawvideowrite")
             .arg(&config.video_path)
             .arg("-rawaudiowrite")
