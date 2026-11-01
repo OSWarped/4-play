@@ -169,10 +169,9 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
         .filter(|value| *value > 0)
         .ok_or_else(|| format!("{} has no valid display height", entry.rom_name))?;
     let (width, height) = if entry.rom_name.starts_with("blitz") {
-        // Seattle hardware needs additional headroom beyond the general 3D
-        // profile to keep emulation and audio production at real-time speed
-        // while both software streaming encoders are active.
-        (256, 192)
+        // Hardware H.264 offload gives Seattle games enough headroom to use
+        // the same sharper 4:3 streaming profile as other demanding 3D games.
+        (320, 240)
     } else if entry.rom_name.starts_with("tekken3") {
         // System 12 advertises a 640x480 main display, but feeding that raw
         // frame size through both software streaming encoders overwhelms the
@@ -224,7 +223,7 @@ fn parse_mame_game(entry: &CatalogEntry, xml: &str) -> Result<DiscoveredGame, St
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_mame_game, CatalogEntry};
+    use super::{CatalogEntry, parse_mame_game};
 
     #[test]
     fn parses_mame_runtime_profile() {
@@ -324,8 +323,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.profile.width, 256);
-        assert_eq!(game.profile.height, 192);
+        assert_eq!(game.profile.width, 320);
+        assert_eq!(game.profile.height, 240);
         assert_eq!(game.profile.refresh_hz, 57.0);
     }
 

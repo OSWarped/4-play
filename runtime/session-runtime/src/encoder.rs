@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 // dropped. A 90 kHz clock preserves the capture arrival time, after which the
 // fps filter emits a stable stream at the game's native frame rate.
 const VIDEO_TIMESTAMP_CLOCK_HZ: u32 = 90_000;
+const VAAPI_RENDER_DEVICE: &str = "/dev/dri/renderD128";
 const MPEGTS_PACKET_PAYLOAD_SIZE: usize = 1_316;
 const SPECTATOR_PORT_RELOAD_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -72,6 +73,29 @@ pub struct EncoderProcess {
     fanout: Option<MediaFanout>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VideoEncoder {
+    Vaapi,
+    Software,
+}
+
+impl VideoEncoder {
+    fn detect() -> Self {
+        if vaapi_h264_probe() {
+            Self::Vaapi
+        } else {
+            Self::Software
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Vaapi => "h264_vaapi",
+            Self::Software => "libx264",
+        }
+    }
+}
+
 impl EncoderProcess {
     pub fn spawn(config: &EncoderConfig) -> io::Result<(Self, EncoderInputs)> {
         let (video_read_fd, video_writer) = create_pipe()?;
@@ -79,12 +103,14 @@ impl EncoderProcess {
 
         let video_size = format!("{}x{}", config.width, config.height);
         let fps = format!("{:.6}", config.fps);
+        let video_encoder = VideoEncoder::detect();
         let mut command = Command::new("ffmpeg");
 
+        command.arg("-hide_banner").arg("-loglevel").arg("info");
+        if video_encoder == VideoEncoder::Vaapi {
+            command.arg("-vaapi_device").arg(VAAPI_RENDER_DEVICE);
+        }
         command
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("info")
             .arg("-thread_queue_size")
             .arg("64")
             .arg("-probesize")
@@ -126,27 +152,46 @@ impl EncoderProcess {
             .arg("-map")
             .arg("1:a:0")
             .arg("-filter:v")
-            .arg(format!("fps=fps={fps}:start_time=0:round=near"))
+            .arg(match video_encoder {
+                VideoEncoder::Vaapi => {
+                    format!("fps=fps={fps}:start_time=0:round=near,format=nv12,hwupload")
+                }
+                VideoEncoder::Software => {
+                    format!("fps=fps={fps}:start_time=0:round=near")
+                }
+            })
             .arg("-fps_mode:v")
-            .arg("passthrough")
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg("ultrafast")
-            .arg("-tune")
-            .arg("zerolatency")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
+            .arg("passthrough");
+        command.arg("-c:v").arg(video_encoder.name());
+        match video_encoder {
+            VideoEncoder::Vaapi => {
+                command
+                    .arg("-profile:v")
+                    .arg("constrained_baseline")
+                    .arg("-qp")
+                    .arg("24");
+            }
+            VideoEncoder::Software => {
+                command
+                    .arg("-preset")
+                    .arg("ultrafast")
+                    .arg("-tune")
+                    .arg("zerolatency")
+                    .arg("-pix_fmt")
+                    .arg("yuv420p")
+                    .arg("-sc_threshold")
+                    .arg("0")
+                    .arg("-refs")
+                    .arg("1");
+            }
+        }
+        command
             .arg("-g")
             .arg("15")
             .arg("-keyint_min")
             .arg("15")
-            .arg("-sc_threshold")
-            .arg("0")
             .arg("-bf")
             .arg("0")
-            .arg("-refs")
-            .arg("1")
             .arg("-c:a");
 
         match config.audio_codec {
@@ -223,7 +268,7 @@ impl EncoderProcess {
         )?;
 
         println!(
-            "Encoder started: PID={} primary_destination={}:{} spectator_ports={:?} spectator_ports_file={} video_fps={fps} video_timestamp_clock_hz={} audio_codec={} audio_thread_queue={}",
+            "Encoder started: PID={} primary_destination={}:{} spectator_ports={:?} spectator_ports_file={} video_fps={fps} video_timestamp_clock_hz={} video_encoder={} audio_codec={} audio_thread_queue={}",
             child.id(),
             config.destination_ip,
             config.udp_port,
@@ -234,6 +279,7 @@ impl EncoderProcess {
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "none".to_owned()),
             VIDEO_TIMESTAMP_CLOCK_HZ,
+            video_encoder.name(),
             config.audio_codec.name(),
             config.audio_thread_queue_size
         );
@@ -275,6 +321,38 @@ impl EncoderProcess {
             None => Ok(None),
         }
     }
+}
+
+fn vaapi_h264_probe() -> bool {
+    if !Path::new(VAAPI_RENDER_DEVICE).exists() {
+        return false;
+    }
+    Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-vaapi_device",
+            VAAPI_RENDER_DEVICE,
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=64x64:rate=1",
+            "-frames:v",
+            "1",
+            "-vf",
+            "format=nv12,hwupload",
+            "-c:v",
+            "h264_vaapi",
+            "-f",
+            "null",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 impl Drop for EncoderProcess {
